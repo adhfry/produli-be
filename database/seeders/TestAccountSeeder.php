@@ -1,5 +1,4 @@
 <?php
-
 namespace Database\Seeders;
 
 use App\Models\Kader;
@@ -48,24 +47,24 @@ class TestAccountSeeder extends Seeder
 
         // PENTING: ganti email ini kalau bukan Anda -- akun super_admin dipakai untuk login
         // Google sekaligus email/password (docs/planning/02, alur auth).
-        $superAdmin = $this->makeUser('Super Admin Uji', 'ahda.creator@gmail.com', null);
+        $superAdmin = $this->makeUser('Ahda Firly Barori', 'ahda.creator@gmail.com', null);
         $superAdmin->assignRole('super_admin');
 
-        $adminPuskesmas = $this->makeUser('Admin Puskesmas Uji', 'admin.puskesmas.uji@example.test', $puskesmas->id);
-        $adminPuskesmas->assignRole('admin_puskesmas');
+        // $adminPuskesmas = $this->makeUser('Admin Puskesmas Uji', 'admin.puskesmas.uji@example.test', $puskesmas->id);
+        // $adminPuskesmas->assignRole('admin_puskesmas');
 
-        $pjProlanis = $this->makeUser('PJ Prolanis Uji', 'pj.prolanis.uji@example.test', $puskesmas->id);
-        $pjProlanis->assignRole('pj_prolanis');
+        // $pjProlanis = $this->makeUser('PJ Prolanis Uji', 'pj.prolanis.uji@example.test', $puskesmas->id);
+        // $pjProlanis->assignRole('pj_prolanis');
 
-        $kaderUser = $this->makeUser('Kader Uji', 'kader.uji@example.test', $puskesmas->id);
-        $kaderUser->assignRole('kader');
+        // $kaderUser = $this->makeUser('Kader Uji', 'kader.uji@example.test', $puskesmas->id);
+        // $kaderUser->assignRole('kader');
 
-        Kader::firstOrCreate(
-            ['user_id' => $kaderUser->id],
-            ['pj_id' => $pjProlanis->id, 'puskesmas_id' => $puskesmas->id, 'status_aktif' => true],
-        );
+        // Kader::firstOrCreate(
+        //     ['user_id' => $kaderUser->id],
+        //     ['pj_id' => $pjProlanis->id, 'puskesmas_id' => $puskesmas->id, 'status_aktif' => true],
+        // );
 
-        $this->printCredentials($puskesmas);
+        // $this->printCredentials($puskesmas);
     }
 
     /**
@@ -76,16 +75,16 @@ class TestAccountSeeder extends Seeder
     private function makeUser(string $name, string $email, ?int $puskesmasId): User
     {
         $attributes = [
-            'password' => Hash::make(self::PASSWORD),
-            'puskesmas_id' => $puskesmasId,
+            'password'             => Hash::make(self::PASSWORD),
+            'puskesmas_id'         => $puskesmasId,
             'must_change_password' => false,
-            'email_verified_at' => now(),
+            'email_verified_at'    => now(),
         ];
 
         $existing = User::where('email', $email)->first();
 
         if ($existing === null) {
-            return User::create([...$attributes, 'email' => $email, 'name' => $name]);
+            return User::create([ ...$attributes, 'email' => $email, 'name' => $name]);
         }
 
         $existing->update($attributes);
@@ -101,9 +100,6 @@ class TestAccountSeeder extends Seeder
             ['Role', 'Email', 'Password'],
             [
                 ['super_admin', 'ahda.creator@gmail.com', self::PASSWORD],
-                ['admin_puskesmas', 'admin.puskesmas.uji@example.test', self::PASSWORD],
-                ['pj_prolanis', 'pj.prolanis.uji@example.test', self::PASSWORD],
-                ['kader', 'kader.uji@example.test', self::PASSWORD],
             ],
         );
         $this->command?->warn('Simpan kredensial ini -- password sama untuk semua akun, khusus dev/lokal.');
