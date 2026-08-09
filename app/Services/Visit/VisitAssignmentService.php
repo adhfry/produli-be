@@ -1,0 +1,304 @@
+<?php
+
+namespace App\Services\Visit;
+
+use App\Mail\VisitAssignedMail;
+use App\Models\Kader;
+use App\Models\PatientsCache;
+use App\Models\RiskClassification;
+use App\Models\User;
+use App\Models\VisitAssignment;
+use App\Models\VisitAssignmentCompanion;
+use App\Support\DataScope;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Validation\ValidationException;
+
+/**
+ * Assign kader ke pasien untuk kunjungan rumah. Lihat docs/planning/02 §2/§2a/§3.
+ *
+ * Reminder H-1/hari-H (§3/§8) TIDAK di-trigger eksplisit di sini -- NotificationService
+ * (kopipu:send-visit-reminders, jalan twiceDaily) yang polling assignment pending H-1/hari-H
+ * secara berkala, jadi assignment yang dibuat lewat assign() otomatis kepantau tanpa perlu
+ * dipanggil manual dari sini.
+ *
+ * Jalur alternatif "phone_contact": pasien risk_level=Berat yang wilayahnya TIDAK resolved
+ * (bukan resolved/kecamatan_fallback) tapi punya nomor telepon TETAP boleh ditugaskan --
+ * ditemukan lewat investigasi nyata (6 pasien Berat, semuanya unresolvable karena data
+ * kecamatan/desa kosong dari SiLAKES) bahwa aturan wilayah-wajib akan membuat pasien risiko
+ * tertinggi justru TIDAK PERNAH bisa dikunjungi kalau data wilayahnya kebetulan kosong. Kader
+ * diarahkan hubungi dulu lewat telepon (bukan lewat peta), lengkapi alamat saat kunjungan.
+ * Pasien Sedang/Ringan TIDAK dapat pengecualian ini -- tetap wajib wilayah resolved seperti biasa.
+ */
+class VisitAssignmentService
+{
+    public function assign(
+        PatientsCache $patient,
+        Kader $kader,
+        User $assignedBy,
+        string $scheduledDate,
+        string $priority,
+    ): VisitAssignment {
+        $phoneContactException = $this->isBeratPhoneContactEligible($patient);
+
+        $this->ensureWilayahResolvable($patient, $phoneContactException);
+        $this->ensureKaderAvailable($kader, $patient, $phoneContactException);
+
+        return VisitAssignment::create([
+            'patient_id' => $patient->id,
+            'kader_id' => $kader->id,
+            'assigned_by' => $assignedBy->id,
+            'scheduled_date' => $scheduledDate,
+            'status' => 'pending',
+            'priority' => $priority,
+            'assignment_method' => $phoneContactException ? 'phone_contact' : 'wilayah_resolved',
+            // Jalur normal: dari patients_cache.puskesmas_id (BUKAN literal desa.puskesmas_id
+            // seperti draf awal §2a) — supaya kasus kecamatan_fallback (tanpa desa_id sama
+            // sekali) tetap ke-snapshot dengan benar. Jalur phone_contact: lokasi pasien TIDAK
+            // diketahui (itu justru alasan jalur ini ada) -- puskesmas_id_snapshot (kolom NOT
+            // NULL) diisi dari puskesmas KADER, satu-satunya nilai yang pasti valid di kasus ini.
+            // Immutable setelah dibuat, tidak pernah di-update lagi.
+            'puskesmas_id_snapshot' => $phoneContactException ? $kader->puskesmas_id : $patient->puskesmas_id,
+        ]);
+    }
+
+    /**
+     * Pasien lolos pengecualian phone_contact HANYA kalau risk_level TERBARU-nya Berat DAN
+     * nomor telepon terisi (bukan null/string kosong) -- Sedang/Ringan tidak pernah lolos di
+     * sini, tetap wajib wilayah resolved lewat ensureWilayahResolvable() seperti biasa.
+     */
+    private function isBeratPhoneContactEligible(PatientsCache $patient): bool
+    {
+        if (trim((string) $patient->phone) === '') {
+            return false;
+        }
+
+        return RiskClassification::where('patient_id', $patient->id)
+            ->where('is_latest', true)
+            ->where('level', 'berat')
+            ->exists();
+    }
+
+    /**
+     * Bulk assign kader yang SAMA ke banyak pasien sekaligus (docs/planning/02 §12/§16) --
+     * PARTIAL SUCCESS by design: tiap pasien divalidasi lewat assign() yang SAMA persis dengan
+     * jalur single-assignment (wilayah_status, kader aktif+sepuskesmas, no duplicate aktif),
+     * yang gagal dilaporkan alasannya + tetap lanjut ke pasien berikutnya, bukan all-or-nothing.
+     * Sengaja TIDAK dibungkus 1 transaksi besar -- tiap assign() sudah atomic per-baris, dan
+     * membungkusnya akan membuat satu kegagalan menggagalkan semua yang sudah lolos.
+     *
+     * $companionKaders (§16, "kunjungan berombongan") BEDA sifat dari $patientIds -- ini
+     * precondition BATCH (sama seperti $kader primer sendiri), divalidasi SEKALI di depan lewat
+     * ensureCompanionsAvailable(); kalau ada satu saja yang gagal, SELURUH request ditolak
+     * (bukan partial-success), bukan per-pasien. Kader yang lolos di-attach ke SETIAP assignment
+     * yang berhasil dibuat di batch ini (assignment_id berbeda-beda, kader_id sama semua).
+     *
+     * @param  array<int, int>  $patientIds
+     * @param  array<int, Kader>  $companionKaders
+     * @return array{created: array<int, VisitAssignment>, failed: array<int, array{patient_id: int, reason: string}>}
+     */
+    public function assignBulk(
+        array $patientIds,
+        Kader $kader,
+        array $companionKaders,
+        User $assignedBy,
+        string $scheduledDate,
+        string $priority,
+    ): array {
+        $this->ensureCompanionsAvailable($kader, $companionKaders);
+
+        $created = [];
+        $failed = [];
+
+        foreach ($patientIds as $patientId) {
+            $patient = PatientsCache::find($patientId);
+
+            if ($patient === null) {
+                $failed[] = ['patient_id' => $patientId, 'reason' => 'Pasien tidak ditemukan.'];
+
+                continue;
+            }
+
+            try {
+                $assignment = $this->assign($patient, $kader, $assignedBy, $scheduledDate, $priority);
+                $this->attachCompanions($assignment, $companionKaders);
+                $created[] = $assignment;
+            } catch (ValidationException $e) {
+                $failed[] = [
+                    'patient_id' => $patientId,
+                    'reason' => collect($e->errors())->flatten()->first() ?? 'Validasi gagal.',
+                ];
+            }
+        }
+
+        if ($created !== []) {
+            $this->notifyAssignedKaders($kader, $companionKaders, count($created), $scheduledDate);
+        }
+
+        return ['created' => $created, 'failed' => $failed];
+    }
+
+    /**
+     * "Companion divalidasi sama seperti kader primer: aktif, sepuskesmas" (docs/planning/02
+     * §16) -- "sepuskesmas" di sini berarti sepuskesmas dengan KADER PRIMER (rekan satu tim
+     * yang bisa benar-benar ikut kunjungan bareng), bukan cuma sepuskesmas dengan actor yang
+     * login. Gagal SATU companion saja -> tolak SELURUH batch (422), tidak ada assignment yang
+     * dibuat sama sekali -- konsisten dengan bagaimana kader primer sendiri diperlakukan.
+     *
+     * @param  array<int, Kader>  $companionKaders
+     */
+    private function ensureCompanionsAvailable(Kader $primary, array $companionKaders): void
+    {
+        foreach ($companionKaders as $companion) {
+            if (! $companion->status_aktif) {
+                throw ValidationException::withMessages([
+                    'companion_kader_ids' => ["Kader pendamping (id={$companion->id}) tidak aktif."],
+                ]);
+            }
+
+            if ($companion->puskesmas_id !== $primary->puskesmas_id) {
+                throw ValidationException::withMessages([
+                    'companion_kader_ids' => ["Kader pendamping (id={$companion->id}) bukan dari puskesmas yang sama dengan kader primer."],
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @param  array<int, Kader>  $companionKaders
+     */
+    private function attachCompanions(VisitAssignment $assignment, array $companionKaders): void
+    {
+        foreach ($companionKaders as $companion) {
+            VisitAssignmentCompanion::create([
+                'assignment_id' => $assignment->id,
+                'kader_id' => $companion->id,
+            ]);
+        }
+    }
+
+    /**
+     * 1 email ringkas per kader (primer + pendamping) yang kena batch ini (docs/planning/02
+     * §16) -- BUKAN 1 email per pasien (hindari spam kalau PJ tugaskan banyak pasien
+     * sekaligus). Isi SENGAJA minimal, TIDAK sebut nama/data pasien (data kesehatan tidak masuk
+     * kanal email yang kurang terjamin dibanding aplikasi). Dipanggil HANYA kalau minimal 1
+     * assignment berhasil dibuat di batch ini.
+     *
+     * VisitAssignedMail = notifikasi NON-KRITIS (docs/planning/02 §17) -- hormati
+     * users.email_notifications_enabled, BEDA dari email keamanan akun (aktivasi/reset
+     * password) yang SELALU terkirim apa pun preferensinya (bukan tanggung jawab method ini,
+     * itu tidak lewat jalur ini sama sekali).
+     *
+     * @param  array<int, Kader>  $companionKaders
+     */
+    private function notifyAssignedKaders(Kader $primary, array $companionKaders, int $taskCount, string $scheduledDate): void
+    {
+        foreach ([$primary, ...$companionKaders] as $kader) {
+            if ($kader->user?->email && $kader->user->email_notifications_enabled) {
+                Mail::to($kader->user->email)->queue(new VisitAssignedMail($kader->user->name, $taskCount, $scheduledDate));
+            }
+        }
+    }
+
+    /**
+     * Tolak assignment kalau KOPIPU tidak tahu wilayah pasien cukup jelas untuk dikirim kader —
+     * wilayah_status=resolved (desa presisi) ATAU puskesmas_resolution_method=kecamatan_fallback
+     * (kecamatan cuma 1 puskesmas) keduanya dianggap cukup. Selain itu ditolak (docs/planning/02 §2a,
+     * diperluas dari "wilayah_status=resolved" saja).
+     *
+     * $phoneContactException: pasien Berat + nomor telepon tersedia -- SELURUH pemeriksaan di
+     * method ini di-skip. Wilayah memang TIDAK diketahui, itu justru alasan jalur ini dipakai.
+     */
+    private function ensureWilayahResolvable(PatientsCache $patient, bool $phoneContactException = false): void
+    {
+        if ($phoneContactException) {
+            return;
+        }
+
+        $wilayahCukupJelas = $patient->wilayah_status === 'resolved'
+            || $patient->puskesmas_resolution_method === 'kecamatan_fallback';
+
+        if (! $wilayahCukupJelas) {
+            throw ValidationException::withMessages([
+                'patient' => ['Wilayah pasien belum resolved (bukan resolved maupun kecamatan_fallback) — tidak bisa ditugaskan ke kader.'],
+            ]);
+        }
+
+        // Bisa terjadi WALAU wilayah_status=resolved: desa sudah match tapi desa.puskesmas_id
+        // itu sendiri belum di-assign Dinkes (lihat kopipu:import-desa-puskesmas) — tanpa ini,
+        // puskesmas_id_snapshot (NOT NULL) tidak punya nilai untuk disimpan.
+        if ($patient->puskesmas_id === null) {
+            throw ValidationException::withMessages([
+                'patient' => ['Puskesmas pasien belum ter-assign — lengkapi lewat kopipu:import-desa-puskesmas dulu.'],
+            ]);
+        }
+    }
+
+    /**
+     * "Validasi ketersediaan kader" (§3) diinterpretasikan sebagai: kader aktif, dari puskesmas
+     * yang sama dengan pasien, dan belum punya assignment aktif untuk pasien yang sama (cegah
+     * dobel-assign). Dokumen tidak memberi aturan kapasitas per hari, jadi tidak ditambahkan.
+     *
+     * $phoneContactException: cek "kader sepuskesmas dengan pasien" DI-SKIP -- patient->puskesmas_id
+     * memang null di jalur ini (lokasi tidak diketahui), tidak ada apa pun yang bisa dibandingkan.
+     * Kader tetap wajib aktif + belum ada assignment aktif ganda, itu tidak berubah.
+     */
+    private function ensureKaderAvailable(Kader $kader, PatientsCache $patient, bool $phoneContactException = false): void
+    {
+        if (! $kader->status_aktif) {
+            throw ValidationException::withMessages([
+                'kader' => ['Kader tidak aktif.'],
+            ]);
+        }
+
+        if (! $phoneContactException && $kader->puskesmas_id !== $patient->puskesmas_id) {
+            throw ValidationException::withMessages([
+                'kader' => ['Kader bukan dari puskesmas yang sama dengan pasien.'],
+            ]);
+        }
+
+        $sudahDitugaskan = VisitAssignment::where('patient_id', $patient->id)
+            ->where('kader_id', $kader->id)
+            ->whereIn('status', ['pending', 'in_progress'])
+            ->exists();
+
+        if ($sudahDitugaskan) {
+            throw ValidationException::withMessages([
+                'kader' => ['Pasien ini sudah punya assignment aktif ke kader yang sama.'],
+            ]);
+        }
+    }
+
+    /**
+     * Query list assignment ter-scope role (docs/planning/02 §7) -- dipakai VisitAssignmentController
+     * (list) dan DashboardService (hitung visits_per_status), supaya aturan scope-nya satu tempat.
+     *
+     * @return Builder<VisitAssignment>
+     */
+    public function scopedQuery(User $user): Builder
+    {
+        if (DataScope::isFullAccess($user)) {
+            return VisitAssignment::query();
+        }
+
+        if (DataScope::isKaderOnly($user)) {
+            $kader = $user->kader;
+
+            if ($kader === null) {
+                return VisitAssignment::query()->whereRaw('1 = 0');
+            }
+
+            // Assignment yang dia dampingi (§16) ikut muncul di daftar tugasnya sendiri --
+            // bukan cuma yang dia jadi kader_id (primer). Resource yang menandai peran mana
+            // (role_in_assignment: primary|companion) lewat relasi companions yang di-eager-load.
+            return VisitAssignment::query()->where(function (Builder $query) use ($kader) {
+                $query->where('kader_id', $kader->id)
+                    ->orWhereHas('companions', fn (Builder $q) => $q->where('kader_id', $kader->id));
+            });
+        }
+
+        return $user->puskesmas_id !== null
+            ? VisitAssignment::query()->where('puskesmas_id_snapshot', $user->puskesmas_id)
+            : VisitAssignment::query()->whereRaw('1 = 0');
+    }
+}
