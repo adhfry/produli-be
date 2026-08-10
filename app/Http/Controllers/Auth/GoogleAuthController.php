@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
@@ -35,7 +34,8 @@ class GoogleAuthController extends Controller
 {
     public const EXCHANGE_CACHE_PREFIX = 'google_auth_exchange:';
 
-    public function __construct(private readonly GoogleAccountLinkService $googleLink) {}
+    public function __construct(private readonly GoogleAccountLinkService $googleLink)
+    {}
 
     public function redirect(): RedirectResponse
     {
@@ -59,15 +59,15 @@ class GoogleAuthController extends Controller
         if (! $user) {
             // TIDAK auto-create (REVISI §6) -- akun cuma lewat registrasi resmi kader/staff.
             return redirect()->away(
-                rtrim(config('app.frontend_url'), '/').'/auth/google/callback?error=account_not_found'
+                rtrim(config('app.frontend_url'), '/') . '/auth/google/callback?error=account_not_found'
             );
         }
 
         $code = Str::random(40);
-        Cache::put(self::EXCHANGE_CACHE_PREFIX.$code, $user->id, now()->addSeconds(60));
+        Cache::put(self::EXCHANGE_CACHE_PREFIX . $code, $user->id, now()->addSeconds(60));
 
         return redirect()->away(
-            rtrim(config('app.frontend_url'), '/').'/auth/google/callback?code='.$code
+            rtrim(config('app.frontend_url'), '/') . '/auth/google/callback?code=' . $code
         );
     }
 
@@ -104,6 +104,6 @@ class GoogleAuthController extends Controller
     {
         $query = http_build_query(array_filter(['google_link' => $status, 'reason' => $reason]));
 
-        return redirect()->away(rtrim((string) config('app.frontend_url'), '/').'/settings/akun?'.$query);
+        return redirect()->away(rtrim((string) config('app.frontend_url'), '/') . '/dashboard/profil/pengaturan?' . $query);
     }
 }
