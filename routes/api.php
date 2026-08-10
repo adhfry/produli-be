@@ -4,9 +4,11 @@ use App\Http\Controllers\Api\V1\AnnouncementController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\DashboardController;
 use App\Http\Controllers\Api\V1\KaderController;
+use App\Http\Controllers\Api\V1\KecamatanController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PatientController;
 use App\Http\Controllers\Api\V1\PuskesmasController;
+use App\Http\Controllers\Api\V1\SilakesSyncController;
 use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\VisitAssignmentController;
 use App\Http\Controllers\Api\V1\VisitReportController;
@@ -76,11 +78,23 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // Usulan koreksi data pasien dari STAF (docs/planning §17 "Ajukan Update Data") -- paralel
     // dari usulan kader lewat POST /visit-reports (itu terikat satu laporan kunjungan).
     Route::patch('patients/{patient}/propose-update', [PatientController::class, 'proposeUpdate']);
+    // Riwayat usulan (baca live dari SiLAKES, gerbang akses sama dengan propose-update di atas).
+    Route::get('patients/{patient}/update-history', [PatientController::class, 'updateHistory']);
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
     Route::get('puskesmas', [PuskesmasController::class, 'index']);
     Route::patch('puskesmas/{puskesmas}', [PuskesmasController::class, 'update']);
+
+    // Referensi kecamatan (id kanonik) -- dipakai filter /dashboard/pasien supaya tidak
+    // bergantung ke kecamatan_raw teks bebas (docs: WilayahResolver). Data administratif
+    // tetap, bukan data pasien -- semua role login boleh lihat, tanpa scope.
+    Route::get('kecamatan', [KecamatanController::class, 'index']);
+
+    // Tombol "Sinkronisasi SiLAKES" di sidebar -- super_admin saja (gerbang di controller,
+    // route ini cuma butuh login+onboarding seperti endpoint lain di grup ini).
+    Route::get('silakes/sync-status', [SilakesSyncController::class, 'status']);
+    Route::post('silakes/sync', [SilakesSyncController::class, 'sync']);
 
     Route::prefix('kader')->group(function () {
         Route::get('/', [KaderController::class, 'index']);

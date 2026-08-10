@@ -120,8 +120,11 @@ class WilayahResolver
 
         // Sebagian besar kecamatan di Sumenep cuma punya 1 puskesmas —
         // kalau begitu, aman diinfer dari kecamatan saja tanpa desa (§2b).
-        $candidates = Puskesmas::whereHas('desa', fn ($q) => $q->where('kecamatan_id', $kecamatanId))
-            ->pluck('id');
+        // Pakai puskesmas.kecamatan_id langsung (bukan whereHas('desa', ...)) — link itu
+        // butuh desa.puskesmas_id sudah ter-assign duluan (baru dilakukan lewat CSV manual
+        // utk 4 kecamatan multi-puskesmas), sementara puskesmas.kecamatan_id sudah terisi
+        // penuh dari seeder utk semua 31 puskesmas, tidak bergantung assignment desa apa pun.
+        $candidates = Puskesmas::where('kecamatan_id', $kecamatanId)->pluck('id');
 
         if ($candidates->count() === 1) {
             return ['puskesmas_id' => $candidates->first(), 'method' => 'kecamatan_fallback'];

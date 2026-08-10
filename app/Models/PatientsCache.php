@@ -28,6 +28,7 @@ class PatientsCache extends Model
         'is_perokok',
         'jenis_perokok',
         'desa_id',
+        'kecamatan_id',
         'wilayah_status',
         'puskesmas_id',
         'puskesmas_resolution_method',
@@ -56,6 +57,17 @@ class PatientsCache extends Model
     public function desa(): BelongsTo
     {
         return $this->belongsTo(Desa::class);
+    }
+
+    /**
+     * Kecamatan hasil match WilayahResolver -- BISA terisi walau desa_id NULL (kecamatan
+     * dikenali tapi desa belum, kasus umum ~19,6% pasien, lihat migration
+     * add_kecamatan_id_to_patients_cache_table). JANGAN diturunkan cuma lewat desa.kecamatan_id,
+     * itu akan hilang persis utk populasi yang justru butuh field ini.
+     */
+    public function kecamatan(): BelongsTo
+    {
+        return $this->belongsTo(Kecamatan::class);
     }
 
     public function puskesmas(): BelongsTo

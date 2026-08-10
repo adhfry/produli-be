@@ -25,6 +25,13 @@ return [
         // sama ini cuma memungkinkan KOPIPU meng-hash input pencarian lalu membandingkan
         // hash-vs-hash (exact match) -- TIDAK PERNAH bisa dipakai membalik hash jadi NIK asli.
         'nik_hash_secret' => env('KOPIPU_NIK_HASH_SECRET'),
+
+        // Cutoff bisnis KOPIPU (bukan dari kontrak SiLAKES -- endpoint lab-results tidak sediakan
+        // parameter tanggal, cuma delta since/cursor berbasis updated_at). Pasien Prolanis yang
+        // TIDAK punya riwayat surat_hasil_labs final (completed+approved+is_kunjungan_prolanis)
+        // pada/sesudah tanggal ini dianggap belum relevan untuk KOPIPU -- dikeluarkan dari
+        // patients_cache saat sync (lihat SyncSilakesService::syncPatients()).
+        'lab_results_since' => env('KOPIPU_LAB_RESULTS_SINCE', '2026-01-01'),
     ],
 
     /*

@@ -38,33 +38,13 @@ class SyncSilakesCommand extends Command
             return self::SUCCESS;
         }
 
-        $requestedAt = now();
-
         try {
-            $result = $service->run();
-
-            IntegrationSyncLog::create([
-                'service_name' => 'SyncSilakesService',
-                'endpoint' => 'patients+lab-results',
-                'requested_at' => $requestedAt,
-                'status' => 'success',
-                'records_count' => $result['patients_synced'] + $result['lab_results_synced'],
-                'details' => $result,
-            ]);
+            $result = $service->runAndLog();
 
             $this->info('Sync berhasil: '.json_encode($result));
 
             return self::SUCCESS;
         } catch (Throwable $e) {
-            IntegrationSyncLog::create([
-                'service_name' => 'SyncSilakesService',
-                'endpoint' => 'patients+lab-results',
-                'requested_at' => $requestedAt,
-                'status' => 'failed',
-                'records_count' => 0,
-                'details' => ['error' => $e->getMessage()],
-            ]);
-
             report($e);
             $this->error('Sync gagal: '.$e->getMessage());
 

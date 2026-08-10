@@ -38,6 +38,14 @@ class PatientResource extends JsonResource
                 'id' => $this->desa->id,
                 'nama' => $this->desa->nama,
             ]),
+            // Kecamatan hasil match WilayahResolver -- BISA terisi walau 'desa' di atas null
+            // (kecamatan dikenali dari kecamatan_raw, desa belum/tidak match) -- BUKAN
+            // diturunkan dari desa.kecamatan, field ini independen persis supaya kasus itu
+            // tidak hilang (lihat App\Models\PatientsCache::kecamatan()).
+            'kecamatan' => $this->whenLoaded('kecamatan', fn () => [
+                'id' => $this->kecamatan->id,
+                'nama' => $this->kecamatan->nama,
+            ]),
             'puskesmas' => $this->whenLoaded('puskesmas', fn () => [
                 'id' => $this->puskesmas->id,
                 'nama' => $this->puskesmas->nama,

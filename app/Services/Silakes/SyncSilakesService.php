@@ -2,12 +2,14 @@
 
 namespace App\Services\Silakes;
 
+use App\Models\IntegrationSyncLog;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Services\Risk\RiskClassificationService;
 use App\Services\Wilayah\WilayahResolver;
 use Carbon\Carbon;
 use Illuminate\Support\Sleep;
+use Throwable;
 
 /**
  * Pull terjadwal dari SiLAKES -> map ke cache lokal -> trigger RiskClassificationService
@@ -38,8 +40,11 @@ class SyncSilakesService
      */
     public function run(): array
     {
-        $patientsSynced = $this->syncPatients();
+        // Lab results DULUAN, baru patients — syncPatients() butuh lab_results_cache yang
+        // sudah mutakhir untuk menggerbang kelayakan (lihat isEligible()). Urutan sebaliknya
+        // berarti pasien baru selalu dievaluasi dari data lab yang seangkatan lebih lama.
         [$labResultsSynced, $patientsClassified] = $this->syncLabResults();
+        $patientsSynced = $this->syncPatients();
 
         return [
             'patients_synced' => $patientsSynced,
@@ -49,8 +54,58 @@ class SyncSilakesService
     }
 
     /**
+     * run() + catat hasilnya ke integration_sync_logs -- SATU-SATUNYA tempat yang menulis log
+     * ini, dipakai bersama oleh kopipu:sync-silakes (cron, throttle 48 jam) dan
+     * SilakesSyncController (tombol "Sinkronisasi SiLAKES" di sidebar, super_admin, TANPA
+     * throttle -- klik manual berarti operator secara eksplisit minta sync sekarang). Supaya
+     * kedua jalur ini selalu mencatat log yang identik, bukan dua salinan logika yang bisa
+     * drift beda cara pencatatannya.
+     *
+     * @return array{patients_synced: int, lab_results_synced: int, patients_classified: int}
+     *
+     * @throws Throwable dilempar ulang setelah dicatat sebagai 'failed' -- pemanggil yang
+     *                    menentukan bagaimana meresponnya (CLI exit code vs HTTP error response).
+     */
+    public function runAndLog(): array
+    {
+        $requestedAt = now();
+
+        try {
+            $result = $this->run();
+
+            IntegrationSyncLog::create([
+                'service_name' => 'SyncSilakesService',
+                'endpoint' => 'patients+lab-results',
+                'requested_at' => $requestedAt,
+                'status' => 'success',
+                'records_count' => $result['patients_synced'] + $result['lab_results_synced'],
+                'details' => $result,
+            ]);
+
+            return $result;
+        } catch (Throwable $e) {
+            IntegrationSyncLog::create([
+                'service_name' => 'SyncSilakesService',
+                'endpoint' => 'patients+lab-results',
+                'requested_at' => $requestedAt,
+                'status' => 'failed',
+                'records_count' => 0,
+                'details' => ['error' => $e->getMessage()],
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
      * Hanya menarik pasien Prolanis — filter is_prolanis=1 dipaksa di SilakesApiClient::patients(),
      * bukan di sini, supaya berlaku untuk pemanggil mana pun (mandat KOPIPU, bukan pilihan sync ini saja).
+     *
+     * Pasien is_prolanis=1 TAPI tidak punya riwayat surat_hasil_labs final (completed+approved+
+     * is_kunjungan_prolanis) sejak kopipu.silakes.lab_results_since DILEWATI (tidak di-upsert) --
+     * belum relevan untuk KOPIPU (lihat isEligible()). Kalau sebelumnya sempat ter-cache lalu jadi
+     * tidak eligible lagi (mis. cutoff berubah), baris lama TIDAK otomatis dihapus di sini --
+     * lihat kopipu:prune-ineligible-patients untuk pembersihan eksplisit.
      */
     public function syncPatients(): int
     {
@@ -66,8 +121,10 @@ class SyncSilakesService
             ]));
 
             foreach ($body['data'] ?? [] as $row) {
-                $this->upsertPatient($row);
-                $count++;
+                if ($this->isEligible($row['patient_id'])) {
+                    $this->upsertPatient($row);
+                    $count++;
+                }
             }
 
             $cursor = $body['meta']['next_cursor'] ?? null;
@@ -82,11 +139,22 @@ class SyncSilakesService
     }
 
     /**
+     * Eligible = punya minimal 1 baris lab_results_cache -- kolom itu sendiri sudah difilter ke
+     * tanggal_periksa >= cutoff saat upsert (lihat upsertLabResultParameter()), jadi cukup cek
+     * keberadaannya, tidak perlu ulang syarat tanggal di sini.
+     */
+    private function isEligible(int $externalPatientId): bool
+    {
+        return LabResultCache::where('patient_id', $externalPatientId)->exists();
+    }
+
+    /**
      * @return array{0: int, 1: int} [lab_results_synced, patients_classified]
      */
     public function syncLabResults(): array
     {
         $since = $this->toIso8601(LabResultCache::max('synced_at'));
+        $sinceDateCutoff = (string) config('kopipu.silakes.lab_results_since');
         $cursor = null;
         $count = 0;
         $externalPatientIdsWithNewData = [];
@@ -99,6 +167,12 @@ class SyncSilakesService
             ]));
 
             foreach ($body['data'] ?? [] as $labResult) {
+                // Business cutoff KOPIPU (bukan syarat SiLAKES) — hasil lab lebih tua dari ini
+                // tidak relevan untuk ambang batas risiko terkini, jangan ikut di-cache.
+                if (($labResult['tanggal'] ?? null) === null || $labResult['tanggal'] < $sinceDateCutoff) {
+                    continue;
+                }
+
                 foreach ($labResult['parameters'] ?? [] as $parameter) {
                     $this->upsertLabResultParameter($labResult, $parameter);
                     $count++;
@@ -151,6 +225,7 @@ class SyncSilakesService
                 'is_perokok' => $row['is_perokok'] ?? false,
                 'jenis_perokok' => $row['jenis_perokok'] ?? null,
                 'desa_id' => $resolution->desaId,
+                'kecamatan_id' => $resolution->kecamatanId,
                 'wilayah_status' => $resolution->wilayahStatus,
                 'puskesmas_id' => $puskesmas['puskesmas_id'],
                 'puskesmas_resolution_method' => $puskesmas['method'],

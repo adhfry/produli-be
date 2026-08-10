@@ -246,12 +246,12 @@ class DashboardService
     /**
      * Agregat jumlah pasien per level risiko, dikelompokkan per kecamatan (docs/planning/02
      * §13) -- BUKAN data poligon (itu sudah ada di frontend), cuma angka untuk di-mapping
-     * berdasarkan nama/kode kecamatan. Lewat patients_cache.desa_id -> desa.kecamatan_id (INNER
-     * JOIN) -- pasien tanpa desa_id (wilayah_status kecamatan_fallback/unresolved/unknown/
-     * out_of_scope) SENGAJA tidak ikut muncul di sini, karena kecamatan pastinya tidak
-     * diketahui cukup presisi (desa_id NULL berarti resolusi desa gagal, meski puskesmas bisa
-     * saja sudah ter-assign lewat fallback kecamatan) -- lebih aman tidak menampilkan angka
-     * yang salah kecamatan daripada menebak.
+     * berdasarkan nama/kode kecamatan. Lewat patients_cache.kecamatan_id LANGSUNG (BUKAN lagi
+     * via desa_id -> desa.kecamatan_id) -- kecamatan bisa dikenali dari kecamatan_raw walau
+     * desa-nya sendiri belum/tidak match (wilayah_status unknown/unresolved dengan kecamatan
+     * tetap terisi, ~19,6% populasi per temuan gap wilayah, docs/planning/02 §2b). Rute lewat
+     * desa dulu SEMPAT bikin populasi ini hilang total dari peta risiko kecamatan meski
+     * kecamatan-nya sendiri tidak ambigu -- lihat migration add_kecamatan_id_to_patients_cache_table.
      *
      * @param  Builder<\App\Models\PatientsCache>  $scopedPatients
      * @return array<int, array{kecamatan_id: int, kecamatan_nama: string, kecamatan_kode: ?string, ringan: int, sedang: int, berat: int}>
@@ -260,8 +260,7 @@ class DashboardService
     {
         $rows = $this->effectiveRiskClassifications($scopedPatients, $asOf)
             ->join('patients_cache', 'patients_cache.id', '=', 'risk_classifications.patient_id')
-            ->join('desa', 'desa.id', '=', 'patients_cache.desa_id')
-            ->join('kecamatan', 'kecamatan.id', '=', 'desa.kecamatan_id')
+            ->join('kecamatan', 'kecamatan.id', '=', 'patients_cache.kecamatan_id')
             ->selectRaw('kecamatan.id as kecamatan_id, kecamatan.nama as kecamatan_nama, kecamatan.kode_kemendagri as kecamatan_kode, risk_classifications.level as level, count(*) as total')
             ->groupBy('kecamatan.id', 'kecamatan.nama', 'kecamatan.kode_kemendagri', 'risk_classifications.level')
             ->get();

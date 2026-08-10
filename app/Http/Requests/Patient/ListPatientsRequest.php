@@ -21,6 +21,14 @@ class ListPatientsRequest extends FormRequest
         return [
             'wilayah_status' => ['nullable', 'string', 'in:resolved,unresolved,unknown,out_of_scope'],
             'risk_level' => ['nullable', 'string', 'in:ringan,sedang,berat'],
+            // Kecamatan_id (BUKAN nama teks bebas) -- filter lewat kolom patients_cache.kecamatan_id
+            // hasil match WilayahResolver, supaya akurat terlepas dari variasi ejaan/kapitalisasi
+            // kecamatan_raw dari SiLAKES (lihat App\Models\PatientsCache::kecamatan()).
+            'kecamatan_id' => ['nullable', 'integer', 'exists:kecamatan,id'],
+            // Pencarian nama/no. registrasi -- SERVER-SIDE (bukan cuma di window yang ke-fetch),
+            // supaya kombinasi dengan filter lain (wilayah_status/risk_level/kecamatan_id) tetap
+            // akurat, bukan cuma nyaring dari halaman yang kebetulan sudah dimuat.
+            'search' => ['nullable', 'string', 'max:150'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
         ];

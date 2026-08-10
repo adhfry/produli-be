@@ -10,6 +10,7 @@ use App\Http\Resources\PatientResource;
 use App\Jobs\SyncPatientFieldUpdateToSilakesJob;
 use App\Models\PatientsCache;
 use App\Services\Patient\PatientQueryService;
+use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
 use App\Support\NikHasher;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +26,7 @@ class PatientController extends Controller
         $this->authorize('viewAny', PatientsCache::class);
 
         $paginator = $this->patientQuery->scopedQuery($request->user())
-            ->with(['desa', 'puskesmas', 'latestRiskClassification'])
+            ->with(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification'])
             ->when(
                 $request->filled('wilayah_status'),
                 fn ($query) => $query->where('wilayah_status', $request->string('wilayah_status'))
@@ -36,6 +37,17 @@ class PatientController extends Controller
                     'latestRiskClassification',
                     fn ($riskQuery) => $riskQuery->where('level', $request->string('risk_level'))
                 )
+            )
+            ->when(
+                $request->filled('kecamatan_id'),
+                fn ($query) => $query->where('kecamatan_id', $request->integer('kecamatan_id'))
+            )
+            ->when(
+                $request->filled('search'),
+                fn ($query) => $query->where(function ($sub) use ($request) {
+                    $term = '%'.addcslashes($request->string('search')->trim()->toString(), '%_\\').'%';
+                    $sub->where('nama', 'like', $term)->orWhere('no_reg', 'like', $term);
+                })
             )
             ->orderBy('nama')
             ->paginate($request->integer('per_page', 20));
@@ -55,7 +67,7 @@ class PatientController extends Controller
     {
         $this->authorize('view', $patient);
 
-        $patient->load(['desa', 'puskesmas', 'latestRiskClassification']);
+        $patient->load(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification']);
 
         return ApiResponse::success(new PatientResource($patient));
     }
@@ -85,7 +97,7 @@ class PatientController extends Controller
         $hash = NikHasher::hash($request->string('nik')->toString());
 
         $patient = $this->patientQuery->scopedQuery($request->user())
-            ->with(['desa', 'puskesmas', 'latestRiskClassification'])
+            ->with(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification'])
             ->where('nik_hash', $hash)
             ->first();
 
@@ -119,5 +131,22 @@ class PatientController extends Controller
         SyncPatientFieldUpdateToSilakesJob::dispatch($patient->id, $fields, $request->user()->name);
 
         return ApiResponse::success(null, 'Usulan perubahan data pasien berhasil diajukan ke SiLAKES untuk ditinjau.');
+    }
+
+    /**
+     * Riwayat usulan perubahan data pasien yang PERNAH DIKIRIM dari KOPIPU (dashboard staf
+     * MAUPUN kunjungan kader) untuk 1 pasien, termasuk status pending_review/approved/rejected
+     * -- dibaca LIVE dari SiLAKES (GET .../pembaruan-lapangan, SilakesApiClient), KOPIPU tidak
+     * menyimpan salinan lokal (SiLAKES tetap satu-satunya sumber kebenaran status approval).
+     * Gerbang akses SAMA dengan proposeUpdate() -- kalau boleh mengajukan, boleh juga lihat
+     * riwayatnya sendiri untuk pasien itu.
+     */
+    public function updateHistory(PatientsCache $patient, SilakesApiClient $client): JsonResponse
+    {
+        $this->authorize('update', $patient);
+
+        $body = $client->getPembaruanLapanganHistory($patient->external_patient_id);
+
+        return ApiResponse::success($body['data'] ?? []);
     }
 }

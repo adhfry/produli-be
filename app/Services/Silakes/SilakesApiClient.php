@@ -230,4 +230,19 @@ class SilakesApiClient
     {
         return $this->post("/api/v1/integration/patients/{$externalPatientId}/pembaruan-lapangan", $payload);
     }
+
+    /**
+     * GET /api/v1/integration/patients/{patient_id}/pembaruan-lapangan — riwayat usulan yang
+     * PERNAH DIKIRIM KOPIPU (sumber kopipu_kunjungan/kopipu_dashboard) untuk 1 pasien, termasuk
+     * status pending_review/approved/rejected. Endpoint BACA (pakai token baca yang sama seperti
+     * patients()/labResults(), BUKAN write token) -- revisi dari keputusan awal "KOPIPU tidak
+     * perlu polling status" (docs/planning/01 §9), sekarang dibutuhkan supaya staf bisa lihat
+     * status usulannya tanpa menunggu sync rutin berikutnya.
+     *
+     * @return array{status: string, message: string, data: array}
+     */
+    public function getPembaruanLapanganHistory(int $externalPatientId): array
+    {
+        return $this->get("/api/v1/integration/patients/{$externalPatientId}/pembaruan-lapangan");
+    }
 }
