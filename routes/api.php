@@ -101,6 +101,8 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
         Route::post('/', [KaderController::class, 'store']);
         Route::patch('profile', [KaderController::class, 'updateProfile']);
         Route::get('pj-options', [KaderController::class, 'pjOptions']);
+        // Self-service: riwayat pengajuan pembaruan data pasien milik kader sendiri (/app).
+        Route::get('update-requests', [KaderController::class, 'updateRequests']);
         Route::patch('{kader}/status', [KaderController::class, 'setStatus']);
     });
 

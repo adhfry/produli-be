@@ -7,11 +7,15 @@ use App\Http\Requests\Kader\RegisterKaderRequest;
 use App\Http\Requests\Kader\UpdateKaderProfileRequest;
 use App\Http\Resources\KaderResource;
 use App\Models\Kader;
+use App\Models\VisitReport;
 use App\Services\Kader\KaderService;
+use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class KaderController extends Controller
 {
@@ -142,5 +146,96 @@ class KaderController extends Controller
         $message = $validated['status_aktif'] ? 'Kader berhasil diaktifkan' : 'Kader berhasil dinonaktifkan';
 
         return ApiResponse::success(new KaderResource($updated), $message);
+    }
+
+    /**
+     * Self-service: riwayat pengajuan pembaruan data pasien (geo/kontak/identitas) yang
+     * PERNAH DIAJUKAN kader ini sendiri saat kunjungan (docs/planning/01 §9) -- ruang lingkup
+     * /app (kader), TERPISAH dari riwayat sisi staf (/dashboard/pasien/{id}, PatientController::
+     * updateHistory) yang di-scope per pasien, bukan per kader.
+     *
+     * Dua lapis status per baris:
+     * - push_status (lokal, visit_reports.sync_status): apakah usulan BERHASIL TERKIRIM ke
+     *   SiLAKES sama sekali (pending = job belum diproses, synced = terkirim, failed = gagal
+     *   setelah retry habis) -- lihat SyncFieldUpdateToSilakesJob.
+     * - fields[].status (SiLAKES, patient_field_updates.status): kalau sudah terkirim, apakah
+     *   DISETUJUI/DITOLAK staf Labkesda -- dibaca LIVE, KOPIPU tidak menyimpan salinan lokal.
+     *
+     * Hanya laporan kunjungan yang BENAR-BENAR mengusulkan sesuatu yang disertakan (geo
+     * dikonfirmasi ATAU field lain diisi) -- laporan biasa tanpa usulan apa pun (mayoritas)
+     * sengaja tidak ikut muncul, itu bukan "pengajuan" sama sekali.
+     */
+    public function updateRequests(Request $request, SilakesApiClient $client): JsonResponse
+    {
+        $kader = $request->user()->kader;
+
+        if ($kader === null) {
+            throw ValidationException::withMessages([
+                'kader' => ['Akun Anda belum punya profil kader.'],
+            ]);
+        }
+
+        $paginator = VisitReport::query()
+            ->whereHas('assignment', fn ($q) => $q->where('kader_id', $kader->id))
+            ->where(fn ($q) => $q->whereNotNull('patient_field_updates')->orWhereNotNull('latitude'))
+            ->with('assignment.patient')
+            ->orderByDesc('created_at')
+            ->paginate($request->integer('per_page', 20));
+
+        $reports = collect($paginator->items());
+
+        // Kelompokkan per external_patient_id supaya SiLAKES cuma dipanggil SEKALI per pasien
+        // unik di halaman ini (bukan sekali per laporan) -- kader bisa saja mengunjungi pasien
+        // yang sama berkali-kali.
+        $historyByPatient = $reports
+            ->pluck('assignment.patient.external_patient_id')
+            ->unique()
+            ->filter()
+            ->mapWithKeys(function (int $externalPatientId) use ($client) {
+                try {
+                    $body = $client->getPembaruanLapanganHistory($externalPatientId);
+
+                    return [$externalPatientId => collect($body['data'] ?? [])->groupBy('kopipu_visit_id')];
+                } catch (Throwable $e) {
+                    report($e);
+
+                    return [$externalPatientId => collect()];
+                }
+            });
+
+        $data = $reports->map(function (VisitReport $report) use ($historyByPatient) {
+            $patient = $report->assignment->patient;
+            /** @var Collection $fieldsForThisVisit */
+            $fieldsForThisVisit = $historyByPatient->get($patient->external_patient_id, collect())
+                ->get($report->id, collect());
+
+            return [
+                'visit_report_id' => $report->id,
+                'patient_id' => $patient->id,
+                'patient_nama' => $patient->nama,
+                'kunjungan_tanggal' => $report->created_at?->toIso8601String(),
+                'push_status' => $report->sync_status,
+                'push_error' => $report->sync_error,
+                'fields' => $fieldsForThisVisit->map(fn ($row) => [
+                    'kategori' => $row['kategori'],
+                    'field_name' => $row['field_name'],
+                    'old_value' => $row['old_value'],
+                    'new_value' => $row['new_value'],
+                    'status' => $row['status'],
+                    'reviewed_at' => $row['reviewed_at'],
+                    'catatan_reviewer' => $row['catatan_reviewer'],
+                ])->values(),
+            ];
+        })->values();
+
+        return ApiResponse::success([
+            'items' => $data,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ]);
     }
 }
