@@ -1,14 +1,14 @@
-# CLAUDE.md — KOPIPU Smart Backend (letakkan file ini di root repo Laravel KOPIPU)
+# CLAUDE.md — PRODULI Backend (letakkan file ini di root repo Laravel PRODULI)
 
 ## Konteks Proyek
 
-KOPIPU Smart adalah sistem "Active Healthcare" untuk UPTD Labkesda/Dinkes
+PRODULI adalah sistem "Active Healthcare" untuk UPTD Labkesda/Dinkes
 Kabupaten Sumenep — mengubah data hasil lab (dari SiLAKES) menjadi
 kunjungan rumah terarah oleh kader ke pasien risiko tinggi (Prolanis).
 Stack: Laravel 11, PHP 8.3, MySQL, Redis, Horizon, Spatie Permission,
 Laravel Pulse, Sanctum.
 
-## Arsitektur (lihat `02-arsitektur-backend-kopipu-smart.md`)
+## Arsitektur (lihat `02-arsitektur-backend-produli.md`)
 
 - Layered: Controller (tipis) → Service → Repository → Model.
 - Response API wajib format `{status, message, data}` via
@@ -43,10 +43,10 @@ Laravel Pulse, Sanctum.
   pengecualian terkontrol**: `POST .../pembaruan-lapangan` (§9 Dokumen 1),
   dipanggil dari `VisitReportService` setelah laporan kunjungan kader
   tersimpan lokal (queue job + retry, bukan synchronous call). Hasilnya
-  SELALU `pending_review` di SiLAKES — KOPIPU tidak perlu polling status,
+  SELALU `pending_review` di SiLAKES — PRODULI tidak perlu polling status,
   perubahan yang disetujui otomatis muncul di sync rutin berikutnya.
 - Token Sanctum tidak boleh diekspos ke Nuxt sebagai localStorage value
   di dokumentasi manapun — refresh token via httpOnly cookie/secure storage.
 - Layer 6 (`FaceDetectionCheck`) **non-aktif secara default** di v1 (feature-flag
-  `kopipu.validation.face_detection_enabled`). Kalau diaktifkan nanti,
+  `produli.validation.face_detection_enabled`). Kalau diaktifkan nanti,
   `face_detected` hanya boolean presence — jangan pernah simpan face embedding.

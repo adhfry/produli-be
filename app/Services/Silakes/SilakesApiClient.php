@@ -40,17 +40,17 @@ class SilakesApiClient
         ?string $signatureSecret = null,
         ?string $writeToken = null,
     ) {
-        $this->baseUrl = rtrim($baseUrl ?? (string) config('kopipu.silakes.base_url'), '/');
-        $this->token = $token ?? (string) config('kopipu.silakes.token');
-        $this->signatureSecret = $signatureSecret ?? (string) config('kopipu.silakes.signature_secret');
+        $this->baseUrl = rtrim($baseUrl ?? (string) config('produli.silakes.base_url'), '/');
+        $this->token = $token ?? (string) config('produli.silakes.token');
+        $this->signatureSecret = $signatureSecret ?? (string) config('produli.silakes.signature_secret');
         // TIDAK divalidasi wajib di sini (beda dari 3 di atas) — cuma dibutuhkan saat benar-benar
         // memanggil endpoint tulis, supaya semua pemanggil GET (SyncSilakesService dkk) tidak
         // ikut gagal boot gara-gara token tulis belum diisi.
-        $this->writeToken = $writeToken ?? (string) config('kopipu.silakes.write_token');
+        $this->writeToken = $writeToken ?? (string) config('produli.silakes.write_token');
 
         if ($this->baseUrl === '' || $this->token === '' || $this->signatureSecret === '') {
             throw new RuntimeException(
-                'Konfigurasi integrasi SiLAKES belum lengkap. Isi SILAKES_BASE_URL, SILAKES_API_TOKEN, dan KOPIPU_INTEGRATION_SECRET di .env.'
+                'Konfigurasi integrasi SiLAKES belum lengkap. Isi SILAKES_BASE_URL, SILAKES_API_TOKEN, dan PRODULI_INTEGRATION_SECRET di .env.'
             );
         }
     }
@@ -192,7 +192,7 @@ class SilakesApiClient
      * GET /api/v1/integration/patients?since=&cursor=&per_page= — paginasi cursor, dipanggil berulang
      * oleh SyncSilakesService sampai meta.has_more=false.
      *
-     * is_prolanis=1 dipaksa selalu terkirim (menimpa $params kalau ada) — KOPIPU secara mandat
+     * is_prolanis=1 dipaksa selalu terkirim (menimpa $params kalau ada) — PRODULI secara mandat
      * cuma untuk program Prolanis, tidak ada alasan menarik/menyimpan data pasien non-Prolanis.
      *
      * @return array{status: string, message: string, data: array, meta: array{per_page:int,has_more:bool,next_cursor:?string}}
@@ -207,7 +207,7 @@ class SilakesApiClient
      * (status=completed DAN status_konfirmasi=approved), sudah difilter di sisi SiLAKES.
      *
      * is_kunjungan_prolanis=1 dipaksa selalu terkirim (menimpa $params kalau ada), pola yang
-     * sama seperti is_prolanis di patients() — KOPIPU secara mandat cuma untuk program
+     * sama seperti is_prolanis di patients() — PRODULI secara mandat cuma untuk program
      * Prolanis, tidak ada alasan menarik/menyimpan hasil lab dari kunjungan non-Prolanis.
      *
      * @return array{status: string, message: string, data: array, meta: array{per_page:int,has_more:bool,next_cursor:?string}}
@@ -220,7 +220,7 @@ class SilakesApiClient
     /**
      * POST /api/v1/integration/patients/{patient_id}/pembaruan-lapangan — SATU-SATUNYA
      * pengecualian dari aturan read-only (docs/planning/01 §9). Semua field body opsional
-     * kecuali patient_id di URL. Hasilnya SELALU pending_review di SiLAKES — KOPIPU tidak
+     * kecuali patient_id di URL. Hasilnya SELALU pending_review di SiLAKES — PRODULI tidak
      * polling status, sinkronisasi rutin (updated_at delta sync) menangkap perubahan begitu
      * staf Labkesda approve.
      *
@@ -233,9 +233,9 @@ class SilakesApiClient
 
     /**
      * GET /api/v1/integration/patients/{patient_id}/pembaruan-lapangan — riwayat usulan yang
-     * PERNAH DIKIRIM KOPIPU (sumber kopipu_kunjungan/kopipu_dashboard) untuk 1 pasien, termasuk
+     * PERNAH DIKIRIM PRODULI (sumber kopipu_kunjungan/kopipu_dashboard) untuk 1 pasien, termasuk
      * status pending_review/approved/rejected. Endpoint BACA (pakai token baca yang sama seperti
-     * patients()/labResults(), BUKAN write token) -- revisi dari keputusan awal "KOPIPU tidak
+     * patients()/labResults(), BUKAN write token) -- revisi dari keputusan awal "PRODULI tidak
      * perlu polling status" (docs/planning/01 §9), sekarang dibutuhkan supaya staf bisa lihat
      * status usulannya tanpa menunggu sync rutin berikutnya.
      *

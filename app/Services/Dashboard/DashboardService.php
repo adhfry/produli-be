@@ -4,7 +4,9 @@ namespace App\Services\Dashboard;
 
 use App\DTO\DashboardSummary;
 use App\Models\Kader;
+use App\Models\Kecamatan;
 use App\Models\PatientsCache;
+use App\Models\Puskesmas;
 use App\Models\RiskClassification;
 use App\Models\User;
 use App\Models\VisitAssignment;
@@ -36,7 +38,15 @@ use Illuminate\Support\Collection;
  */
 class DashboardService
 {
-    private const RISK_LEVELS = ['ringan', 'sedang', 'berat'];
+    // REVISI Bu Kadis: 'tidak_berisiko' ditambahkan -- sebelumnya daftar ini cuma 3 level lama,
+    // jadi patients_per_risk_level diam-diam MEMBUANG pasien yang sudah membaik total (levelnya
+    // ada di tabel tapi fill() tidak pernah mengiterasinya) walau totalPatients sendiri sudah
+    // benar menghitung mereka -- baru ketahuan saat membangun indikator kinerja puskesmas (Fase 4)
+    // yang justru intinya melacak pasien yang membaik ke tier ini.
+    private const RISK_LEVELS = ['tidak_berisiko', 'ringan', 'sedang', 'berat'];
+
+    /** Urutan keparahan sama persis dengan RiskClassificationService::SEVERITY_ORDER. */
+    private const SEVERITY_ORDER = ['tidak_berisiko', 'ringan', 'sedang', 'berat'];
 
     private const VISIT_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
 
@@ -71,6 +81,17 @@ class DashboardService
             ->distinct('risk_classifications.patient_id')
             ->count('risk_classifications.patient_id');
 
+        // Revisi Bu Kadis -- "3.900 dari total 5.000 pasien Prolanis": totalPatients di atas
+        // cuma menghitung pasien yang PUNYA klasifikasi risiko efektif (belum tentu semua
+        // patients_cache -- ada pasien Prolanis yang lolos gerbang eligibility SyncSilakesService
+        // [punya lab_results_cache] tapi belum pernah ada parameter yang melebihi ambang sama
+        // sekali, jadi classify() tidak pernah menulis baris apa pun untuk mereka, lihat
+        // RiskClassificationService::classify()). totalPatientsProlanis = SEMUA baris
+        // patients_cache dalam scope yang sama (super_admin: semua kabupaten / filter puskesmas
+        // opsional, admin_puskesmas/pj_prolanis: terkunci puskesmas sendiri) -- "universe" pasien
+        // Prolanis yang sudah tersinkron PRODULI, apa pun status klasifikasinya.
+        $totalPatientsProlanis = (clone $scopedPatients)->count();
+
         $scopedAssignments = $this->visitAssignmentService->scopedQuery($user);
         if ($applyPuskesmasOverride) {
             $scopedAssignments->where('puskesmas_id_snapshot', $puskesmasId);
@@ -99,6 +120,7 @@ class DashboardService
 
         return new DashboardSummary(
             totalPatients: $totalPatients,
+            totalPatientsProlanis: $totalPatientsProlanis,
             patientsPerRiskLevel: $this->fill(self::RISK_LEVELS, $patientsPerRiskLevel),
             totalAssignments: $totalAssignments,
             visitsPerStatus: $visitsPerStatus,
@@ -107,6 +129,7 @@ class DashboardService
             aktivitasHariIni: $this->aktivitasHariIni($scopedKaders, $dateFrom, $dateTo),
             risikoPerKecamatan: $this->risikoPerKecamatan($scopedPatients, $asOf),
             risikoPerDesa: $this->risikoPerDesa($scopedPatients, $asOf),
+            puskesmasPerformance: $this->puskesmasPerformance($scopedPatients, $dateFrom, $dateTo),
         );
     }
 
@@ -258,23 +281,45 @@ class DashboardService
      */
     private function risikoPerKecamatan(Builder $scopedPatients, ?Carbon $asOf): array
     {
+        // Revisi Bu Kadis: kecamatan PRIMARY sekarang diturunkan dari puskesmas hasil resolusi
+        // (patients_cache.puskesmas_id -> puskesmas.kecamatan_id), BUKAN lagi langsung dari
+        // patients_cache.kecamatan_id (hasil match teks kecamatan_raw) -- setiap puskesmas
+        // pasti berada di SATU kecamatan yang jelas (mis. Puskesmas Pandian & Puskesmas
+        // Pamolokan sama-sama di Kecamatan Kota Sumenep, dijumlah ke bucket yang sama), dan
+        // puskesmas_id sendiri sudah lebih akurat sejak fallback pengirim (Fase 5) menaikkan
+        // cakupan resolusi ke ~99.9%. Fallback ke patients_cache.kecamatan_id HANYA dipakai
+        // saat puskesmas_id null -- yaitu pengirim rujukan perorangan (dokter/bidan, method
+        // 'pengirim_individual') atau benar-benar tidak teridentifikasi ('unresolvable'), di
+        // mana kecamatan pasien MASIH BISA diketahui lewat kecamatan_raw meski puskesmas
+        // spesifiknya tidak.
         $rows = $this->effectiveRiskClassifications($scopedPatients, $asOf)
             ->join('patients_cache', 'patients_cache.id', '=', 'risk_classifications.patient_id')
-            ->join('kecamatan', 'kecamatan.id', '=', 'patients_cache.kecamatan_id')
-            ->selectRaw('kecamatan.id as kecamatan_id, kecamatan.nama as kecamatan_nama, kecamatan.kode_kemendagri as kecamatan_kode, risk_classifications.level as level, count(*) as total')
-            ->groupBy('kecamatan.id', 'kecamatan.nama', 'kecamatan.kode_kemendagri', 'risk_classifications.level')
+            ->leftJoin('puskesmas', 'puskesmas.id', '=', 'patients_cache.puskesmas_id')
+            ->selectRaw('COALESCE(puskesmas.kecamatan_id, patients_cache.kecamatan_id) as effective_kecamatan_id, risk_classifications.level as level, count(*) as total')
+            ->whereRaw('COALESCE(puskesmas.kecamatan_id, patients_cache.kecamatan_id) is not null')
+            ->groupByRaw('COALESCE(puskesmas.kecamatan_id, patients_cache.kecamatan_id), risk_classifications.level')
             ->get();
+
+        // Tabel kecil (~27 baris) -- dimuat sekali, dipakai enrich nama/kode daripada JOIN
+        // langsung ke 'kecamatan' (menghindari kerumitan mencocokkan kolom hasil COALESCE
+        // dalam JOIN ON, lebih jelas dibaca lewat lookup manual).
+        $kecamatanLookup = Kecamatan::all()->keyBy('id');
 
         $grouped = [];
 
         foreach ($rows as $row) {
-            $kecamatanId = (int) $row->kecamatan_id;
+            $kecamatanId = (int) $row->effective_kecamatan_id;
+            $kecamatan = $kecamatanLookup->get($kecamatanId);
+
+            if ($kecamatan === null) {
+                continue;
+            }
 
             if (! isset($grouped[$kecamatanId])) {
                 $grouped[$kecamatanId] = [
                     'kecamatan_id' => $kecamatanId,
-                    'kecamatan_nama' => $row->kecamatan_nama,
-                    'kecamatan_kode' => $row->kecamatan_kode,
+                    'kecamatan_nama' => $kecamatan->nama,
+                    'kecamatan_kode' => $kecamatan->kode_kemendagri,
                     'ringan' => 0,
                     'sedang' => 0,
                     'berat' => 0,
@@ -293,7 +338,7 @@ class DashboardService
      * kecamatan_fallback seperti kecamatan -- level desa butuh presisi lebih tinggi, patokan
      * "kecamatan cuma py 1 puskesmas" tidak cukup buat nunjuk desa mana). Cakupan wajar kecil
      * (355 pasien resolved saat temuan gap wilayah sebelumnya) -- banyak desa tetap kosong
-     * sampai kopipu:import-desa-puskesmas dijalankan penuh.
+     * sampai produli:import-desa-puskesmas dijalankan penuh.
      *
      * @param  Builder<\App\Models\PatientsCache>  $scopedPatients
      * @return array<int, array{desa_id: int, desa_nama: string, desa_kode: ?string, ringan: int, sedang: int, berat: int}>
@@ -328,5 +373,103 @@ class DashboardService
         }
 
         return array_values($grouped);
+    }
+
+    /**
+     * Indikator kinerja puskesmas (revisi Bu Kadis, Fase 4) -- jumlah pasien yang levelnya
+     * MEMBAIK (turun keparahan, lihat SEVERITY_ORDER) antar 2 baris klasifikasi berurutan,
+     * dikelompokkan per puskesmas TEMPAT PASIEN TERDAFTAR SAAT INI (patients_cache.puskesmas_id)
+     * -- bukan puskesmas historis, sama seperti konvensi risikoPerKecamatan/risikoPerDesa yang
+     * juga selalu memakai lokasi TERKINI pasien walau datanya sendiri riwayat.
+     *
+     * "Membaik" dihitung per PASANGAN baris berurutan dalam satu riwayat pasien (bukan cuma
+     * level-awal vs level-sekarang) -- pasien yang naik-turun berkali-kali tetap tercatat semua
+     * episode perbaikannya, bukan cuma bersih/kotor di ujung. Filter periode ($dateFrom/$dateTo,
+     * parameter yang sama dengan dashboard lainnya) diterapkan ke computed_at baris BARU (yang
+     * membaik) -- "kapan perbaikan itu tercatat", bukan kapan kondisi sebelumnya diukur.
+     *
+     * Dihitung di PHP (bukan window function SQL) -- konsisten dengan pola
+     * RiskClassificationService::detectWorseningTrend() yang juga menganalisis riwayat
+     * berurutan di PHP, dan skala data lokal (ribuan pasien) masih wajar untuk pendekatan ini.
+     *
+     * @param  Builder<PatientsCache>  $scopedPatients
+     * @return array<int, array{puskesmas_id: int, puskesmas_nama: string, total_membaik: int, breakdown: array<string, int>}>
+     */
+    private function puskesmasPerformance(Builder $scopedPatients, ?Carbon $dateFrom, ?Carbon $dateTo): array
+    {
+        $periodFrom = $dateFrom?->copy()->startOfDay();
+        $periodTo = $dateTo?->copy()->endOfDay();
+
+        // Pasien belum ter-resolve ke puskesmas mana pun (puskesmas_id null) TIDAK BISA
+        // dikaitkan ke indikator siapa pun -- dikeluarkan dari awal, bukan cuma di-skip belakangan.
+        $puskesmasByPatient = (clone $scopedPatients)->whereNotNull('puskesmas_id')->pluck('puskesmas_id', 'id');
+
+        if ($puskesmasByPatient->isEmpty()) {
+            return [];
+        }
+
+        $history = RiskClassification::query()
+            ->whereIn('patient_id', $puskesmasByPatient->keys())
+            ->orderBy('patient_id')
+            ->orderBy('computed_at')
+            ->orderBy('id')
+            ->get(['patient_id', 'level', 'computed_at']);
+
+        $grouped = [];
+
+        foreach ($history->groupBy('patient_id') as $patientId => $rows) {
+            $rows = $rows->values();
+            $puskesmasId = $puskesmasByPatient->get($patientId);
+
+            for ($i = 1; $i < $rows->count(); $i++) {
+                $prevLevel = $rows[$i - 1]->level;
+                $nextRow = $rows[$i];
+                $nextLevel = $nextRow->level;
+
+                $prevRank = array_search($prevLevel, self::SEVERITY_ORDER, true);
+                $nextRank = array_search($nextLevel, self::SEVERITY_ORDER, true);
+
+                if ($prevRank === false || $nextRank === false || $nextRank >= $prevRank) {
+                    continue;
+                }
+
+                if ($periodFrom !== null && $nextRow->computed_at->lt($periodFrom)) {
+                    continue;
+                }
+
+                if ($periodTo !== null && $nextRow->computed_at->gt($periodTo)) {
+                    continue;
+                }
+
+                if (! isset($grouped[$puskesmasId])) {
+                    $grouped[$puskesmasId] = ['total_membaik' => 0, 'breakdown' => []];
+                }
+
+                $transisi = "{$prevLevel}_ke_{$nextLevel}";
+                $grouped[$puskesmasId]['total_membaik']++;
+                $grouped[$puskesmasId]['breakdown'][$transisi] = ($grouped[$puskesmasId]['breakdown'][$transisi] ?? 0) + 1;
+            }
+        }
+
+        if ($grouped === []) {
+            return [];
+        }
+
+        $puskesmasNames = Puskesmas::query()->whereIn('id', array_keys($grouped))->pluck('nama', 'id');
+
+        $result = [];
+
+        foreach ($grouped as $puskesmasId => $data) {
+            $result[] = [
+                'puskesmas_id' => $puskesmasId,
+                'puskesmas_nama' => $puskesmasNames->get($puskesmasId, '-'),
+                'total_membaik' => $data['total_membaik'],
+                'breakdown' => $data['breakdown'],
+            ];
+        }
+
+        usort($result, fn ($a, $b) => $b['total_membaik'] <=> $a['total_membaik']);
+
+        return $result;
     }
 }

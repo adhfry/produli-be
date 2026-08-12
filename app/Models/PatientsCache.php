@@ -32,6 +32,7 @@ class PatientsCache extends Model
         'wilayah_status',
         'puskesmas_id',
         'puskesmas_resolution_method',
+        'pengirim_raw',
         'geo_status',
         'latitude',
         'longitude',

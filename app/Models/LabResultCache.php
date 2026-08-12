@@ -18,6 +18,7 @@ class LabResultCache extends Model
         'nilai_rujukan',
         'class_hasil',
         'validation_status',
+        'pengirim',
         'tanggal_periksa',
         'synced_at',
     ];

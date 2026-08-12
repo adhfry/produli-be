@@ -22,7 +22,7 @@ class VisitValidationLayersTest extends TestCase
     {
         parent::setUp();
 
-        $this->testImagePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'kopipu_test_'.uniqid().'.jpg';
+        $this->testImagePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'produli_test_'.uniqid().'.jpg';
         $image = imagecreatetruecolor(200, 200);
         imagefill($image, 0, 0, (int) imagecolorallocate($image, 100, 150, 200));
         imagejpeg($image, $this->testImagePath);
@@ -270,7 +270,7 @@ class VisitValidationLayersTest extends TestCase
 
     public function test_face_detection_check_pass_kalau_diaktifkan_dan_wajah_terdeteksi(): void
     {
-        Config::set('kopipu.validation.face_detection_enabled', true);
+        Config::set('produli.validation.face_detection_enabled', true);
 
         $layer = app(FaceDetectionCheck::class);
         $this->assertTrue($layer->isEnabled());
@@ -281,7 +281,7 @@ class VisitValidationLayersTest extends TestCase
 
     public function test_face_detection_check_gagal_kalau_diaktifkan_tapi_wajah_tidak_terdeteksi(): void
     {
-        Config::set('kopipu.validation.face_detection_enabled', true);
+        Config::set('produli.validation.face_detection_enabled', true);
 
         $result = app(FaceDetectionCheck::class)->validate($this->makeContext(['faceDetectedClientSide' => false]));
 

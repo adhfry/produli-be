@@ -3,8 +3,8 @@
 namespace App\DTO;
 
 /**
- * Hasil resolusi teks bebas kel_desa/kecamatan -> desa/kecamatan baku KOPIPU.
- * Lihat docs/planning/02-arsitektur-backend-kopipu-smart.md §2a.
+ * Hasil resolusi teks bebas kel_desa/kecamatan -> desa/kecamatan baku PRODULI.
+ * Lihat docs/planning/02-arsitektur-backend-produli.md §2a.
  */
 final class WilayahResolution
 {

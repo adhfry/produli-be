@@ -9,6 +9,7 @@ use App\Http\Resources\VisitAssignmentResource;
 use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\VisitAssignment;
+use App\Services\Visit\CareAssignmentService;
 use App\Services\Visit\VisitAssignmentService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -16,7 +17,10 @@ use Illuminate\Http\Request;
 
 class VisitAssignmentController extends Controller
 {
-    public function __construct(private readonly VisitAssignmentService $service) {}
+    public function __construct(
+        private readonly VisitAssignmentService $service,
+        private readonly CareAssignmentService $careAssignmentService,
+    ) {}
 
     /**
      * List assignment (docs/planning/02 §7) -- kader murni: tugasnya sendiri saja,
@@ -66,6 +70,11 @@ class VisitAssignmentController extends Controller
             $request->validated('scheduled_date'),
             $request->validated('priority'),
         );
+
+        // Revisi Bu Kadis: kader yang baru ditugaskan otomatis dapat rencana kunjungan
+        // BERULANG mingguan (pendampingan minum obat) -- idempotent, lihat docblock service.
+        $this->careAssignmentService->ensureKaderPlan($assignment);
+
         $assignment->load(['patient', 'kader.user', 'assignedBy', 'companions.kader.user']);
 
         return ApiResponse::success(new VisitAssignmentResource($assignment), 'Assignment berhasil dibuat', 201);
@@ -95,6 +104,7 @@ class VisitAssignmentController extends Controller
         );
 
         foreach ($result['created'] as $assignment) {
+            $this->careAssignmentService->ensureKaderPlan($assignment);
             $assignment->load(['patient', 'kader.user', 'assignedBy', 'companions.kader.user']);
         }
 

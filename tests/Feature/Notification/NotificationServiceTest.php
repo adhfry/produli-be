@@ -32,8 +32,8 @@ class NotificationServiceTest extends TestCase
     {
         parent::setUp();
 
-        Config::set('kopipu.reminders.h_minus_1_time', '16:00');
-        Config::set('kopipu.reminders.same_day_time', '06:00');
+        Config::set('produli.reminders.h_minus_1_time', '16:00');
+        Config::set('produli.reminders.same_day_time', '06:00');
 
         $this->service = app(NotificationService::class);
 
@@ -204,10 +204,12 @@ class NotificationServiceTest extends TestCase
 
     public function test_deliver_channel_tidak_dikenal_melempar_exception(): void
     {
+        // 'sms' sengaja dipakai (bukan 'wa') -- 'wa' sekarang channel SUNGGUHAN
+        // (WhatsappReminderChannel, revisi Bu Kadis), 'sms' tetap tidak terdaftar sama sekali.
         $assignment = $this->makeAssignment(now()->toDateString());
         $reminder = Reminder::create([
             'assignment_id' => $assignment->id,
-            'channel' => 'wa',
+            'channel' => 'sms',
             'scheduled_at' => now()->subMinute(),
             'status' => 'pending',
         ]);

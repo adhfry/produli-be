@@ -42,8 +42,8 @@ class GeofenceCheck implements VisitValidationLayer
         );
 
         $radius = $context->geoStatus === 'verified'
-            ? (int) config('kopipu.validation.geofence.radius_meters_verified')
-            : (int) config('kopipu.validation.geofence.radius_meters_approximate');
+            ? (int) config('produli.validation.geofence.radius_meters_verified')
+            : (int) config('produli.validation.geofence.radius_meters_approximate');
 
         $metadata = ['distance_meters' => $distanceMeters, 'radius_meters' => $radius];
 

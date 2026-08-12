@@ -26,7 +26,7 @@ class FaceDetectionCheck implements VisitValidationLayer
 
     public function isEnabled(): bool
     {
-        return (bool) config('kopipu.validation.face_detection_enabled');
+        return (bool) config('produli.validation.face_detection_enabled');
     }
 
     public function validate(VisitValidationContext $context): VisitValidationResult

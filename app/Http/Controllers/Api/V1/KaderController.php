@@ -159,7 +159,7 @@ class KaderController extends Controller
      *   SiLAKES sama sekali (pending = job belum diproses, synced = terkirim, failed = gagal
      *   setelah retry habis) -- lihat SyncFieldUpdateToSilakesJob.
      * - fields[].status (SiLAKES, patient_field_updates.status): kalau sudah terkirim, apakah
-     *   DISETUJUI/DITOLAK staf Labkesda -- dibaca LIVE, KOPIPU tidak menyimpan salinan lokal.
+     *   DISETUJUI/DITOLAK staf Labkesda -- dibaca LIVE, PRODULI tidak menyimpan salinan lokal.
      *
      * Hanya laporan kunjungan yang BENAR-BENAR mengusulkan sesuatu yang disertakan (geo
      * dikonfirmasi ATAU field lain diisi) -- laporan biasa tanpa usulan apa pun (mayoritas)

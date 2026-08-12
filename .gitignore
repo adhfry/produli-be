@@ -17,3 +17,6 @@ yarn-error.log
 /.fleet
 /.idea
 /.vscode
+secret.txt
+/storage/firebase-credentials.json
+/*firebase-adminsdk*.json

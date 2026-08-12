@@ -16,7 +16,7 @@ class AuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    private const REFRESH_COOKIE = 'kopipu_refresh_token';
+    private const REFRESH_COOKIE = 'produli_refresh_token';
 
     public function test_login_dengan_kredensial_benar_mengeluarkan_access_token_dan_refresh_cookie(): void
     {

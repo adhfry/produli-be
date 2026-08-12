@@ -18,7 +18,7 @@ use Illuminate\Validation\ValidationException;
  * Assign kader ke pasien untuk kunjungan rumah. Lihat docs/planning/02 §2/§2a/§3.
  *
  * Reminder H-1/hari-H (§3/§8) TIDAK di-trigger eksplisit di sini -- NotificationService
- * (kopipu:send-visit-reminders, jalan twiceDaily) yang polling assignment pending H-1/hari-H
+ * (produli:send-visit-reminders, jalan twiceDaily) yang polling assignment pending H-1/hari-H
  * secara berkala, jadi assignment yang dibuat lewat assign() otomatis kepantau tanpa perlu
  * dipanggil manual dari sini.
  *
@@ -201,7 +201,7 @@ class VisitAssignmentService
     }
 
     /**
-     * Tolak assignment kalau KOPIPU tidak tahu wilayah pasien cukup jelas untuk dikirim kader —
+     * Tolak assignment kalau PRODULI tidak tahu wilayah pasien cukup jelas untuk dikirim kader —
      * wilayah_status=resolved (desa presisi) ATAU puskesmas_resolution_method=kecamatan_fallback
      * (kecamatan cuma 1 puskesmas) keduanya dianggap cukup. Selain itu ditolak (docs/planning/02 §2a,
      * diperluas dari "wilayah_status=resolved" saja).
@@ -225,11 +225,11 @@ class VisitAssignmentService
         }
 
         // Bisa terjadi WALAU wilayah_status=resolved: desa sudah match tapi desa.puskesmas_id
-        // itu sendiri belum di-assign Dinkes (lihat kopipu:import-desa-puskesmas) — tanpa ini,
+        // itu sendiri belum di-assign Dinkes (lihat produli:import-desa-puskesmas) — tanpa ini,
         // puskesmas_id_snapshot (NOT NULL) tidak punya nilai untuk disimpan.
         if ($patient->puskesmas_id === null) {
             throw ValidationException::withMessages([
-                'patient' => ['Puskesmas pasien belum ter-assign — lengkapi lewat kopipu:import-desa-puskesmas dulu.'],
+                'patient' => ['Puskesmas pasien belum ter-assign — lengkapi lewat produli:import-desa-puskesmas dulu.'],
             ]);
         }
     }

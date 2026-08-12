@@ -5,6 +5,9 @@ namespace App\Services\Silakes;
 use App\Models\IntegrationSyncLog;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
+use App\Services\Notification\NotifiableTarget;
+use App\Services\Notification\NotificationPayload;
+use App\Services\Notification\NotifyService;
 use App\Services\Risk\RiskClassificationService;
 use App\Services\Wilayah\WilayahResolver;
 use Carbon\Carbon;
@@ -33,6 +36,7 @@ class SyncSilakesService
         private readonly SilakesApiClient $client,
         private readonly WilayahResolver $wilayahResolver,
         private readonly RiskClassificationService $riskClassificationService,
+        private readonly NotifyService $notifyService,
     ) {}
 
     /**
@@ -55,7 +59,7 @@ class SyncSilakesService
 
     /**
      * run() + catat hasilnya ke integration_sync_logs -- SATU-SATUNYA tempat yang menulis log
-     * ini, dipakai bersama oleh kopipu:sync-silakes (cron, throttle 48 jam) dan
+     * ini, dipakai bersama oleh produli:sync-silakes (cron, throttle 48 jam) dan
      * SilakesSyncController (tombol "Sinkronisasi SiLAKES" di sidebar, super_admin, TANPA
      * throttle -- klik manual berarti operator secara eksplisit minta sync sekarang). Supaya
      * kedua jalur ini selalu mencatat log yang identik, bukan dua salinan logika yang bisa
@@ -82,6 +86,20 @@ class SyncSilakesService
                 'details' => $result,
             ]);
 
+            // Broadcast (revisi Bu Kadis) -- 'push' saja (in-app), bukan email/WA ke SEMUA user
+            // tiap sync (jalan dailyAt('02:00') + tiap klik manual, terlalu sering untuk kanal
+            // yang lebih intrusif). Cuma untuk sync yang BENAR-BENAR sukses (bukan branch catch).
+            $this->notifyService->notify(
+                NotifiableTarget::broadcast(),
+                new NotificationPayload(
+                    type: 'silakes_sync_completed',
+                    title: 'Sinkronisasi SiLAKES Selesai',
+                    body: "{$result['patients_synced']} pasien, {$result['lab_results_synced']} hasil lab tersinkron.",
+                    data: array_merge(['type' => 'silakes_sync_completed'], $result),
+                ),
+                ['push'],
+            );
+
             return $result;
         } catch (Throwable $e) {
             IntegrationSyncLog::create([
@@ -99,13 +117,13 @@ class SyncSilakesService
 
     /**
      * Hanya menarik pasien Prolanis — filter is_prolanis=1 dipaksa di SilakesApiClient::patients(),
-     * bukan di sini, supaya berlaku untuk pemanggil mana pun (mandat KOPIPU, bukan pilihan sync ini saja).
+     * bukan di sini, supaya berlaku untuk pemanggil mana pun (mandat PRODULI, bukan pilihan sync ini saja).
      *
      * Pasien is_prolanis=1 TAPI tidak punya riwayat surat_hasil_labs final (completed+approved+
-     * is_kunjungan_prolanis) sejak kopipu.silakes.lab_results_since DILEWATI (tidak di-upsert) --
-     * belum relevan untuk KOPIPU (lihat isEligible()). Kalau sebelumnya sempat ter-cache lalu jadi
+     * is_kunjungan_prolanis) sejak produli.silakes.lab_results_since DILEWATI (tidak di-upsert) --
+     * belum relevan untuk PRODULI (lihat isEligible()). Kalau sebelumnya sempat ter-cache lalu jadi
      * tidak eligible lagi (mis. cutoff berubah), baris lama TIDAK otomatis dihapus di sini --
-     * lihat kopipu:prune-ineligible-patients untuk pembersihan eksplisit.
+     * lihat produli:prune-ineligible-patients untuk pembersihan eksplisit.
      */
     public function syncPatients(): int
     {
@@ -154,7 +172,7 @@ class SyncSilakesService
     public function syncLabResults(): array
     {
         $since = $this->toIso8601(LabResultCache::max('synced_at'));
-        $sinceDateCutoff = (string) config('kopipu.silakes.lab_results_since');
+        $sinceDateCutoff = (string) config('produli.silakes.lab_results_since');
         $cursor = null;
         $count = 0;
         $externalPatientIdsWithNewData = [];
@@ -167,7 +185,7 @@ class SyncSilakesService
             ]));
 
             foreach ($body['data'] ?? [] as $labResult) {
-                // Business cutoff KOPIPU (bukan syarat SiLAKES) — hasil lab lebih tua dari ini
+                // Business cutoff PRODULI (bukan syarat SiLAKES) — hasil lab lebih tua dari ini
                 // tidak relevan untuk ambang batas risiko terkini, jangan ikut di-cache.
                 if (($labResult['tanggal'] ?? null) === null || $labResult['tanggal'] < $sinceDateCutoff) {
                     continue;
@@ -205,7 +223,7 @@ class SyncSilakesService
     private function upsertPatient(array $row): void
     {
         $resolution = $this->wilayahResolver->resolve($row['kel_desa'] ?? null, $row['kecamatan'] ?? null);
-        $puskesmas = $this->wilayahResolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId);
+        $puskesmas = $this->wilayahResolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $row['patient_id']);
 
         PatientsCache::updateOrCreate(
             ['external_patient_id' => $row['patient_id']],
@@ -229,6 +247,7 @@ class SyncSilakesService
                 'wilayah_status' => $resolution->wilayahStatus,
                 'puskesmas_id' => $puskesmas['puskesmas_id'],
                 'puskesmas_resolution_method' => $puskesmas['method'],
+                'pengirim_raw' => $puskesmas['pengirim_raw'],
                 'last_synced_at' => $row['updated_at'],
             ],
         );
@@ -245,6 +264,10 @@ class SyncSilakesService
                 'nilai_rujukan' => $parameter['nilai_rujukan'] ?? null,
                 'class_hasil' => $parameter['class_hasil'] ?? null,
                 'validation_status' => $parameter['validation_status'] ?? null,
+                // Revisi Bu Kadis (Fase 5) -- teks bebas nama puskesmas/institusi pengirim
+                // (docs/planning/04 §Endpoint 2), dipakai WilayahResolver sebagai sinyal
+                // TAMBAHAN resolusi puskesmas, lihat resolvePuskesmas().
+                'pengirim' => $labResult['pengirim'] ?? null,
                 'tanggal_periksa' => $labResult['tanggal'],
                 'synced_at' => $labResult['updated_at'],
             ],

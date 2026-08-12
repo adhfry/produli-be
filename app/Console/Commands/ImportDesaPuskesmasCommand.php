@@ -18,7 +18,7 @@ use Illuminate\Console\Command;
  */
 class ImportDesaPuskesmasCommand extends Command
 {
-    protected $signature = 'kopipu:import-desa-puskesmas
+    protected $signature = 'produli:import-desa-puskesmas
         {file : Path ke file CSV}
         {--dry-run : Tampilkan preview tanpa menyimpan perubahan}';
 

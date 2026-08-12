@@ -5,15 +5,16 @@ namespace App\Services\Wilayah;
 use App\DTO\WilayahResolution;
 use App\Models\Desa;
 use App\Models\Kecamatan;
+use App\Models\LabResultCache;
 use App\Models\Puskesmas;
 use App\Models\WilayahMapping;
 use App\Support\WilayahTextNormalizer;
 use Illuminate\Support\Collection;
 
 /**
- * Resolusi teks bebas kel_desa/kecamatan (dari SiLAKES) -> desa/kecamatan baku KOPIPU,
+ * Resolusi teks bebas kel_desa/kecamatan (dari SiLAKES) -> desa/kecamatan baku PRODULI,
  * plus resolvePuskesmas() untuk penurunan puskesmas dari hasil resolusi tsb.
- * Lihat docs/planning/02-arsitektur-backend-kopipu-smart.md §2a/§2b.
+ * Lihat docs/planning/02-arsitektur-backend-produli.md §2a/§2b.
  */
 class WilayahResolver
 {
@@ -48,6 +49,8 @@ class WilayahResolver
     ];
 
     private ?Collection $kecamatanCache = null;
+
+    private ?Collection $puskesmasCache = null;
 
     public function resolve(?string $kelDesaRaw, ?string $kecamatanRaw): WilayahResolution
     {
@@ -102,35 +105,205 @@ class WilayahResolver
     }
 
     /**
-     * @return array{puskesmas_id: ?int, method: string}
+     * Token pertama pengirim yang menandakan rujukan PERORANGAN (dokter/bidan), bukan institusi
+     * puskesmas -- data nyata penuh nilai seperti "dr. Laos Susantina, SE", "Bidan Ika",
+     * "drg. Yenniy Ismullah" (revisi Bu Kadis, Fase 5). Dicek SEBELUM mencoba cocokkan ke
+     * puskesmas -- rujukan begini TIDAK PERNAH boleh dipaksa jadi salah satu dari 31 puskesmas.
      */
-    public function resolvePuskesmas(?int $desaId, ?int $kecamatanId): array
+    private const INDIVIDUAL_REFERRAL_PREFIXES = ['DR', 'DRG', 'DOKTER', 'BIDAN', 'PROF'];
+
+    /**
+     * Token yang menandakan awal nama institusi puskesmas -- dicocokkan TYPO-TOLERANT (lihat
+     * looksLikePuskesmasPrefixToken()) karena data nyata penuh salah ketik pada kata "Puskesmas"
+     * itu sendiri: "Puskemas"/"Puskesams"/"Pusekesmas"/"Piskesmas", belum lagi singkatan "PKM".
+     */
+    private const PUSKESMAS_PREFIX_CANDIDATES = ['PUSKESMAS', 'PKM', 'UPTD', 'UPT'];
+
+    /**
+     * $externalPatientId (opsional) -- dipakai untuk fallback TERAKHIR lewat
+     * matchPuskesmasByPengirim()/isIndividualReferral() kalau desa/kecamatan_fallback di atas
+     * SUDAH gagal (revisi Bu Kadis, Fase 5). Tanpa argumen ini, perilaku persis sama seperti
+     * sebelumnya. `pengirim_raw` SELALU disertakan di hasil (apa pun method-nya) kalau
+     * $externalPatientId diisi -- dipakai frontend menampilkan "Rujukan: dr. X" untuk kasus
+     * individual, atau teks asli untuk audit kasus unresolvable.
+     *
+     * @return array{puskesmas_id: ?int, method: string, pengirim_raw: ?string}
+     */
+    public function resolvePuskesmas(?int $desaId, ?int $kecamatanId, ?int $externalPatientId = null): array
     {
+        $pengirimRaw = $externalPatientId !== null ? $this->latestPengirim($externalPatientId) : null;
+
         if ($desaId) {
             $puskesmasId = Desa::find($desaId)?->puskesmas_id;
 
             if ($puskesmasId) {
-                return ['puskesmas_id' => $puskesmasId, 'method' => 'desa'];
+                return ['puskesmas_id' => $puskesmasId, 'method' => 'desa', 'pengirim_raw' => $pengirimRaw];
             }
         }
 
-        if (! $kecamatanId) {
-            return ['puskesmas_id' => null, 'method' => 'unresolvable'];
+        if ($kecamatanId) {
+            // Sebagian besar kecamatan di Sumenep cuma punya 1 puskesmas —
+            // kalau begitu, aman diinfer dari kecamatan saja tanpa desa (§2b).
+            // Pakai puskesmas.kecamatan_id langsung (bukan whereHas('desa', ...)) — link itu
+            // butuh desa.puskesmas_id sudah ter-assign duluan (baru dilakukan lewat CSV manual
+            // utk 4 kecamatan multi-puskesmas), sementara puskesmas.kecamatan_id sudah terisi
+            // penuh dari seeder utk semua 31 puskesmas, tidak bergantung assignment desa apa pun.
+            $candidates = Puskesmas::where('kecamatan_id', $kecamatanId)->pluck('id');
+
+            if ($candidates->count() === 1) {
+                return ['puskesmas_id' => $candidates->first(), 'method' => 'kecamatan_fallback', 'pengirim_raw' => $pengirimRaw];
+            }
         }
 
-        // Sebagian besar kecamatan di Sumenep cuma punya 1 puskesmas —
-        // kalau begitu, aman diinfer dari kecamatan saja tanpa desa (§2b).
-        // Pakai puskesmas.kecamatan_id langsung (bukan whereHas('desa', ...)) — link itu
-        // butuh desa.puskesmas_id sudah ter-assign duluan (baru dilakukan lewat CSV manual
-        // utk 4 kecamatan multi-puskesmas), sementara puskesmas.kecamatan_id sudah terisi
-        // penuh dari seeder utk semua 31 puskesmas, tidak bergantung assignment desa apa pun.
-        $candidates = Puskesmas::where('kecamatan_id', $kecamatanId)->pluck('id');
+        // Revisi Bu Kadis (Fase 5): fallback TERAKHIR sebelum menyerah -- cocokkan kolom bebas
+        // `pengirim` (surat_hasil_labs SiLAKES, docs/planning/04) ke puskesmas.nama. Ini SINYAL
+        // TAMBAHAN, bukan pengganti desa/kecamatan_fallback -- baru dicoba setelah keduanya
+        // gagal.
+        if ($pengirimRaw !== null) {
+            if ($this->isIndividualReferral($pengirimRaw)) {
+                return ['puskesmas_id' => null, 'method' => 'pengirim_individual', 'pengirim_raw' => $pengirimRaw];
+            }
 
-        if ($candidates->count() === 1) {
-            return ['puskesmas_id' => $candidates->first(), 'method' => 'kecamatan_fallback'];
+            $puskesmas = $this->matchPuskesmasByPengirim($pengirimRaw);
+
+            if ($puskesmas !== null) {
+                return ['puskesmas_id' => $puskesmas->id, 'method' => 'pengirim_matched', 'pengirim_raw' => $pengirimRaw];
+            }
         }
 
-        return ['puskesmas_id' => null, 'method' => 'unresolvable'];
+        return ['puskesmas_id' => null, 'method' => 'unresolvable', 'pengirim_raw' => $pengirimRaw];
+    }
+
+    private function latestPengirim(int $externalPatientId): ?string
+    {
+        $raw = LabResultCache::where('patient_id', $externalPatientId)
+            ->whereNotNull('pengirim')
+            ->orderByDesc('tanggal_periksa')
+            ->value('pengirim');
+
+        return $raw !== null && trim($raw) !== '' ? trim($raw) : null;
+    }
+
+    /**
+     * Rujukan perorangan (dokter/bidan) -- token pertama dicocokkan case-insensitive terhadap
+     * INDIVIDUAL_REFERRAL_PREFIXES, bukan puskesmas sama sekali (lihat docblock const).
+     */
+    private function isIndividualReferral(string $raw): bool
+    {
+        $firstToken = preg_split('/\s+/', trim($raw), 2)[0] ?? '';
+        $firstToken = mb_strtoupper(preg_replace('/[^A-Za-z]/', '', $firstToken));
+
+        return in_array($firstToken, self::INDIVIDUAL_REFERRAL_PREFIXES, true);
+    }
+
+    /**
+     * Cocokkan `pengirim` (teks bebas, sudah dipastikan BUKAN rujukan perorangan oleh
+     * isIndividualReferral()) ke puskesmas.nama -- data nyata sangat kotor: variasi kapitalisasi/
+     * spasi/tanda hubung/apostrof (semua sudah ditangani normalize()), DITAMBAH salah ketik pada
+     * kata "Puskesmas" itu sendiri ("Puskemas"/"Puskesams"/"Pusekesmas"/"Piskesmas"/singkatan
+     * "PKM") MAUPUN pada nama puskesmas-nya ("Prgaan" utk "Pragaan", "NUNGGUNONG" utk
+     * "Nonggunong") -- revisi Bu Kadis, Fase 5.
+     *
+     * Strategi 2 lapis, keduanya lewat skor "seberapa jauh" (0=exact, 1=salah satu prefix dari
+     * yang lain, N=jarak Levenshtein) supaya bisa dibandingkan APPLES-TO-APPLES lintas 31
+     * kandidat dan dipilih SATU yang paling meyakinkan:
+     * 1. Exact match (skor 0) setelah prefix institusi (typo-tolerant) dibuang dari depan.
+     * 2. Salah satu nama adalah PREFIX dari yang lain (skor 1) -- menangkap kasus pengirim
+     *    menyebut sebagian nama saja (mis. "Puskesmas Moncek" padahal resminya "Moncek Tengah").
+     * 3. Jarak Levenshtein <= ambang toleran (skor = jarak) -- menangkap salah ketik ringan.
+     *
+     * TIDAK PERNAH menebak kalau ada 2+ kandidat dengan skor sama/berdekatan (mis. "Batu" bisa
+     * cocok prefix "Batuan" MAUPUN "Batuputih" sekaligus) -- ambigu dibiarkan unresolvable.
+     */
+    private function matchPuskesmasByPengirim(string $pengirimRaw): ?Puskesmas
+    {
+        $tokens = preg_split('/\s+/', mb_strtoupper(trim($pengirimRaw)), -1, PREG_SPLIT_NO_EMPTY);
+        $tokens = array_values(array_filter(
+            array_map(fn (string $t) => preg_replace('/[^A-Z0-9]/', '', $t), $tokens),
+            fn (string $t) => $t !== ''
+        ));
+
+        while ($tokens !== [] && $this->looksLikePuskesmasPrefixToken($tokens[0])) {
+            array_shift($tokens);
+        }
+
+        if ($tokens === []) {
+            return null;
+        }
+
+        $target = implode('', $tokens);
+
+        $best = null;
+        $bestScore = null;
+        $secondBestScore = null;
+
+        foreach ($this->allPuskesmas() as $puskesmas) {
+            $candidate = WilayahTextNormalizer::normalizeAdministrativeName($puskesmas->nama, 'puskesmas');
+            $score = $this->matchScore($target, $candidate);
+
+            if ($score === null) {
+                continue;
+            }
+
+            if ($bestScore === null || $score < $bestScore) {
+                $secondBestScore = $bestScore;
+                $bestScore = $score;
+                $best = $puskesmas;
+            } elseif ($secondBestScore === null || $score < $secondBestScore) {
+                $secondBestScore = $score;
+            }
+        }
+
+        if ($best === null) {
+            return null;
+        }
+
+        // Exact match (skor 0) SELALU diterima -- kandidat lain yang kebetulan "dekat" tidak
+        // relevan kalau yang ini sudah cocok persis. Skor > 0 (prefix/typo) dianggap ambigu
+        // HANYA kalau skor kedua-terbaik SAMA PERSIS (mis. "Masalembu" prefix dari 2 puskesmas
+        // sekaligus, skor 1 keduanya) -- BUKAN sekadar "berdekatan". Margin longgar sempat
+        // menolak kasus jelas seperti "Puskesmas Mandng" (typo 1 huruf dari "Manding", skor 1)
+        // gara-gara "Ganding" kebetulan skor 2 -- 2 nama tempat pendek yang beda kandidatnya
+        // sendiri sudah cukup jauh, bukan ambiguitas sungguhan.
+        if ($bestScore > 0 && $secondBestScore !== null && $secondBestScore === $bestScore) {
+            return null;
+        }
+
+        return $best;
+    }
+
+    private function looksLikePuskesmasPrefixToken(string $token): bool
+    {
+        foreach (self::PUSKESMAS_PREFIX_CANDIDATES as $prefix) {
+            if (levenshtein($token, $prefix) <= 2) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return ?int null kalau tidak cukup dekat sama sekali, selain itu skor 0 (exact) / 1
+     *              (salah satu prefix dari yang lain) / jarak Levenshtein.
+     */
+    private function matchScore(string $target, string $candidate): ?int
+    {
+        if ($target === $candidate) {
+            return 0;
+        }
+
+        // Minimal 4 karakter -- di bawah itu prefix-match terlalu longgar (banyak nama singkat
+        // kebetulan berawalan sama).
+        if (strlen($target) >= 4 && strlen($candidate) >= 4
+            && (str_starts_with($candidate, $target) || str_starts_with($target, $candidate))) {
+            return 1;
+        }
+
+        $distance = levenshtein($target, $candidate);
+        $threshold = max(2, (int) floor(strlen($candidate) * 0.25));
+
+        return $distance <= $threshold ? $distance : null;
     }
 
     /**
@@ -170,6 +343,11 @@ class WilayahResolver
     private function allKecamatan(): Collection
     {
         return $this->kecamatanCache ??= Kecamatan::all();
+    }
+
+    private function allPuskesmas(): Collection
+    {
+        return $this->puskesmasCache ??= Puskesmas::all();
     }
 
     private function isJunk(string $raw): bool

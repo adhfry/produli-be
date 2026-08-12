@@ -13,11 +13,11 @@ use Throwable;
 
 /**
  * Trigger manual sinkronisasi SiLAKES dari UI (tombol "Sinkronisasi SiLAKES" di sidebar) --
- * super_admin saja. BEDA dari kopipu:sync-silakes (scheduler, throttle 48 jam) -- trigger
+ * super_admin saja. BEDA dari produli:sync-silakes (scheduler, throttle 48 jam) -- trigger
  * manual ini SELALU jalan begitu diklik (operator secara eksplisit minta sync sekarang), tidak
  * digerbangi throttle. Berjalan SYNCHRONOUS di request HTTP (bukan queued job) -- delta sync
  * harian (kasus normal setelah backfill awal) biasanya selesai dalam hitungan detik; full
- * backfill besar tetap sebaiknya lewat CLI (kopipu:sync-silakes), bukan tombol ini.
+ * backfill besar tetap sebaiknya lewat CLI (produli:sync-silakes), bukan tombol ini.
  */
 class SilakesSyncController extends Controller
 {

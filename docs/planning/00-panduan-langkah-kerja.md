@@ -1,7 +1,7 @@
-# Panduan Langkah Kerja — KOPIPU Smart
+# Panduan Langkah Kerja — PRODULI
 
 Urutan ini disusun berdasarkan dependensi: SiLAKES harus siap menyediakan data
-dulu sebelum backend KOPIPU bisa sinkronisasi sungguhan, dan backend harus
+dulu sebelum backend PRODULI bisa sinkronisasi sungguhan, dan backend harus
 punya endpoint dulu sebelum frontend bisa dites end-to-end.
 
 **Aturan main di semua tahap:**
@@ -17,21 +17,21 @@ punya endpoint dulu sebelum frontend bisa dites end-to-end.
 | File                                    | Rename jadi    | Taruh di                                                                 |
 | --------------------------------------- | -------------- | ------------------------------------------------------------------------ |
 | `CLAUDE-untuk-repo-silakes.md`          | `CLAUDE.md`    | root repo **SiLAKES**                                                    |
-| `CLAUDE-untuk-repo-kopipu-backend.md`   | `CLAUDE.md`    | root repo **KOPIPU backend**                                             |
-| `CLAUDE-untuk-repo-kopipu-frontend.md`  | `CLAUDE.md`    | root repo **KOPIPU frontend**                                            |
-| `01-integrasi-silakes-kopipu.md`        | _(nama tetap)_ | `docs/planning/` di repo **SiLAKES** dan **KOPIPU backend** (dua-duanya) |
-| `02-arsitektur-backend-kopipu-smart.md` | _(nama tetap)_ | `docs/planning/` di repo **KOPIPU backend**                              |
-| `03-uiux-frontend-kopipu-nuxt.md`       | _(nama tetap)_ | `docs/planning/` di repo **KOPIPU frontend**                             |
+| `CLAUDE-untuk-repo-produli-backend.md`   | `CLAUDE.md`    | root repo **PRODULI backend**                                             |
+| `CLAUDE-untuk-repo-produli-frontend.md`  | `CLAUDE.md`    | root repo **PRODULI frontend**                                            |
+| `01-integrasi-silakes-produli.md`        | _(nama tetap)_ | `docs/planning/` di repo **SiLAKES** dan **PRODULI backend** (dua-duanya) |
+| `02-arsitektur-backend-produli.md` | _(nama tetap)_ | `docs/planning/` di repo **PRODULI backend**                              |
+| `03-uiux-frontend-produli-nuxt.md`       | _(nama tetap)_ | `docs/planning/` di repo **PRODULI frontend**                             |
 
 ---
 
 ## TAHAP 1 — Repo: SiLAKES ✅ SELESAI
 
-_Kenapa duluan: backend KOPIPU butuh endpoint ini untuk sinkronisasi data asli. Tanpa ini, backend cuma bisa develop pakai data dummy._
+_Kenapa duluan: backend PRODULI butuh endpoint ini untuk sinkronisasi data asli. Tanpa ini, backend cuma bisa develop pakai data dummy._
 
 1. Buka folder repo SiLAKES di VS Code → chat baru.
 2. **Prompt 1 (sanity check):**
-    > Baca CLAUDE.md dan docs/planning/01-integrasi-silakes-kopipu.md, lalu ringkas pemahamanmu soal proyek ini dan bagian yang jadi tanggung jawab repo ini.
+    > Baca CLAUDE.md dan docs/planning/01-integrasi-silakes-produli.md, lalu ringkas pemahamanmu soal proyek ini dan bagian yang jadi tanggung jawab repo ini.
 3. **Prompt 2:**
     > Buatkan 3 endpoint read-only integrasi sesuai docs/planning/01: GET /api/v1/integration/patients, GET /api/v1/integration/lab-results (delta sync pakai cursor), GET /api/v1/integration/master-wilayah. Sertakan service-account user dengan Sanctum ability `integration:read-lab-results`, middleware throttle, dan verifikasi HMAC signature di header X-Signature.
 4. Review kode, test manual (Postman/curl) dengan token dummy, baru commit.
@@ -48,13 +48,13 @@ _Kenapa duluan: backend KOPIPU butuh endpoint ini untuk sinkronisasi data asli. 
 
 ---
 
-## TAHAP 2 — Repo: KOPIPU Backend (Laravel)
+## TAHAP 2 — Repo: PRODULI Backend (Laravel)
 
 _Bisa mulai scaffolding (migration, response format) sebelum Tahap 1 selesai — tapi SyncSilakesService baru bisa dites sungguhan setelah endpoint SiLAKES di Tahap 1 jadi._
 
 **Keputusan scoping (hasil analisis data nyata):** pilot tetap di Gapura — 326 pasien Prolanis sudah punya kecamatan diketahui (189 di antaranya desa juga lengkap). Populasi ini otomatis jadi pool aktif begitu skema wilayah (Prompt 3 di bawah) jadi. Kampanye telepon Puskesmas/PJ untuk melengkapi sisa pasien (kecamatan+desa NULL) berjalan **paralel**, bukan syarat sebelum mulai — begitu datanya lengkap, pasien otomatis masuk pool tanpa perubahan sistem.
 
-1. Buka folder repo KOPIPU backend → chat baru.
+1. Buka folder repo PRODULI backend → chat baru.
 2. **Prompt 1 (sanity check):**
     > Baca CLAUDE.md dan docs/planning/01 dan 02, lalu ringkas pemahamanmu soal proyek ini dan bagian yang jadi tanggung jawab repo ini.
 3. **Prompt 2 — fondasi response format (kerjakan lebih dulu, jadi basis semua endpoint berikutnya):**
@@ -109,11 +109,11 @@ _Prompt 1–10 membangun service layer, tapi belum ada Controller/route yang men
 
 ---
 
-## TAHAP 3 — Repo: KOPIPU Frontend (Nuxt)
+## TAHAP 3 — Repo: PRODULI Frontend (Nuxt)
 
 _Mulai setelah endpoint auth & data dasar di Tahap 2 siap, supaya bisa langsung dites terhubung ke backend asli (bukan mock)._
 
-1. Buka folder repo KOPIPU frontend → chat baru.
+1. Buka folder repo PRODULI frontend → chat baru.
 2. **Prompt 1 (sanity check):**
     > Baca CLAUDE.md dan docs/planning/03, lalu ringkas pemahamanmu soal proyek ini dan bagian yang jadi tanggung jawab repo ini.
 3. **Prompt 2 — struktur dasar:**

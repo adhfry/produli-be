@@ -108,7 +108,7 @@ class SyncSilakesServiceTest extends TestCase
 
     public function test_is_prolanis_1_selalu_dipaksa_di_query_patients(): void
     {
-        // Regresi: KOPIPU secara mandat cuma untuk program Prolanis (lihat riwayat percakapan) —
+        // Regresi: PRODULI secara mandat cuma untuk program Prolanis (lihat riwayat percakapan) —
         // SilakesApiClient::patients() HARUS selalu memaksa is_prolanis=1, apa pun query yang diminta caller.
         $this->fakePatientsAndLabResults();
 

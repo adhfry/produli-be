@@ -9,13 +9,13 @@ use Illuminate\Console\Command;
 /**
  * Hitung ulang desa_id/wilayah_status/puskesmas_id/puskesmas_resolution_method SEMUA pasien
  * dari kel_desa_raw/kecamatan_raw yang sudah tersimpan lokal -- tanpa re-sync ke SiLAKES.
- * Pola sama seperti kopipu:reclassify-risk. Perlu dijalankan tiap kali data master wilayah
- * berubah (desa/puskesmas/kecamatan diseed ulang, atau kopipu:import-desa-puskesmas dijalankan)
+ * Pola sama seperti produli:reclassify-risk. Perlu dijalankan tiap kali data master wilayah
+ * berubah (desa/puskesmas/kecamatan diseed ulang, atau produli:import-desa-puskesmas dijalankan)
  * -- patients_cache TIDAK otomatis reresolve sendiri saat master wilayah berubah.
  */
 class ReresolveWilayahCommand extends Command
 {
-    protected $signature = 'kopipu:reresolve-wilayah';
+    protected $signature = 'produli:reresolve-wilayah';
 
     protected $description = 'Hitung ulang resolusi desa/kecamatan/puskesmas semua pasien dari cache lokal (tanpa re-sync SiLAKES)';
 
@@ -23,14 +23,14 @@ class ReresolveWilayahCommand extends Command
     {
         $total = 0;
         $perWilayahStatus = ['resolved' => 0, 'unresolved' => 0, 'unknown' => 0, 'out_of_scope' => 0];
-        $perPuskesmasMethod = ['desa' => 0, 'kecamatan_fallback' => 0, 'manual' => 0, 'kader_verified' => 0, 'unresolvable' => 0];
+        $perPuskesmasMethod = ['desa' => 0, 'kecamatan_fallback' => 0, 'pengirim_matched' => 0, 'pengirim_individual' => 0, 'manual' => 0, 'kader_verified' => 0, 'unresolvable' => 0];
 
         PatientsCache::chunkById(500, function ($patients) use ($resolver, &$total, &$perWilayahStatus, &$perPuskesmasMethod) {
             foreach ($patients as $patient) {
                 $total++;
 
                 $resolution = $resolver->resolve($patient->kel_desa_raw, $patient->kecamatan_raw);
-                $puskesmas = $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId);
+                $puskesmas = $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $patient->external_patient_id);
 
                 $patient->forceFill([
                     'desa_id' => $resolution->desaId,
@@ -38,6 +38,7 @@ class ReresolveWilayahCommand extends Command
                     'wilayah_status' => $resolution->wilayahStatus,
                     'puskesmas_id' => $puskesmas['puskesmas_id'],
                     'puskesmas_resolution_method' => $puskesmas['method'],
+                    'pengirim_raw' => $puskesmas['pengirim_raw'],
                 ])->save();
 
                 $perWilayahStatus[$resolution->wilayahStatus]++;

@@ -29,10 +29,17 @@ class VisitAssignmentResource extends JsonResource
                 'longitude' => $this->patient->longitude !== null ? (float) $this->patient->longitude : null,
                 'geo_status' => $this->patient->geo_status,
             ]),
-            'kader' => $this->whenLoaded('kader', fn () => [
+            'kader' => $this->whenLoaded('kader', fn () => $this->kader ? [
                 'id' => $this->kader->id,
                 'name' => $this->kader->user?->name,
-            ]),
+            ] : null),
+            // Petugas tenaga_kesehatan (revisi Bu Kadis, Fase 2/5) -- assignment.kader_id/
+            // tenaga_kesehatan_id saling eksklusif (lihat visit_origin), null kalau assignment
+            // ini milik kader.
+            'tenaga_kesehatan' => $this->whenLoaded('tenagaKesehatan', fn () => $this->tenagaKesehatan ? [
+                'id' => $this->tenagaKesehatan->id,
+                'name' => $this->tenagaKesehatan->user?->name,
+            ] : null),
             'assigned_by' => $this->whenLoaded('assignedBy', fn () => $this->assignedBy ? [
                 'id' => $this->assignedBy->id,
                 'name' => $this->assignedBy->name,

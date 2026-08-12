@@ -17,13 +17,13 @@ use RuntimeException;
 class ProfileService
 {
     /**
-     * Reuse disk S3/MinIO yang SAMA dengan foto kunjungan (kopipu.storage.visit_photos_disk)
+     * Reuse disk S3/MinIO yang SAMA dengan foto kunjungan (produli.storage.visit_photos_disk)
      * -- bukan disk terpisah, sesuai instruksi "reuse config yang sudah ada" (docs/planning/02
      * §17). Folder 'profile/' (taksonomi bucket, docs/planning/02 §5).
      */
     public function updateAvatar(User $user, UploadedFile $file): User
     {
-        $disk = (string) config('kopipu.storage.visit_photos_disk', 's3');
+        $disk = (string) config('produli.storage.visit_photos_disk', 's3');
         $extension = $file->getClientOriginalExtension() ?: 'jpg';
         $key = 'profile/'.$user->id.'/'.Str::uuid().'.'.$extension;
 

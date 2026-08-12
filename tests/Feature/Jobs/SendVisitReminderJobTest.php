@@ -70,7 +70,9 @@ class SendVisitReminderJobTest extends TestCase
 
     public function test_channel_tidak_dikenal_menandai_failed_lewat_failed_callback(): void
     {
-        $this->reminder->update(['channel' => 'wa']);
+        // 'sms' sengaja dipakai (bukan 'wa') -- 'wa' sekarang channel SUNGGUHAN
+        // (WhatsappReminderChannel, revisi Bu Kadis), 'sms' tetap tidak terdaftar sama sekali.
+        $this->reminder->update(['channel' => 'sms']);
 
         try {
             SendVisitReminderJob::dispatch($this->reminder->id);
@@ -81,7 +83,7 @@ class SendVisitReminderJobTest extends TestCase
 
         $fresh = $this->reminder->fresh();
         $this->assertSame('failed', $fresh->status);
-        $this->assertStringContainsString('wa', $fresh->error_message);
+        $this->assertStringContainsString('sms', $fresh->error_message);
     }
 
     public function test_tries_dan_backoff_terkonfigurasi(): void

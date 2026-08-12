@@ -2,17 +2,17 @@
 
 namespace App\Services\Notification\Channels;
 
-use App\Models\Kader;
-use App\Models\VisitAssignment;
-use App\Notifications\VisitReminderNotification;
+use App\Models\User;
+use App\Notifications\GenericDatabaseNotification;
+use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\ReminderChannel;
 use Illuminate\Support\Facades\Notification;
 
 /**
- * Placeholder utk Web Push browser asli (docs/planning/02 §8) -- pakai tabel `notifications`
- * bawaan Laravel (channel 'database') sebagai channel 'push' yang BENAR-BENAR berfungsi
- * sekarang (PWA kader bisa poll daftar notifikasinya), sampai infrastruktur Web Push nyata
- * (VAPID key, tabel push_subscriptions, service worker PWA) dibangun sebagai task terpisah.
+ * Channel 'push' -- pakai tabel `notifications` bawaan Laravel (docs/planning/02 §8), BENAR-BENAR
+ * berfungsi sekarang (PWA kader/staf bisa poll daftar notifikasinya), sampai infrastruktur Web
+ * Push browser asli (VAPID/service worker) dibangun -- FCM (lihat FcmService) sudah jalan
+ * terpisah untuk push browser, channel ini tetap dipakai untuk notifikasi IN-APP (bell icon).
  */
 class DatabaseReminderChannel implements ReminderChannel
 {
@@ -21,8 +21,8 @@ class DatabaseReminderChannel implements ReminderChannel
         return 'push';
     }
 
-    public function send(Kader $kader, VisitAssignment $assignment): void
+    public function send(User $notifiable, NotificationPayload $payload): void
     {
-        Notification::send($kader->user, new VisitReminderNotification($assignment));
+        Notification::send($notifiable, new GenericDatabaseNotification($payload));
     }
 }

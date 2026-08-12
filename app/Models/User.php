@@ -95,7 +95,7 @@ class User extends Authenticatable
     }
 
     /**
-     * Signed URL sementara (30 menit) ke avatar_path -- disk 's3' (kopipu.storage.visit_photos_disk)
+     * Signed URL sementara (30 menit) ke avatar_path -- disk 's3' (produli.storage.visit_photos_disk)
      * privat, jadi TIDAK ADA link publik permanen. Frontend cukup pakai avatar_url apa adanya
      * di <img>, tidak perlu tahu proses signing atau minta ulang manual -- URL baru otomatis
      * ter-generate tiap kali User ini di-serialize lagi (mis. lain kali /auth/me dipanggil).
@@ -108,7 +108,7 @@ class User extends Authenticatable
                     return null;
                 }
 
-                $disk = (string) config('kopipu.storage.visit_photos_disk', 's3');
+                $disk = (string) config('produli.storage.visit_photos_disk', 's3');
 
                 return Storage::disk($disk)->temporaryUrl($this->avatar_path, now()->addMinutes(30));
             },
@@ -133,6 +133,16 @@ class User extends Authenticatable
     public function kader(): HasOne
     {
         return $this->hasOne(Kader::class);
+    }
+
+    public function tenagaKesehatan(): HasOne
+    {
+        return $this->hasOne(TenagaKesehatan::class);
+    }
+
+    public function fcmTokens(): HasMany
+    {
+        return $this->hasMany(FcmToken::class);
     }
 
     /**

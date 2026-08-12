@@ -36,7 +36,7 @@ return new class extends Migration
             $table->decimal('longitude', 10, 7)->nullable();
 
             // Status PUSH ke SiLAKES (pembaruan-lapangan) — BUKAN status approval staf Labkesda,
-            // itu tidak di-poll KOPIPU (docs/planning/01 §9). Ini cuma "apa KOPIPU berhasil kirim usulan".
+            // itu tidak di-poll PRODULI (docs/planning/01 §9). Ini cuma "apa PRODULI berhasil kirim usulan".
             $table->enum('sync_status', ['pending', 'synced', 'failed'])->default('pending');
             $table->text('sync_error')->nullable();
             $table->timestamp('synced_at')->nullable();

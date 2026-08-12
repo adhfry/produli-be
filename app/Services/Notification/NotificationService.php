@@ -8,29 +8,45 @@ use App\Models\VisitAssignment;
 use App\Models\VisitReport;
 use App\Notifications\VisitReportInvalidatedNotification;
 use App\Services\Notification\Channels\DatabaseReminderChannel;
+use App\Services\Notification\Channels\FcmReminderChannel;
+use App\Services\Notification\Channels\WhatsappReminderChannel;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Notification;
 use RuntimeException;
 
 /**
- * Penjadwalan & pengiriman notifikasi ke kader (docs/planning/02 §8/§11). Dua tanggung jawab:
+ * Penjadwalan & pengiriman notifikasi ke kader/tenaga_kesehatan (docs/planning/02 §8/§11). Dua
+ * tanggung jawab:
  *
- * 1. Reminder kunjungan -- dipanggil command kopipu:send-visit-reminders (routes/console.php,
+ * 1. Reminder kunjungan -- dipanggil command produli:send-visit-reminders (routes/console.php,
  *    twiceDaily): scheduleUpcomingReminders() buat baris `reminders` utk assignment H-1/hari-H
  *    (idempotent, dedup lewat unique index assignment_id+channel+scheduled_at di migration),
  *    dispatchDueReminders() enqueue SendVisitReminderJob utk reminder yang sudah waktunya.
  * 2. Notifikasi ad-hoc lain (mis. notifyReportInvalidated()) -- dikirim langsung lewat
  *    Notification::send(), bukan lewat tabel `reminders` (itu KHUSUS reminder terjadwal).
+ *
+ * TERPISAH dari NotifyService (revisi Bu Kadis, fan-out event umum: sync selesai/update
+ * pasien/kunjungan mendesak) -- class ini tetap scope sempit ke mekanisme reminder H-1/hari-H
+ * berbasis tabel `reminders`, lihat docblock NotifyService untuk alasan tidak digabung.
  */
 class NotificationService
 {
     /** @var array<string, ReminderChannel> */
     private readonly array $channels;
 
-    public function __construct(DatabaseReminderChannel $databaseReminderChannel)
-    {
+    public function __construct(
+        DatabaseReminderChannel $databaseReminderChannel,
+        WhatsappReminderChannel $whatsappReminderChannel,
+        FcmReminderChannel $fcmReminderChannel,
+    ) {
+        // WA TERDAFTAR tapi SENGAJA TIDAK DIPAKAI aktif di manapun untuk saat ini (bot WA milik
+        // user masih dalam pembuatan) -- channelsFor() di bawah cuma emit 'push'+'fcm'. Kode WA
+        // (WhatsappReminderChannel) dibiarkan siap pakai, tinggal ganti channelsFor() kalau bot-nya
+        // sudah jadi, TIDAK perlu bongkar arsitektur lagi.
         $this->channels = [
             $databaseReminderChannel->key() => $databaseReminderChannel,
+            $whatsappReminderChannel->key() => $whatsappReminderChannel,
+            $fcmReminderChannel->key() => $fcmReminderChannel,
         ];
     }
 
@@ -54,27 +70,46 @@ class NotificationService
 
         foreach ($assignments as $assignment) {
             foreach ($this->targetTimesFor($assignment, $today, $tomorrow) as $scheduledAt) {
-                $exists = Reminder::where('assignment_id', $assignment->id)
-                    ->where('channel', 'push')
-                    ->where('scheduled_at', $scheduledAt)
-                    ->exists();
+                foreach ($this->channelsFor($assignment) as $channel) {
+                    $exists = Reminder::where('assignment_id', $assignment->id)
+                        ->where('channel', $channel)
+                        ->where('scheduled_at', $scheduledAt)
+                        ->exists();
 
-                if ($exists) {
-                    continue;
+                    if ($exists) {
+                        continue;
+                    }
+
+                    Reminder::create([
+                        'assignment_id' => $assignment->id,
+                        'channel' => $channel,
+                        'scheduled_at' => $scheduledAt,
+                        'status' => 'pending',
+                    ]);
+
+                    $created++;
                 }
-
-                Reminder::create([
-                    'assignment_id' => $assignment->id,
-                    'channel' => 'push',
-                    'scheduled_at' => $scheduledAt,
-                    'status' => 'pending',
-                ]);
-
-                $created++;
             }
         }
 
         return $created;
+    }
+
+    /**
+     * Assignment satu-kali biasa (visit_origin='manual', care_assignment_id=NULL) TETAP HANYA
+     * 'push' seperti sebelum revisi Bu Kadis -- gate ini WAJIB supaya
+     * NotificationServiceTest::test_schedule_upcoming_reminders_membuat_reminder_h_minus_1_dan_hari_h
+     * (fixture manual, assert Reminder::count()===2) tidak ikut berubah jadi 4. Assignment hasil
+     * kadensi berulang (care_assignment_id terisi) dapat 'fcm' juga -- kader/tenaga_kesehatan
+     * dapat pengingat push browser untuk tugas berulang mereka. 'wa' SENGAJA belum dipakai di
+     * sini (bot WA user masih dalam pembuatan) -- tinggal tambah 'wa' ke array ini nanti begitu
+     * kredensialnya siap, channel-nya sendiri sudah terdaftar & siap pakai (lihat constructor).
+     *
+     * @return array<int, string>
+     */
+    private function channelsFor(VisitAssignment $assignment): array
+    {
+        return $assignment->care_assignment_id !== null ? ['push', 'fcm'] : ['push'];
     }
 
     /**
@@ -86,12 +121,12 @@ class NotificationService
 
         if ($assignment->scheduled_date->isSameDay($tomorrow)) {
             $targets[] = $assignment->scheduled_date->copy()->subDay()
-                ->setTimeFromTimeString((string) config('kopipu.reminders.h_minus_1_time'));
+                ->setTimeFromTimeString((string) config('produli.reminders.h_minus_1_time'));
         }
 
         if ($assignment->scheduled_date->isSameDay($today)) {
             $targets[] = $assignment->scheduled_date->copy()
-                ->setTimeFromTimeString((string) config('kopipu.reminders.same_day_time'));
+                ->setTimeFromTimeString((string) config('produli.reminders.same_day_time'));
         }
 
         return $targets;
@@ -115,7 +150,7 @@ class NotificationService
      */
     public function deliver(int $reminderId): void
     {
-        $reminder = Reminder::with(['assignment.kader.user'])->find($reminderId);
+        $reminder = Reminder::with(['assignment.kader.user', 'assignment.tenagaKesehatan.user', 'assignment.patient'])->find($reminderId);
 
         if (! $reminder || $reminder->status !== 'pending') {
             return; // sudah dihapus / sudah diproses (guard idempotency)
@@ -124,7 +159,7 @@ class NotificationService
         $assignment = $reminder->assignment;
 
         if ($assignment->status !== 'pending') {
-            // Kader sudah menyelesaikan kunjungan / assignment dibatalkan sebelum reminder
+            // Petugas sudah menyelesaikan kunjungan / assignment dibatalkan sebelum reminder
             // sempat terkirim -- bukan kegagalan, cuma tidak relevan lagi.
             $reminder->update(['status' => 'skipped']);
 
@@ -137,7 +172,26 @@ class NotificationService
             throw new RuntimeException("Channel reminder '{$reminder->channel}' tidak dikenal.");
         }
 
-        $channel->send($assignment->kader, $assignment);
+        $notifiable = $assignment->assigneeUser();
+
+        if ($notifiable === null) {
+            $reminder->update(['status' => 'skipped']);
+
+            return;
+        }
+
+        $channel->send($notifiable, new NotificationPayload(
+            type: 'visit_reminder',
+            title: 'Pengingat Kunjungan',
+            body: "Kunjungi {$assignment->patient->nama} pada {$assignment->scheduled_date->toDateString()}.",
+            data: [
+                'type' => 'visit_reminder',
+                'assignment_id' => $assignment->id,
+                'patient_nama' => $assignment->patient->nama,
+                'scheduled_date' => $assignment->scheduled_date->toDateString(),
+                'priority' => $assignment->priority,
+            ],
+        ));
 
         $reminder->update(['status' => 'sent', 'sent_at' => now()]);
     }

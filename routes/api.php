@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\Api\V1\AnnouncementController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
+use App\Http\Controllers\Api\V1\CareAssignmentController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\FcmTokenController;
 use App\Http\Controllers\Api\V1\KaderController;
 use App\Http\Controllers\Api\V1\KecamatanController;
 use App\Http\Controllers\Api\V1\NotificationController;
@@ -10,6 +12,7 @@ use App\Http\Controllers\Api\V1\PatientController;
 use App\Http\Controllers\Api\V1\PuskesmasController;
 use App\Http\Controllers\Api\V1\SilakesSyncController;
 use App\Http\Controllers\Api\V1\StaffController;
+use App\Http\Controllers\Api\V1\TenagaKesehatanController;
 use App\Http\Controllers\Api\V1\VisitAssignmentController;
 use App\Http\Controllers\Api\V1\VisitReportController;
 use Illuminate\Support\Facades\Route;
@@ -72,14 +75,21 @@ Route::middleware(['auth:sanctum', 'password.changed'])->group(function () {
 Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])->group(function () {
     Route::get('patients', [PatientController::class, 'index']);
     // SEBELUM 'patients/{patient}' -- kalau tidak, route-model-binding mencoba mencocokkan
-    // 'search-nik' sebagai {patient} id (404 model not found), bukan route terpisah ini.
+    // 'search-nik'/'export-pdf' sebagai {patient} id (404 model not found), bukan route
+    // terpisah ini.
     Route::post('patients/search-nik', [PatientController::class, 'searchByNik']);
+    // Ekspor PDF (revisi Bu Kadis, Fase 5) -- filter query param sama persis dengan index().
+    Route::get('patients/export-pdf', [PatientController::class, 'exportPdf']);
     Route::get('patients/{patient}', [PatientController::class, 'show']);
     // Usulan koreksi data pasien dari STAF (docs/planning §17 "Ajukan Update Data") -- paralel
     // dari usulan kader lewat POST /visit-reports (itu terikat satu laporan kunjungan).
     Route::patch('patients/{patient}/propose-update', [PatientController::class, 'proposeUpdate']);
     // Riwayat usulan (baca live dari SiLAKES, gerbang akses sama dengan propose-update di atas).
     Route::get('patients/{patient}/update-history', [PatientController::class, 'updateHistory']);
+    // Riwayat klasifikasi risiko & kunjungan (revisi Bu Kadis, Fase 5) -- "Dasar Klasifikasi",
+    // "Riwayat & Tren Kondisi", dan "Riwayat Kunjungan" di detail pasien.
+    Route::get('patients/{patient}/risk-history', [PatientController::class, 'riskHistory']);
+    Route::get('patients/{patient}/visit-history', [PatientController::class, 'visitHistory']);
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
@@ -106,6 +116,15 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
         Route::patch('{kader}/status', [KaderController::class, 'setStatus']);
     });
 
+    Route::prefix('tenaga-kesehatan')->group(function () {
+        Route::get('/', [TenagaKesehatanController::class, 'index']);
+        Route::post('/', [TenagaKesehatanController::class, 'store']);
+        Route::patch('{tenagaKesehatan}/status', [TenagaKesehatanController::class, 'setStatus']);
+    });
+
+    Route::post('care-assignments', [CareAssignmentController::class, 'store']);
+    Route::post('care-assignments/{careAssignment}/adhoc-visit', [CareAssignmentController::class, 'createAdhocVisit']);
+
     Route::get('visit-assignments', [VisitAssignmentController::class, 'index']);
     Route::post('visit-assignments', [VisitAssignmentController::class, 'store']);
     Route::post('visit-assignments/bulk', [VisitAssignmentController::class, 'bulkStore']);
@@ -119,6 +138,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
 
     Route::get('notifications', [NotificationController::class, 'index']);
     Route::patch('notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+
+    Route::post('fcm-tokens', [FcmTokenController::class, 'store']);
+    Route::delete('fcm-tokens', [FcmTokenController::class, 'destroy']);
 
     Route::get('announcements', [AnnouncementController::class, 'index']);
     Route::post('announcements', [AnnouncementController::class, 'store']);

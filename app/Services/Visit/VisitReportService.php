@@ -178,7 +178,7 @@ class VisitReportService
      */
     private function storePhoto(string $localPath): string
     {
-        $disk = (string) config('kopipu.storage.visit_photos_disk', 's3');
+        $disk = (string) config('produli.storage.visit_photos_disk', 's3');
         $extension = pathinfo($localPath, PATHINFO_EXTENSION) ?: 'jpg';
         // Prefix 'pasien/' -- taksonomi kategori bucket MinIO (docs/planning/02 §5: pasien/,
         // kader/, hasil-lab/, dst, dipakai kalau ops browse bucket manual), digabung dengan

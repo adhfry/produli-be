@@ -15,7 +15,7 @@ class VisitValidationServiceTest extends TestCase
     {
         parent::setUp();
 
-        $this->testImagePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'kopipu_test_'.uniqid().'.jpg';
+        $this->testImagePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'produli_test_'.uniqid().'.jpg';
         $image = imagecreatetruecolor(200, 200);
         imagefill($image, 0, 0, (int) imagecolorallocate($image, 100, 150, 200));
         imagejpeg($image, $this->testImagePath);
@@ -115,7 +115,7 @@ class VisitValidationServiceTest extends TestCase
 
     public function test_face_detection_diaktifkan_ikut_menentukan_hasil_akhir(): void
     {
-        Config::set('kopipu.validation.face_detection_enabled', true);
+        Config::set('produli.validation.face_detection_enabled', true);
 
         $summaryGagal = app(VisitValidationService::class)->validate($this->makeContext(['faceDetectedClientSide' => false]));
         $this->assertFalse($summaryGagal->passed);

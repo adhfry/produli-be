@@ -26,7 +26,7 @@ Anda telah ditugaskan untuk melakukan kunjungan pasien Prolanis. Berikut adalah 
 </tr>
 </table>
 
-Silakan buka aplikasi KOPIPU Smart untuk melihat detail lokasi pasien dan panduan navigasi dari titik Anda.
+Silakan buka aplikasi PRODULI untuk melihat detail lokasi pasien dan panduan navigasi dari titik Anda.
 
 @component('mail::button', ['url' => rtrim((string) config('app.frontend_url'), '/').'/app/tugas', 'color' => 'primary'])
 Buka Aplikasi Sekarang

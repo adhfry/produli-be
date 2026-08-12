@@ -16,7 +16,7 @@ use Illuminate\Console\Command;
  */
 class ReclassifyRiskCommand extends Command
 {
-    protected $signature = 'kopipu:reclassify-risk';
+    protected $signature = 'produli:reclassify-risk';
 
     protected $description = 'Hitung ulang klasifikasi risiko semua pasien dari cache lokal (tanpa re-sync SiLAKES)';
 
@@ -24,7 +24,7 @@ class ReclassifyRiskCommand extends Command
     {
         $total = 0;
         $classified = 0;
-        $perLevel = ['ringan' => 0, 'sedang' => 0, 'berat' => 0];
+        $perLevel = ['tidak_berisiko' => 0, 'ringan' => 0, 'sedang' => 0, 'berat' => 0];
 
         PatientsCache::chunkById(500, function ($patients) use ($service, &$total, &$classified, &$perLevel) {
             foreach ($patients as $patient) {
@@ -39,9 +39,10 @@ class ReclassifyRiskCommand extends Command
         });
 
         $this->info(sprintf(
-            'Selesai: %d pasien diproses, %d terklasifikasi (ringan=%d, sedang=%d, berat=%d).',
+            'Selesai: %d pasien diproses, %d terklasifikasi (tidak_berisiko=%d, ringan=%d, sedang=%d, berat=%d).',
             $total,
             $classified,
+            $perLevel['tidak_berisiko'],
             $perLevel['ringan'],
             $perLevel['sedang'],
             $perLevel['berat'],

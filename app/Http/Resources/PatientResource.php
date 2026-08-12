@@ -34,6 +34,10 @@ class PatientResource extends JsonResource
             'jenis_perokok' => $this->jenis_perokok,
             'wilayah_status' => $this->wilayah_status,
             'puskesmas_resolution_method' => $this->puskesmas_resolution_method,
+            // Teks asli `pengirim` (surat_hasil_labs SiLAKES) yang dipakai WilayahResolver
+            // (revisi Bu Kadis, Fase 5) -- dipakai frontend menampilkan "Rujukan: dr. X" kalau
+            // method='pengirim_individual', atau teks mentah untuk audit kasus unresolvable.
+            'pengirim_raw' => $this->pengirim_raw,
             'desa' => $this->whenLoaded('desa', fn () => [
                 'id' => $this->desa->id,
                 'nama' => $this->desa->nama,
@@ -61,6 +65,16 @@ class PatientResource extends JsonResource
             'risk_computed_at' => $this->whenLoaded(
                 'latestRiskClassification',
                 fn () => $this->latestRiskClassification?->computed_at?->toIso8601String(),
+            ),
+            // Smart Early Detection (revisi Bu Kadis) -- cuma relevan saat risk_level='sedang',
+            // lihat RiskClassificationService::evaluateEarlyDetection().
+            'early_detection_flag' => $this->whenLoaded(
+                'latestRiskClassification',
+                fn () => (bool) $this->latestRiskClassification?->early_detection_flag,
+            ),
+            'early_detection_reason' => $this->whenLoaded(
+                'latestRiskClassification',
+                fn () => $this->latestRiskClassification?->early_detection_reason,
             ),
             'last_synced_at' => $this->last_synced_at?->toIso8601String(),
         ];

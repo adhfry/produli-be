@@ -9,7 +9,7 @@ use App\Models\User;
 
 /**
  * Penerbitan/rotasi/revoke pasangan access token (Sanctum, short-lived) + refresh token
- * (long-lived, device-bound). Lihat docs/planning/02-arsitektur-backend-kopipu-smart.md §6.
+ * (long-lived, device-bound). Lihat docs/planning/02-arsitektur-backend-produli.md §6.
  */
 class AuthTokenService
 {

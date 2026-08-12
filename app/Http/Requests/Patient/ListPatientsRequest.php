@@ -20,11 +20,16 @@ class ListPatientsRequest extends FormRequest
     {
         return [
             'wilayah_status' => ['nullable', 'string', 'in:resolved,unresolved,unknown,out_of_scope'],
-            'risk_level' => ['nullable', 'string', 'in:ringan,sedang,berat'],
+            'risk_level' => ['nullable', 'string', 'in:tidak_berisiko,ringan,sedang,berat'],
             // Kecamatan_id (BUKAN nama teks bebas) -- filter lewat kolom patients_cache.kecamatan_id
             // hasil match WilayahResolver, supaya akurat terlepas dari variasi ejaan/kapitalisasi
             // kecamatan_raw dari SiLAKES (lihat App\Models\PatientsCache::kecamatan()).
             'kecamatan_id' => ['nullable', 'integer', 'exists:kecamatan,id'],
+            // HANYA berlaku utk full-access (super_admin) -- lihat PatientController::index().
+            // admin_puskesmas/pj_prolanis SUDAH terkunci ke puskesmas sendiri lewat
+            // PatientQueryService::scopedQuery(), input ini diabaikan utk mereka (bukan celah
+            // otorisasi -- pola sama seperti DashboardService::summaryFor() $puskesmasId).
+            'puskesmas_id' => ['nullable', 'integer', 'exists:puskesmas,id'],
             // Pencarian nama/no. registrasi -- SERVER-SIDE (bukan cuma di window yang ke-fetch),
             // supaya kombinasi dengan filter lain (wilayah_status/risk_level/kecamatan_id) tetap
             // akurat, bukan cuma nyaring dari halaman yang kebetulan sudah dimuat.

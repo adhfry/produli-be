@@ -9,8 +9,8 @@ use Illuminate\Console\Command;
 /**
  * Hapus patients_cache yang tidak (lagi) eligible -- tidak punya satupun baris
  * lab_results_cache (yang sejak SyncSilakesService::syncLabResults() sudah difilter ke
- * tanggal_periksa >= kopipu.silakes.lab_results_since). Pasien begini SENGAJA dikeluarkan
- * total dari KOPIPU (keputusan produk), bukan cuma disembunyikan dari klasifikasi risiko.
+ * tanggal_periksa >= produli.silakes.lab_results_since). Pasien begini SENGAJA dikeluarkan
+ * total dari PRODULI (keputusan produk), bukan cuma disembunyikan dari klasifikasi risiko.
  *
  * Pembersihan satu-arah dan eksplisit (bukan otomatis tiap sync) -- SyncSilakesService cuma
  * MENCEGAH pasien baru yang tidak eligible ikut ter-cache (lihat isEligible()), tidak
@@ -21,7 +21,7 @@ use Illuminate\Console\Command;
  */
 class PruneIneligiblePatientsCommand extends Command
 {
-    protected $signature = 'kopipu:prune-ineligible-patients
+    protected $signature = 'produli:prune-ineligible-patients
         {--dry-run : Tampilkan preview tanpa menghapus}';
 
     protected $description = 'Hapus pasien tercache yang tidak punya riwayat lab qualifying (dan tidak punya relasi aktif)';

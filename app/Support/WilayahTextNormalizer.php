@@ -29,7 +29,7 @@ class WilayahTextNormalizer
      * administratif di sini, itu akan merusak pencocokan header tsb. Untuk
      * mencocokkan NAMA WILAYAH (kabupaten/kota, dst.), pakai normalizeRegionName().
      *
-     * Lihat docs/planning/02-arsitektur-backend-kopipu-smart.md §2a.
+     * Lihat docs/planning/02-arsitektur-backend-produli.md §2a.
      */
     public static function normalize(?string $text): string
     {
@@ -79,6 +79,9 @@ class WilayahTextNormalizer
     private const LEVEL_PREFIXES = [
         'kecamatan' => ['KECAMATAN', 'KEC'],
         'desa' => ['DESA', 'KELURAHAN', 'KEL'],
+        // Dipakai mencocokkan surat_hasil_labs.pengirim (SiLAKES, teks bebas) ke puskesmas.nama
+        // -- lihat WilayahResolver::matchPuskesmasByPengirim() (revisi Bu Kadis, Fase 5).
+        'puskesmas' => ['PUSKESMAS', 'UPTD', 'UPT'],
     ];
 
     /**

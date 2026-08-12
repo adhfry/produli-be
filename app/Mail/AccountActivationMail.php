@@ -25,7 +25,7 @@ class AccountActivationMail extends Mailable implements ShouldQueue
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Aktivasi Akun KOPIPU Smart',
+            subject: 'Aktivasi Akun PRODULI',
         );
     }
 

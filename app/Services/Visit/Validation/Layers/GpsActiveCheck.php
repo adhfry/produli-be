@@ -31,7 +31,7 @@ class GpsActiveCheck implements VisitValidationLayer
             return VisitValidationResult::fail($this->name(), 'GPS tidak aktif — koordinat tidak tertangkap.');
         }
 
-        $maxAccuracy = (int) config('kopipu.validation.gps.max_accuracy_meters');
+        $maxAccuracy = (int) config('produli.validation.gps.max_accuracy_meters');
 
         if ($context->gpsAccuracyMeters !== null && $context->gpsAccuracyMeters > $maxAccuracy) {
             return VisitValidationResult::fail(
@@ -42,7 +42,7 @@ class GpsActiveCheck implements VisitValidationLayer
         }
 
         if ($context->gpsCapturedAt !== null) {
-            $maxAge = (int) config('kopipu.validation.gps.max_age_seconds');
+            $maxAge = (int) config('produli.validation.gps.max_age_seconds');
             // abs() wajib: diffInSeconds() Carbon 3 signed (negatif kalau argumennya di masa lalu),
             // bukan selalu absolut seperti di Carbon 2.
             $ageSeconds = abs(Carbon::now()->diffInSeconds($context->gpsCapturedAt));

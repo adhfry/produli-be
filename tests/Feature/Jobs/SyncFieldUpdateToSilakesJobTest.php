@@ -38,7 +38,7 @@ class SyncFieldUpdateToSilakesJobTest extends TestCase
         // Job ini resolve SilakesApiClient sungguhan lewat container (bukan lewat Queue::fake()),
         // jadi butuh write_token terisi -- SILAKES_WRITE_API_TOKEN di .env sengaja kosong sampai
         // diisi manual oleh operator (docs/planning/01 §9), jadi override di sini untuk test.
-        Config::set('kopipu.silakes.write_token', 'test-write-token-untuk-job');
+        Config::set('produli.silakes.write_token', 'test-write-token-untuk-job');
 
         $kabupaten = Kabupaten::create(['kode_kemendagri' => '35.29', 'nama' => 'Sumenep']);
         $puskesmas = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-A', 'nama' => 'Puskesmas A']);

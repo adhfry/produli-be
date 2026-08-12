@@ -157,6 +157,145 @@ class PatientControllerTest extends TestCase
         $this->assertSame('error', $response->json('status'));
     }
 
+    // ---- Revisi Bu Kadis (Fase 5): filter puskesmas_id ----
+
+    public function test_super_admin_boleh_filter_puskesmas_id(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patientA = $this->makePatient($this->puskesmasA, 1);
+        $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson("/api/v1/patients?puskesmas_id={$this->puskesmasA->id}");
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertEquals([$patientA->id], $ids->all());
+    }
+
+    public function test_admin_puskesmas_filter_puskesmas_id_diabaikan_tetap_terkunci_sendiri(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientA = $this->makePatient($this->puskesmasA, 1);
+        $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($admin);
+
+        // Coba filter ke puskesmas LAIN -- harus tetap cuma lihat puskesmasnya sendiri, bukan 403
+        // ataupun bocor ke puskesmas B.
+        $response = $this->getJson("/api/v1/patients?puskesmas_id={$this->puskesmasB->id}");
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertEquals([$patientA->id], $ids->all());
+    }
+
+    // ---- Revisi Bu Kadis (Fase 5): ekspor PDF ----
+
+    public function test_export_pdf_menghasilkan_file_pdf(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+        $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->get('/api/v1/patients/export-pdf');
+
+        $response->assertOk();
+        $this->assertSame('application/pdf', $response->headers->get('Content-Type'));
+    }
+
+    public function test_export_pdf_menghormati_filter_yang_sama_dengan_index(): void
+    {
+        // PDF dompdf terkompresi (FlateDecode) -- tidak bisa dicek isi teksnya via string search
+        // biasa, jadi diverifikasi tidak langsung: applyFilters()/scopedQuery() persis SAMA
+        // dengan yang dipakai index() (sudah diverifikasi ketat di test scoping index() di atas),
+        // sini cukup pastikan hasil admin_puskesmas (1 pasien dalam scope) menghasilkan PDF lebih
+        // kecil dari super_admin (2 pasien) -- baris tabel yang lebih sedikit.
+        $superAdmin = $this->makeUser('super_admin');
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $this->makePatient($this->puskesmasA, 1);
+        $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($superAdmin);
+        $fullResponse = $this->get('/api/v1/patients/export-pdf');
+        $fullResponse->assertOk();
+
+        Sanctum::actingAs($admin);
+        $scopedResponse = $this->get('/api/v1/patients/export-pdf');
+        $scopedResponse->assertOk();
+
+        $this->assertLessThan(strlen($fullResponse->getContent()), strlen($scopedResponse->getContent()));
+    }
+
+    // ---- Revisi Bu Kadis (Fase 5): riwayat klasifikasi risiko & kunjungan ----
+
+    public function test_risk_history_mengembalikan_semua_baris_bukan_cuma_latest(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(5), 'is_latest' => false]);
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/risk-history");
+
+        $response->assertOk();
+        $levels = collect($response->json('data'))->pluck('level');
+        $this->assertCount(2, $levels);
+        $this->assertSame(['sedang', 'berat'], $levels->all());
+    }
+
+    public function test_risk_history_pasien_di_luar_scope_ditolak_403(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patientB->id}/risk-history");
+
+        $response->assertStatus(403);
+    }
+
+    public function test_visit_history_mengembalikan_kunjungan_kader_dan_tenaga_kesehatan(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+        $kaderUser = User::factory()->create(['puskesmas_id' => $this->puskesmasA->id]);
+        $kader = Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true]);
+
+        VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $kader->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/visit-history");
+
+        $response->assertOk();
+        $this->assertCount(1, $response->json('data'));
+        $this->assertSame($kader->id, $response->json('data.0.kader.id'));
+    }
+
+    public function test_visit_history_pasien_di_luar_scope_ditolak_403(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patientB->id}/visit-history");
+
+        $response->assertStatus(403);
+    }
+
     public function test_show_pasien_di_luar_scope_ditolak_403(): void
     {
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);

@@ -7,16 +7,23 @@ use Illuminate\Database\Seeder;
 
 /**
  * Nilai rujukan klinis resmi (docs/planning/02 §3, disediakan langsung oleh operator, bukan
- * hasil tebakan) -- 1 baris per parameter, SEMUA strict greater-than (bukan >=). Nama
- * `parameter` HARUS persis sama dengan kolom lab_results_cache.parameter dari SiLAKES asli
- * (dikonfirmasi dari data sync nyata: "Gula Darah Puasa" bukan singkatan "GDP"; "Cholesterol"
- * bukan "Cholesterol Total"; "LDL" bukan "Cholesterol LDL" -- lihat riwayat percakapan).
+ * hasil tebakan) -- 1 baris per parameter, SEMUA strict greater-than (bukan >=), KECUALI
+ * Creatinine (lihat DIRECT_CLASSIFIERS di bawah). Nama `parameter` HARUS persis sama dengan
+ * kolom lab_results_cache.parameter dari SiLAKES asli (dikonfirmasi dari data sync nyata:
+ * "Gula Darah Puasa" bukan singkatan "GDP"; "Cholesterol" bukan "Cholesterol Total"; "LDL"
+ * bukan "Cholesterol LDL" -- lihat riwayat percakapan).
  *
- * Kolom `level` di sini SENGAJA cuma label metadata untuk criteria_snapshot (audit) --
- * RiskClassificationService::determineLevel() TIDAK membaca kolom ini untuk memutuskan level
- * akhir (itu logic lintas-parameter di kode, lihat BERAT_PARAMETERS/SEDANG_PARAMETERS). Semua
- * diberi label 'sedang' di sini karena operator cuma menyediakan SATU batas per parameter
- * (bukan dua tingkat sedang/berat terpisah seperti draf awal).
+ * Kolom `level` di NILAI_RUJUKAN (5 parameter, is_direct_classifier=false) SENGAJA cuma label
+ * metadata untuk criteria_snapshot (audit) -- RiskClassificationService::determineLevel()
+ * TIDAK membaca kolom ini untuk memutuskan level akhir (itu logic lintas-parameter di kode,
+ * lihat BERAT_PARAMETERS/SEDANG_PARAMETERS). Semua diberi label 'sedang' di sini karena
+ * operator cuma menyediakan SATU batas per parameter (bukan dua tingkat sedang/berat terpisah).
+ *
+ * DIRECT_CLASSIFIERS (revisi Bu Kadis) beda perlakuan: Creatinine BISA langsung menentukan
+ * level pasien sendirian (1.7-1.9 mg/dL = Sedang, >=2.0 mg/dL = Berat) TANPA perlu 5 parameter
+ * lain ikut melebihi rujukan -- kolom `level` di sini BENAR-BENAR dipakai RiskClassificationService
+ * untuk menentukan level, bukan cuma metadata. Creatinine SENGAJA dikeluarkan dari
+ * NILAI_RUJUKAN/BERAT_PARAMETERS supaya tidak dobel-hitung di kedua jalur.
  *
  * Idempotent -- upsert lewat (parameter, level), sesuai unique constraint migration.
  */
@@ -27,11 +34,18 @@ class RiskThresholdSeeder extends Seeder
      */
     private const NILAI_RUJUKAN = [
         ['parameter' => 'Gula Darah Puasa', 'threshold_min' => 120],
-        ['parameter' => 'Creatinine', 'threshold_min' => 1.7],
         ['parameter' => 'Cholesterol', 'threshold_min' => 200],
         ['parameter' => 'Trigliserida', 'threshold_min' => 140],
         ['parameter' => 'LDL', 'threshold_min' => 130],
         ['parameter' => 'Urea', 'threshold_min' => 46],
+    ];
+
+    /**
+     * @var array<int, array{parameter: string, level: string, operator: string, threshold_min: float, threshold_max: ?float}>
+     */
+    private const DIRECT_CLASSIFIERS = [
+        ['parameter' => 'Creatinine', 'level' => 'sedang', 'operator' => 'between', 'threshold_min' => 1.7, 'threshold_max' => 1.9],
+        ['parameter' => 'Creatinine', 'level' => 'berat', 'operator' => '>=', 'threshold_min' => 2.0, 'threshold_max' => null],
     ];
 
     public function run(): void
@@ -41,6 +55,7 @@ class RiskThresholdSeeder extends Seeder
                 ['parameter' => $row['parameter'], 'level' => 'sedang'],
                 [
                     'operator' => '>',
+                    'is_direct_classifier' => false,
                     'threshold_min' => $row['threshold_min'],
                     'threshold_max' => null,
                     'is_active' => true,
@@ -48,6 +63,20 @@ class RiskThresholdSeeder extends Seeder
             );
         }
 
-        $this->command?->info('Selesai: '.count(self::NILAI_RUJUKAN).' baris risk_thresholds ter-upsert.');
+        foreach (self::DIRECT_CLASSIFIERS as $row) {
+            RiskThreshold::updateOrCreate(
+                ['parameter' => $row['parameter'], 'level' => $row['level']],
+                [
+                    'operator' => $row['operator'],
+                    'is_direct_classifier' => true,
+                    'threshold_min' => $row['threshold_min'],
+                    'threshold_max' => $row['threshold_max'],
+                    'is_active' => true,
+                ],
+            );
+        }
+
+        $total = count(self::NILAI_RUJUKAN) + count(self::DIRECT_CLASSIFIERS);
+        $this->command?->info("Selesai: {$total} baris risk_thresholds ter-upsert.");
     }
 }

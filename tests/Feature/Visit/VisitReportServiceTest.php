@@ -74,7 +74,7 @@ class VisitReportServiceTest extends TestCase
             'puskesmas_id_snapshot' => $puskesmas->id,
         ]);
 
-        $this->testImagePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'kopipu_test_'.uniqid().'.jpg';
+        $this->testImagePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'produli_test_'.uniqid().'.jpg';
         $image = imagecreatetruecolor(200, 200);
         imagefill($image, 0, 0, (int) imagecolorallocate($image, 100, 150, 200));
         imagejpeg($image, $this->testImagePath);

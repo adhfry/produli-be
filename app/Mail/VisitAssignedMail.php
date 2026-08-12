@@ -30,7 +30,7 @@ class VisitAssignedMail extends Mailable implements ShouldQueue
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Tugas Kunjungan Baru - KOPIPU Smart',
+            subject: 'Tugas Kunjungan Baru - PRODULI',
         );
     }
 

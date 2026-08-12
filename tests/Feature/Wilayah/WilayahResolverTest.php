@@ -5,6 +5,7 @@ namespace Tests\Feature\Wilayah;
 use App\Models\Desa;
 use App\Models\Kabupaten;
 use App\Models\Kecamatan;
+use App\Models\LabResultCache;
 use App\Models\Puskesmas;
 use App\Models\WilayahMapping;
 use App\Services\Wilayah\WilayahResolver;
@@ -166,5 +167,154 @@ class WilayahResolverTest extends TestCase
         $this->resolver->resolve('Talango', 'Talango');
 
         $this->assertSame(1, WilayahMapping::where('kel_desa_raw', 'Talango')->where('kecamatan_raw', 'Talango')->count());
+    }
+
+    // ---- Revisi Bu Kadis (Fase 5): fallback pengirim_matched ----
+
+    private function addLabResultWithPengirim(int $externalPatientId, ?string $pengirim, string $tanggal = '2026-07-20'): void
+    {
+        LabResultCache::create([
+            'external_id' => $externalPatientId * 1000,
+            'patient_id' => $externalPatientId,
+            'parameter' => 'Gula Darah Puasa',
+            'value' => '90',
+            'pengirim' => $pengirim,
+            'tanggal_periksa' => $tanggal,
+            'synced_at' => $tanggal,
+        ]);
+    }
+
+    public function test_pengirim_matched_dipakai_sebagai_fallback_terakhir_saat_desa_dan_kecamatan_gagal(): void
+    {
+        $this->addLabResultWithPengirim(999001, 'Puskesmas Talango');
+
+        // Kecamatan luar Sumenep -- desaId dan kecamatanId sama-sama null, resolvePuskesmas()
+        // tidak punya jalur desa/kecamatan_fallback sama sekali, jatuh ke pengirim.
+        $result = $this->resolver->resolve('Desa Apapun', 'Surabaya');
+        $puskesmas = $this->resolver->resolvePuskesmas($result->desaId, $result->kecamatanId, 999001);
+
+        $this->assertSame('pengirim_matched', $puskesmas['method']);
+
+        $pkmTalango = Puskesmas::where('nama', 'Puskesmas Talango')->first();
+        $this->assertSame($pkmTalango->id, $puskesmas['puskesmas_id']);
+    }
+
+    public function test_pengirim_tanpa_prefix_puskesmas_tetap_match(): void
+    {
+        // Variasi penulisan nyata (docs/planning/04) -- tanpa prefix "Puskesmas" sama sekali.
+        $this->addLabResultWithPengirim(999002, 'talango');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999002);
+
+        $this->assertSame('pengirim_matched', $puskesmas['method']);
+    }
+
+    public function test_pengirim_tidak_match_puskesmas_manapun_tetap_unresolvable(): void
+    {
+        $this->addLabResultWithPengirim(999003, 'Klinik Swasta Sehat Bersama');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999003);
+
+        $this->assertSame('unresolvable', $puskesmas['method']);
+        $this->assertNull($puskesmas['puskesmas_id']);
+    }
+
+    public function test_pengirim_null_tetap_unresolvable_bukan_error(): void
+    {
+        $this->addLabResultWithPengirim(999004, null);
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999004);
+
+        $this->assertSame('unresolvable', $puskesmas['method']);
+    }
+
+    public function test_desa_match_menang_walau_pengirim_menunjuk_puskesmas_lain(): void
+    {
+        // pengirim tidak pernah dicoba kalau desa SUDAH berhasil match -- prioritas desa/
+        // kecamatan_fallback di atas pengirim (sinyal tambahan, bukan pengganti).
+        $this->addLabResultWithPengirim(999005, 'Puskesmas Talango');
+
+        $result = $this->resolver->resolve('Talango', 'Talango');
+        $puskesmas = $this->resolver->resolvePuskesmas($result->desaId, $result->kecamatanId, 999005);
+
+        $this->assertSame('desa', $puskesmas['method']);
+    }
+
+    public function test_pengirim_raw_selalu_disertakan_di_hasil_apa_pun_methodnya(): void
+    {
+        $this->addLabResultWithPengirim(999006, 'Puskesmas Talango');
+
+        $result = $this->resolver->resolve('Talango', 'Talango');
+        $puskesmas = $this->resolver->resolvePuskesmas($result->desaId, $result->kecamatanId, 999006);
+
+        $this->assertSame('desa', $puskesmas['method']);
+        $this->assertSame('Puskesmas Talango', $puskesmas['pengirim_raw']);
+    }
+
+    // ---- Revisi Bu Kadis (Fase 5, lanjutan): typo-tolerant matching & rujukan perorangan ----
+    // Data nyata dari SiLAKES penuh salah ketik ("Puskemas"/"Puskesams"/"Pusekesmas"/"Piskesmas"/
+    // "PKM" untuk kata "Puskesmas" itu sendiri, "Prgaan"/"NUNGGUNONG" utk nama puskesmas) DAN
+    // rujukan perorangan (dokter/bidan) yang bukan puskesmas sama sekali -- lihat investigasi
+    // langsung ke database SiLAKES yang mendasari perubahan ini.
+
+    public function test_pengirim_dengan_typo_prefix_puskesmas_tetap_match(): void
+    {
+        // "Puskesams" -- transposisi umum dari "Puskesmas" (ditemukan di data nyata).
+        $this->addLabResultWithPengirim(999007, 'Puskesams Talango');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999007);
+
+        $this->assertSame('pengirim_matched', $puskesmas['method']);
+    }
+
+    public function test_pengirim_singkatan_pkm_tetap_match(): void
+    {
+        $this->addLabResultWithPengirim(999008, 'PKM Talango');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999008);
+
+        $this->assertSame('pengirim_matched', $puskesmas['method']);
+    }
+
+    public function test_pengirim_dengan_typo_nama_puskesmas_tetap_match(): void
+    {
+        // "Talago" -- satu huruf hilang dari "Talango" (jarak Levenshtein 1).
+        $this->addLabResultWithPengirim(999009, 'Puskesmas Talago');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999009);
+
+        $this->assertSame('pengirim_matched', $puskesmas['method']);
+    }
+
+    public function test_pengirim_dari_dokter_ditandai_individual_bukan_unresolvable(): void
+    {
+        $this->addLabResultWithPengirim(999010, 'dr. Laos Susantina, SE');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999010);
+
+        $this->assertSame('pengirim_individual', $puskesmas['method']);
+        $this->assertNull($puskesmas['puskesmas_id']);
+        $this->assertSame('dr. Laos Susantina, SE', $puskesmas['pengirim_raw']);
+    }
+
+    public function test_pengirim_dari_bidan_ditandai_individual(): void
+    {
+        $this->addLabResultWithPengirim(999011, 'Bidan Taufiqurrahmah, AMd.Keb');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999011);
+
+        $this->assertSame('pengirim_individual', $puskesmas['method']);
+    }
+
+    public function test_pengirim_prefix_ambigu_dua_kandidat_tetap_unresolvable(): void
+    {
+        // "Masalembu" adalah prefix dari DUA puskesmas sekaligus (Masalembu A & Masalembu B,
+        // lihat setUp) -- skor sama-sama 1, tidak boleh menebak salah satunya.
+        $this->addLabResultWithPengirim(999012, 'Puskesmas Masalembu');
+
+        $puskesmas = $this->resolver->resolvePuskesmas(null, null, 999012);
+
+        $this->assertSame('unresolvable', $puskesmas['method']);
+        $this->assertNull($puskesmas['puskesmas_id']);
     }
 }

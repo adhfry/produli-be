@@ -1,17 +1,17 @@
 # Kontrak API SiLAKES (Aktual — Live)
 
-> Dokumen ini adalah kontrak API **sebenarnya** dari 3 endpoint integrasi SiLAKES yang sudah diimplementasikan dan live. Lebih detail & mengikat daripada asumsi di `01-integrasi-silakes-kopipu.md` — kalau ada perbedaan, ikuti dokumen ini.
+> Dokumen ini adalah kontrak API **sebenarnya** dari 3 endpoint integrasi SiLAKES yang sudah diimplementasikan dan live. Lebih detail & mengikat daripada asumsi di `01-integrasi-silakes-produli.md` — kalau ada perbedaan, ikuti dokumen ini.
 >
-> ⚠️ Nilai secret di bawah **disensor**. Isi nilai asli langsung sebagai env var di KOPIPU (`.env`), jangan pernah tulis nilai asli di kode, prompt ke AI, commit, atau dokumen manapun yang bisa ke-share.
+> ⚠️ Nilai secret di bawah **disensor**. Isi nilai asli langsung sebagai env var di PRODULI (`.env`), jangan pernah tulis nilai asli di kode, prompt ke AI, commit, atau dokumen manapun yang bisa ke-share.
 
 Base URL: `{{SILAKES_BASE_URL}}`
 
-Env var yang harus diisi manual di KOPIPU (bukan lewat AI agent):
+Env var yang harus diisi manual di PRODULI (bukan lewat AI agent):
 
 ```
 SILAKES_BASE_URL=
 SILAKES_API_TOKEN=
-KOPIPU_INTEGRATION_SECRET=   # shared secret untuk HMAC signature request
+PRODULI_INTEGRATION_SECRET=   # shared secret untuk HMAC signature request
 ```
 
 Semua response: `{ "status": "success"|"error", "data": [...]|{...}, "message": "...", "meta"?: {...} }`
@@ -21,7 +21,7 @@ Semua response: `{ "status": "success"|"error", "data": [...]|{...}, "message": 
 1. `Authorization: Bearer {{SILAKES_API_TOKEN}}` — ability `integration:read-lab-results`.
 2. `X-Signature` + `X-Timestamp` (HMAC-SHA256):
     - `timestamp` = unix timestamp detik saat request dibuat.
-    - `signature = hash_hmac('sha256', <raw_body> + '.' + <timestamp>, KOPIPU_INTEGRATION_SECRET)`.
+    - `signature = hash_hmac('sha256', <raw_body> + '.' + <timestamp>, PRODULI_INTEGRATION_SECRET)`.
     - GET tanpa body → `<raw_body>` = string kosong.
     - Server tolak jika selisih timestamp > 300 detik dari waktu server (anti-replay).
 3. Rate limit: 60 req/menit → 429 jika kena limit.
@@ -54,13 +54,13 @@ Query (opsional): `since` (ISO8601), `cursor` (opaque, dari response sebelumnya)
 
 `meta: { "per_page": 50, "has_more": true, "next_cursor": "<opaque>|null" }`
 
-**Wajib ditangani di KOPIPU:** `kel_desa`/`kecamatan` perlu proses matching/normalisasi ke kode wilayah baku (lihat tabel `wilayah_mapping` di dokumen 02).
+**Wajib ditangani di PRODULI:** `kel_desa`/`kecamatan` perlu proses matching/normalisasi ke kode wilayah baku (lihat tabel `wilayah_mapping` di dokumen 02).
 
 ## Endpoint 2 — `GET /api/v1/integration/lab-results`
 
 Query sama seperti di atas. Hanya mengembalikan hasil **FINAL** (`status=completed` DAN `status_konfirmasi=approved`).
 
-**Direncanakan ditambahkan (belum live):** filter `is_kunjungan_prolanis=true` dipaksa di query — pasien `is_prolanis=1` bisa saja punya kunjungan lab untuk keperluan lain di luar rutin Prolanis; KOPIPU cuma butuh kunjungan yang memang bagian dari pemeriksaan rutin Prolanis untuk klasifikasi risiko.
+**Direncanakan ditambahkan (belum live):** filter `is_kunjungan_prolanis=true` dipaksa di query — pasien `is_prolanis=1` bisa saja punya kunjungan lab untuk keperluan lain di luar rutin Prolanis; PRODULI cuma butuh kunjungan yang memang bagian dari pemeriksaan rutin Prolanis untuk klasifikasi risiko.
 
 ```json
 {
@@ -83,7 +83,7 @@ Query sama seperti di atas. Hanya mengembalikan hasil **FINAL** (`status=complet
 }
 ```
 
-**Penting:** `nilai_rujukan` = standar lab SiLAKES, **bukan** threshold risiko kesehatan KOPIPU. Threshold KOPIPU (GDP > 120, dst.) disimpan terpisah di `risk_thresholds` (dokumen 02).
+**Penting:** `nilai_rujukan` = standar lab SiLAKES, **bukan** threshold risiko kesehatan PRODULI. Threshold PRODULI (GDP > 120, dst.) disimpan terpisah di `risk_thresholds` (dokumen 02).
 
 ## Endpoint 3 — `GET /api/v1/integration/master-wilayah`
 
@@ -101,9 +101,9 @@ Query: `level` (province|regency|district|village, wajib), `province_code`/`rege
 ]
 ```
 
-**Tidak ada level puskesmas** — puskesmas dikelola manual di KOPIPU.
+**Tidak ada level puskesmas** — puskesmas dikelola manual di PRODULI.
 
-**Sudah live:** field `latitude`/`longitude` per level — terisi hampir 100% (province & regency 100%, district 7277/7285, village 83288/83762). Sebagian kecil district/village bisa `null` — tangani sebagai fallback opsional di KOPIPU, jangan diasumsikan selalu ada. Dibutuhkan untuk fallback GIS (Dokumen 2 §2c) sebelum titik presisi kader tersedia.
+**Sudah live:** field `latitude`/`longitude` per level — terisi hampir 100% (province & regency 100%, district 7277/7285, village 83288/83762). Sebagian kecil district/village bisa `null` — tangani sebagai fallback opsional di PRODULI, jangan diasumsikan selalu ada. Dibutuhkan untuk fallback GIS (Dokumen 2 §2c) sebelum titik presisi kader tersedia.
 
 ## Endpoint 4 — `POST /api/v1/integration/patients/{patient_id}/pembaruan-lapangan` (SUDAH LIVE)
 
@@ -129,13 +129,13 @@ Beda dari Endpoint 1-3 (sudah live, read-only), endpoint ini **satu-satunya peng
 }
 ```
 
-**Tidak ada endpoint untuk cek status approval** — begitu staf approve, sync rutin KOPIPU (`updated_at` delta) otomatis menangkap perubahan. Kalau ditolak, tidak ada perubahan; cukup untuk v1 (YAGNI).
+**Tidak ada endpoint untuk cek status approval** — begitu staf approve, sync rutin PRODULI (`updated_at` delta) otomatis menangkap perubahan. Kalau ditolak, tidak ada perubahan; cukup untuk v1 (YAGNI).
 
-## Yang harus dibangun di KOPIPU (checklist untuk prompt SyncSilakesService)
+## Yang harus dibangun di PRODULI (checklist untuk prompt SyncSilakesService)
 
 1. HTTP client service + helper generate `X-Signature`/`X-Timestamp`.
 2. Sync job terjadwal, pull pakai cursor sampai `has_more=false`, simpan `next_cursor` & timestamp sync terakhir per endpoint sebagai `since` di sync berikutnya (delta sync).
-3. Local read-cache (`patients_cache`, `lab_results_cache`) agar KOPIPU tetap jalan saat SiLAKES down.
+3. Local read-cache (`patients_cache`, `lab_results_cache`) agar PRODULI tetap jalan saat SiLAKES down.
 4. Idempotency saat simpan hasil sync (key: `patient_id`/`lab_result_id`, bukan insert baru terus).
 5. Proses rekonsiliasi `kel_desa`/`kecamatan` → `wilayah_mapping` → `desa_id`/`puskesmas_id`.
 6. Endpoint 1-3 **read-only mutlak** (GET saja). Endpoint 4 (di atas) adalah **satu-satunya** pengecualian tulis, dipanggil dari `VisitReportService` — jangan generalisasi jadi endpoint tulis lain.

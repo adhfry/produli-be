@@ -14,7 +14,7 @@ use Illuminate\Console\Command;
  */
 class ReconcileWilayahCommand extends Command
 {
-    protected $signature = 'kopipu:reconcile-wilayah
+    protected $signature = 'produli:reconcile-wilayah
         {--fresh : Kosongkan cache wilayah_mapping dulu sebelum reproses (hanya aman selama belum ada review manual tersimpan)}';
 
     protected $description = 'Reproses resolusi wilayah semua pasien di cache lokal (tanpa re-sync ke SiLAKES)';

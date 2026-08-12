@@ -14,11 +14,14 @@ class VisitAssignment extends Model
     protected $fillable = [
         'patient_id',
         'kader_id',
+        'tenaga_kesehatan_id',
+        'care_assignment_id',
         'assigned_by',
         'scheduled_date',
         'status',
         'priority',
         'assignment_method',
+        'visit_origin',
         'puskesmas_id_snapshot',
     ];
 
@@ -37,6 +40,31 @@ class VisitAssignment extends Model
     public function kader(): BelongsTo
     {
         return $this->belongsTo(Kader::class);
+    }
+
+    public function tenagaKesehatan(): BelongsTo
+    {
+        return $this->belongsTo(TenagaKesehatan::class);
+    }
+
+    /**
+     * User yang benar-benar ditugaskan, terlepas kader atau tenaga_kesehatan -- pemanggil (mis.
+     * NotificationService::deliver()) tidak perlu tahu jenis petugasnya.
+     */
+    public function assigneeUser(): ?User
+    {
+        return $this->kader_id !== null
+            ? $this->kader?->user
+            : $this->tenagaKesehatan?->user;
+    }
+
+    /**
+     * Rencana kunjungan berulang yang menghasilkan baris ini -- NULL untuk assignment manual
+     * satu-kali lama (visit_origin='manual'), terisi untuk cadence_generated/adhoc.
+     */
+    public function careAssignment(): BelongsTo
+    {
+        return $this->belongsTo(CareAssignment::class);
     }
 
     public function assignedBy(): BelongsTo

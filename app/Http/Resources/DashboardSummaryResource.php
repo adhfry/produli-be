@@ -14,6 +14,7 @@ class DashboardSummaryResource extends JsonResource
     {
         return [
             'total_patients' => $this->resource->totalPatients,
+            'total_patients_prolanis' => $this->resource->totalPatientsProlanis,
             'patients_per_risk_level' => $this->resource->patientsPerRiskLevel,
             'total_assignments' => $this->resource->totalAssignments,
             'visits_per_status' => $this->resource->visitsPerStatus,
@@ -22,6 +23,7 @@ class DashboardSummaryResource extends JsonResource
             'aktivitas_hari_ini' => $this->resource->aktivitasHariIni,
             'risiko_per_kecamatan' => $this->resource->risikoPerKecamatan,
             'risiko_per_desa' => $this->resource->risikoPerDesa,
+            'puskesmas_performance' => $this->resource->puskesmasPerformance,
         ];
     }
 }

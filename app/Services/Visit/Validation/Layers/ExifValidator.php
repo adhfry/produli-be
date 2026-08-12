@@ -50,7 +50,7 @@ class ExifValidator implements VisitValidationLayer
                 // abs() wajib: diffInSeconds() Carbon 3 signed (negatif kalau argumennya di masa
                 // lalu), bukan selalu absolut seperti di Carbon 2.
                 $ageSeconds = abs(Carbon::now()->diffInSeconds($takenAt));
-                $maxAge = (int) config('kopipu.validation.exif.max_age_seconds');
+                $maxAge = (int) config('produli.validation.exif.max_age_seconds');
 
                 if ($ageSeconds > $maxAge) {
                     return VisitValidationResult::fail(
@@ -73,7 +73,7 @@ class ExifValidator implements VisitValidationLayer
             );
             $metadata['exif_gps_distance_meters'] = $distance;
 
-            $tolerance = (int) config('kopipu.validation.exif.gps_tolerance_meters');
+            $tolerance = (int) config('produli.validation.exif.gps_tolerance_meters');
 
             if ($distance > $tolerance) {
                 return VisitValidationResult::fail(

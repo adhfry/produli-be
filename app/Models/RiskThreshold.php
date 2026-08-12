@@ -12,6 +12,7 @@ class RiskThreshold extends Model
         'parameter',
         'level',
         'operator',
+        'is_direct_classifier',
         'threshold_min',
         'threshold_max',
         'satuan',
@@ -25,6 +26,7 @@ class RiskThreshold extends Model
             'threshold_min' => 'float',
             'threshold_max' => 'float',
             'is_active' => 'boolean',
+            'is_direct_classifier' => 'boolean',
         ];
     }
 }

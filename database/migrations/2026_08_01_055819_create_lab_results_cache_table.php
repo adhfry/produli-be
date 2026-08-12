@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('parameter', 50);
             $table->string('value', 50); // "hasil" — string, bukan number (docs/planning/01 §Catatan Implementasi Wajib)
             $table->string('satuan', 20)->nullable();
-            $table->string('nilai_rujukan', 50)->nullable(); // standar lab SiLAKES, BUKAN threshold risiko KOPIPU
+            $table->string('nilai_rujukan', 50)->nullable(); // standar lab SiLAKES, BUKAN threshold risiko PRODULI
             $table->string('class_hasil', 50)->nullable();
             $table->string('validation_status', 30)->nullable();
             $table->date('tanggal_periksa');

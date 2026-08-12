@@ -2,6 +2,7 @@
 
 namespace App\Policies\Concerns;
 
+use App\Models\CareAssignment;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Support\DataScope;
@@ -43,6 +44,16 @@ trait ScopesByPuskesmas
             }
 
             return VisitAssignment::where('kader_id', $user->kader->id)
+                ->where('patient_id', $patientId)
+                ->exists();
+        }
+
+        if (DataScope::isTenagaKesehatanOnly($user)) {
+            if ($patientId === null || $user->tenagaKesehatan === null) {
+                return false;
+            }
+
+            return CareAssignment::where('tenaga_kesehatan_id', $user->tenagaKesehatan->id)
                 ->where('patient_id', $patientId)
                 ->exists();
         }

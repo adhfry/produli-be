@@ -3,7 +3,7 @@
 
 Halo **{{ $userName }}**,
 
-Kami menerima permintaan reset password untuk akun Anda di KOPIPU Smart. Berikut adalah rincian permintaan tersebut:
+Kami menerima permintaan reset password untuk akun Anda di PRODULI. Berikut adalah rincian permintaan tersebut:
 
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin: 24px 0; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
 <tr>

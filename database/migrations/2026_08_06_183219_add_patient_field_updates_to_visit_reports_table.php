@@ -15,7 +15,7 @@ return new class extends Migration
             // Usulan data pasien (kontak/alamat/identitas, docs/planning/01 §9) yang dilengkapi
             // kader "sembari menyelam minum air" saat kunjungan -- disimpan mentah di sini
             // (bukan dipecah jadi kolom, bukan diterapkan ke patients_cache) karena hasilnya
-            // SELALU pending_review di SiLAKES, KOPIPU cuma relay + audit trail siapa yang
+            // SELALU pending_review di SiLAKES, PRODULI cuma relay + audit trail siapa yang
             // mengusulkan lewat laporan mana.
             $table->json('patient_field_updates')->nullable()->after('sync_error');
         });

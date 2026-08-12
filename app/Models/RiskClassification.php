@@ -15,6 +15,8 @@ class RiskClassification extends Model
         'criteria_snapshot',
         'computed_at',
         'is_latest',
+        'early_detection_flag',
+        'early_detection_reason',
     ];
 
     protected function casts(): array
@@ -23,6 +25,8 @@ class RiskClassification extends Model
             'criteria_snapshot' => 'array',
             'computed_at' => 'datetime',
             'is_latest' => 'boolean',
+            'early_detection_flag' => 'boolean',
+            'early_detection_reason' => 'array',
         ];
     }
 

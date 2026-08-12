@@ -17,7 +17,7 @@ class SyncSilakesCommand extends Command
 {
     private const MIN_HOURS_BETWEEN_RUNS = 48;
 
-    protected $signature = 'kopipu:sync-silakes
+    protected $signature = 'produli:sync-silakes
         {--force : Jalankan meski run sukses terakhir belum 48 jam lalu}';
 
     protected $description = 'Sync pasien & hasil lab dari SiLAKES (throttle: minimal 48 jam sejak run sukses terakhir)';

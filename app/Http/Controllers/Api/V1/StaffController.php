@@ -19,7 +19,7 @@ class StaffController extends Controller
      * List staf (admin_puskesmas + pj_prolanis), ter-scope sama seperti store() (docs/planning/02
      * §7/§11) -- super_admin lihat semua, admin_puskesmas/pj_prolanis cuma puskesmasnya sendiri
      * (StaffService::scopedQuery generik lewat puskesmas_id, tidak bercabang per role). Bukan
-     * Policy resource (User bukan model domain KOPIPU sendiri), sama seperti store().
+     * Policy resource (User bukan model domain PRODULI sendiri), sama seperti store().
      */
     public function index(Request $request): JsonResponse
     {
@@ -50,7 +50,7 @@ class StaffController extends Controller
      * spesifik "admin_puskesmas cuma boleh pj_prolanis, dipaksa puskesmas sendiri" ditegakkan di
      * StaffService, bukan di sini -- gerbang di controller cuma "role apa saja yang boleh
      * mencoba akses endpoint ini sama sekali". Bukan Policy resource (User bukan model domain
-     * KOPIPU sendiri).
+     * PRODULI sendiri).
      */
     public function store(RegisterStaffRequest $request): JsonResponse
     {

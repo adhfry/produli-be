@@ -34,7 +34,7 @@ class AppServiceProvider extends ServiceProvider
             $expireMinutes = (int) config('auth.passwords.users.expire');
 
             return (new MailMessage())
-                ->subject('Reset Password KOPIPU Smart')
+                ->subject('Reset Password PRODULI')
                 ->markdown('emails.reset-password', [
                     'resetUrl' => $resetUrl,
                     'expireMinutes' => $expireMinutes,

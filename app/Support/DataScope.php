@@ -25,4 +25,12 @@ class DataScope
     {
         return $user->hasRole('kader') && ! $user->hasAnyRole(['admin_puskesmas', 'pj_prolanis']);
     }
+
+    /**
+     * Tenaga Kesehatan MURNI -- simetris dengan isKaderOnly(), lihat komentar di sana.
+     */
+    public static function isTenagaKesehatanOnly(User $user): bool
+    {
+        return $user->hasRole('tenaga_kesehatan') && ! $user->hasAnyRole(['admin_puskesmas', 'pj_prolanis']);
+    }
 }

@@ -37,7 +37,7 @@ use Symfony\Component\HttpFoundation\Cookie as CookieValueObject;
 
 class AuthController extends Controller
 {
-    private const REFRESH_COOKIE_NAME = 'kopipu_refresh_token';
+    private const REFRESH_COOKIE_NAME = 'produli_refresh_token';
 
     public function __construct(
         private readonly AuthTokenService $tokens,
@@ -345,7 +345,7 @@ class AuthController extends Controller
             domain: null,
             secure: ! app()->environment('local', 'testing'),
             httpOnly: true,
-            sameSite: config('kopipu.auth.refresh_cookie_samesite', 'lax'),
+            sameSite: config('produli.auth.refresh_cookie_samesite', 'lax'),
         );
     }
 }
