@@ -90,6 +90,7 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // "Riwayat & Tren Kondisi", dan "Riwayat Kunjungan" di detail pasien.
     Route::get('patients/{patient}/risk-history', [PatientController::class, 'riskHistory']);
     Route::get('patients/{patient}/visit-history', [PatientController::class, 'visitHistory']);
+    Route::get('patients/{patient}/lab-results', [PatientController::class, 'labResults']);
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 

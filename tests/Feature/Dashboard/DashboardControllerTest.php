@@ -129,8 +129,10 @@ class DashboardControllerTest extends TestCase
     {
         $superAdmin = $this->makeUser('super_admin');
 
-        $this->makePatient($this->puskesmasA, 1);
-        $this->makePatient($this->puskesmasB, 2);
+        $patientA = $this->makePatient($this->puskesmasA, 1);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+        RiskClassification::create(['patient_id' => $patientA->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+        RiskClassification::create(['patient_id' => $patientB->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
 
         Sanctum::actingAs($superAdmin);
 
@@ -148,6 +150,7 @@ class DashboardControllerTest extends TestCase
 
         $patientMilikKader = $this->makePatient($this->puskesmasA, 1);
         $patientMilikKaderLain = $this->makePatient($this->puskesmasA, 2);
+        RiskClassification::create(['patient_id' => $patientMilikKader->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
 
         VisitAssignment::create([
             'patient_id' => $patientMilikKader->id, 'kader_id' => $kader->id,
@@ -287,6 +290,9 @@ class DashboardControllerTest extends TestCase
         $kabupaten = Kabupaten::first();
         $kecamatan = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K01', 'nama' => 'Talango']);
         $desa = Desa::create(['kecamatan_id' => $kecamatan->id, 'puskesmas_id' => $this->puskesmasA->id, 'kode_kemendagri' => 'D01', 'nama' => 'Talango']);
+        // Revisi Bu Kadis: kecamatan PRIMARY sekarang lewat puskesmas.kecamatan_id (bukan lagi
+        // desa_id langsung, lihat DashboardService::risikoPerKecamatan()) -- wajib di-set di sini.
+        $this->puskesmasA->update(['kecamatan_id' => $kecamatan->id]);
 
         $beratResolved = $this->makePatient($this->puskesmasA, 1);
         $beratResolved->update(['desa_id' => $desa->id, 'wilayah_status' => 'resolved']);
@@ -296,10 +302,14 @@ class DashboardControllerTest extends TestCase
         $ringanResolved->update(['desa_id' => $desa->id, 'wilayah_status' => 'resolved']);
         RiskClassification::create(['patient_id' => $ringanResolved->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
 
-        // Pasien kecamatan_fallback (desa_id NULL) -- sengaja TIDAK boleh ikut muncul, karena
-        // kecamatan pastinya tidak diketahui cukup presisi.
+        // Pasien BENAR-BENAR tidak teridentifikasi (puskesmas_id null DAN kecamatan_id null) --
+        // sengaja TIDAK boleh ikut muncul. BEDA dari sebelumnya (cuma desa_id null): sejak
+        // kecamatan PRIMARY lewat puskesmas.kecamatan_id, seorang pasien yang puskesmas_id-nya
+        // sudah resolved (misal lewat pengirim_matched/kecamatan_fallback) TETAP ikut terhitung
+        // walau desa spesifiknya sendiri tidak diketahui -- exclusion cuma berlaku kalau puskesmas
+        // MAUPUN kecamatan sama-sama tidak diketahui sama sekali.
         $fallback = $this->makePatient($this->puskesmasA, 3);
-        $fallback->update(['desa_id' => null, 'wilayah_status' => 'unresolved']);
+        $fallback->update(['puskesmas_id' => null, 'desa_id' => null, 'kecamatan_id' => null, 'wilayah_status' => 'unresolved']);
         RiskClassification::create(['patient_id' => $fallback->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
 
         Sanctum::actingAs($admin);

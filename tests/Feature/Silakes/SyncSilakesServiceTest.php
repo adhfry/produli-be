@@ -70,6 +70,17 @@ class SyncSilakesServiceTest extends TestCase
                             ['parameter' => 'Gula Darah Puasa', 'satuan' => 'mg/dL', 'nilai_rujukan' => '70-110', 'hasil' => '250', 'class_hasil' => 'Tinggi', 'validation_status' => 'validated'],
                         ],
                     ],
+                    // Wajib ada supaya patient_id 888002 lolos gerbang isEligible() (butuh minimal
+                    // 1 baris lab_results_cache) -- tanpa ini pasien 2 tidak pernah ikut disinkron
+                    // sama sekali, membuat assertion patients_synced=2 di bawah gagal.
+                    [
+                        'lab_result_id' => 700002, 'patient_id' => 888002, 'tanggal' => '2026-07-29',
+                        'status' => 'completed', 'status_konfirmasi' => 'approved',
+                        'updated_at' => '2026-07-29T09:00:00+00:00',
+                        'parameters' => [
+                            ['parameter' => 'Gula Darah Puasa', 'satuan' => 'mg/dL', 'nilai_rujukan' => '70-110', 'hasil' => '90', 'class_hasil' => 'Normal', 'validation_status' => 'validated'],
+                        ],
+                    ],
                 ],
                 'meta' => ['per_page' => 200, 'has_more' => false, 'next_cursor' => null],
             ], 200),
@@ -84,7 +95,7 @@ class SyncSilakesServiceTest extends TestCase
         $result = app(SyncSilakesService::class)->run();
 
         $this->assertSame(2, $result['patients_synced']);
-        $this->assertSame(1, $result['lab_results_synced']);
+        $this->assertSame(2, $result['lab_results_synced']);
         $this->assertSame(1, $result['patients_classified']);
 
         $p1 = PatientsCache::where('external_patient_id', 888001)->first();

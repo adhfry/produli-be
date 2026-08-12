@@ -47,8 +47,17 @@ class SyncSilakesService
         // Lab results DULUAN, baru patients — syncPatients() butuh lab_results_cache yang
         // sudah mutakhir untuk menggerbang kelayakan (lihat isEligible()). Urutan sebaliknya
         // berarti pasien baru selalu dievaluasi dari data lab yang seangkatan lebih lama.
-        [$labResultsSynced, $patientsClassified] = $this->syncLabResults();
+        //
+        // TAPI klasifikasi sendiri baru bisa dilakukan SETELAH syncPatients() -- untuk pasien
+        // yang benar-benar baru (belum pernah ada baris patients_cache sama sekali), baris itu
+        // belum ada saat syncLabResults() selesai (dibuat syncPatients() SETELAHNYA), jadi
+        // classify() di sana selalu dilewati senyap (patient null) untuk sinkronisasi pertama
+        // mereka -- bug nyata yang ketahuan lewat regresi test, bukan cuma test basi. Makanya
+        // syncLabResults() cuma MENGUMPULKAN id pasien yang datanya baru, klasifikasi
+        // sungguhannya dieksekusi di sini, di bawah syncPatients().
+        [$labResultsSynced, $externalPatientIdsWithNewData] = $this->syncLabResults();
         $patientsSynced = $this->syncPatients();
+        $patientsClassified = $this->classifyPatients($externalPatientIdsWithNewData);
 
         return [
             'patients_synced' => $patientsSynced,
@@ -167,7 +176,7 @@ class SyncSilakesService
     }
 
     /**
-     * @return array{0: int, 1: int} [lab_results_synced, patients_classified]
+     * @return array{0: int, 1: array<int, true>} [lab_results_synced, external_patient_id => true pasien yang datanya baru]
      */
     public function syncLabResults(): array
     {
@@ -207,6 +216,17 @@ class SyncSilakesService
             }
         } while ($hasMore && $cursor);
 
+        return [$count, $externalPatientIdsWithNewData];
+    }
+
+    /**
+     * Dipanggil dari run() SETELAH syncPatients() -- lihat komentar run() untuk alasan urutan
+     * ini wajib (pasien baru belum punya baris patients_cache saat syncLabResults() selesai).
+     *
+     * @param  array<int, true>  $externalPatientIdsWithNewData
+     */
+    private function classifyPatients(array $externalPatientIdsWithNewData): int
+    {
         $classifiedCount = 0;
 
         foreach (array_keys($externalPatientIdsWithNewData) as $externalPatientId) {
@@ -217,7 +237,7 @@ class SyncSilakesService
             }
         }
 
-        return [$count, $classifiedCount];
+        return $classifiedCount;
     }
 
     private function upsertPatient(array $row): void

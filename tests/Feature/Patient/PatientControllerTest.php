@@ -4,6 +4,7 @@ namespace Tests\Feature\Patient;
 
 use App\Models\Kabupaten;
 use App\Models\Kader;
+use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
 use App\Models\RiskClassification;
@@ -292,6 +293,56 @@ class PatientControllerTest extends TestCase
         Sanctum::actingAs($admin);
 
         $response = $this->getJson("/api/v1/patients/{$patientB->id}/visit-history");
+
+        $response->assertStatus(403);
+    }
+
+    public function test_lab_results_mengembalikan_hasil_terbaru_per_parameter(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        LabResultCache::create([
+            'external_id' => 1, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'Gula Darah Puasa', 'value' => '90', 'satuan' => 'mg/dL',
+            'nilai_rujukan' => '70-110', 'class_hasil' => 'Normal', 'validation_status' => 'valid',
+            'tanggal_periksa' => '2026-06-01', 'synced_at' => '2026-06-01 08:00:00',
+        ]);
+        // Retest lebih baru untuk parameter yang sama -- yang ini yang harus muncul (bukan 90).
+        LabResultCache::create([
+            'external_id' => 2, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'Gula Darah Puasa', 'value' => '250', 'satuan' => 'mg/dL',
+            'nilai_rujukan' => '70-110', 'class_hasil' => 'Tinggi', 'validation_status' => 'valid',
+            'tanggal_periksa' => '2026-07-20', 'synced_at' => '2026-07-20 08:00:00',
+        ]);
+        LabResultCache::create([
+            'external_id' => 3, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'Cholesterol', 'value' => '180', 'satuan' => 'mg/dL',
+            'nilai_rujukan' => '<200', 'class_hasil' => 'Normal', 'validation_status' => 'valid',
+            'tanggal_periksa' => '2026-07-20', 'synced_at' => '2026-07-20 08:00:00',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/lab-results");
+
+        $response->assertOk();
+        $data = collect($response->json('data'))->keyBy('parameter');
+        $this->assertCount(2, $data);
+        $this->assertSame('250', $data['Gula Darah Puasa']['value']);
+        $this->assertSame('70-110', $data['Gula Darah Puasa']['nilai_rujukan']);
+        $this->assertSame('mg/dL', $data['Gula Darah Puasa']['satuan']);
+        $this->assertSame('180', $data['Cholesterol']['value']);
+    }
+
+    public function test_lab_results_pasien_di_luar_scope_ditolak_403(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patientB->id}/lab-results");
 
         $response->assertStatus(403);
     }

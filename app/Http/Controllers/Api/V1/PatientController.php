@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\ListPatientsRequest;
 use App\Http\Requests\Patient\ProposePatientUpdateRequest;
 use App\Http\Requests\Patient\SearchPatientByNikRequest;
+use App\Http\Resources\LabResultResource;
 use App\Http\Resources\PatientResource;
 use App\Http\Resources\RiskClassificationResource;
 use App\Http\Resources\VisitAssignmentResource;
 use App\Jobs\SyncPatientFieldUpdateToSilakesJob;
+use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
@@ -157,6 +159,29 @@ class PatientController extends Controller
             ->get();
 
         return ApiResponse::success(VisitAssignmentResource::collection($visits));
+    }
+
+    /**
+     * Hasil pemeriksaan lab TERBARU (1 baris per parameter, revisi Bu Kadis) untuk seksi
+     * "Hasil Pemeriksaan Terakhir" di detail pasien -- SEMUA parameter yang pernah diperiksa
+     * (bukan cuma yang exceeded/dipakai klasifikasi seperti criteria_snapshot di riskHistory()),
+     * lengkap dengan nilai_rujukan ASLI dari SiLAKES. Urutan "terbaru" SAMA PERSIS dengan
+     * RiskClassificationService::classify() (tanggal_periksa lalu synced_at sebagai tiebreak)
+     * supaya konsisten dengan hasil yang dipakai sistem untuk klasifikasi.
+     */
+    public function labResults(PatientsCache $patient): JsonResponse
+    {
+        $this->authorize('view', $patient);
+
+        $latestPerParameter = LabResultCache::where('patient_id', $patient->external_patient_id)
+            ->orderByDesc('tanggal_periksa')
+            ->orderByDesc('synced_at')
+            ->get()
+            ->unique('parameter')
+            ->sortBy('parameter')
+            ->values();
+
+        return ApiResponse::success(LabResultResource::collection($latestPerParameter));
     }
 
     public function show(PatientsCache $patient): JsonResponse

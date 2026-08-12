@@ -189,9 +189,12 @@ class RiskClassificationService
      *    ditambah beberapa yang CUMA SEDIKIT di atas, padahal belum tentu benar-benar "menuju
      *    Berat" sebagai satu kesatuan. Sekarang tiap parameter kombo yang exceeded dihitung
      *    margin-nya ((nilai-ambang)/ambang, persen DI ATAS nilai rujukan aslinya), dan HANYA
-     *    di-flag kalau (a) minimal combo_min_parameters parameter exceeded BERSAMAAN (bukan
-     *    cuma 1 parameter nyasar tinggi) DAN (b) SELURUH parameter yang exceeded itu (bukan
-     *    cuma rata-ratanya, tapi tiap satu) >= combo_margin_threshold_percent di atas rujukan.
+     *    di-flag kalau (a) minimal combo_min_parameters parameter exceeded BERSAMAAN, (b)
+     *    SELURUH parameter combo_required_parameters (default: Gula Darah Puasa, LDL,
+     *    Trigliserida -- pemeriksaan terpenting secara klinis) WAJIB termasuk yang exceeded itu
+     *    (Cholesterol/Urea cuma pelengkap opsional, TIDAK bisa menggantikan salah satu dari 3
+     *    wajib), DAN (c) SELURUH parameter yang exceeded itu (bukan cuma rata-ratanya, tapi
+     *    tiap satu) >= combo_margin_threshold_percent di atas rujukan.
      * 3. Tren memburuk 3 pemeriksaan berturut-turut: nilai parameter yang sama naik terus
      *    (current > sebelumnya > sebelumnya lagi) di 2 klasifikasi historis + klasifikasi ini.
      *
@@ -284,12 +287,21 @@ class RiskClassificationService
             $margins[$c['parameter']] = (($c['value'] - $c['threshold_min']) / $c['threshold_min']) * 100;
         }
 
-        $minParameters = (int) config('produli.early_detection.combo_min_parameters', 2);
+        $minParameters = (int) config('produli.early_detection.combo_min_parameters', 3);
         $marginThreshold = (float) config('produli.early_detection.combo_margin_threshold_percent', 50);
+        $requiredParameters = (array) config('produli.early_detection.combo_required_parameters', []);
 
         // "Bukan hanya 1 parameter" -- 1 parameter yang jauh di atas ambang sendirian TIDAK
         // cukup, harus beberapa parameter BERSAMAAN yang sama-sama tinggi.
         if (count($margins) < $minParameters) {
+            return [];
+        }
+
+        // Keputusan klinis: GDP/LDL/Trigliserida (default combo_required_parameters) WAJIB
+        // ikut exceeded -- kombinasi Cholesterol+Urea+1 lainnya TIDAK cukup meski jumlahnya
+        // sudah >= combo_min_parameters, karena ketiganya dianggap pemeriksaan terpenting utk
+        // menilai "trending ke Berat" secara klinis (bukan sekadar count generik).
+        if (array_diff($requiredParameters, array_keys($margins)) !== []) {
             return [];
         }
 

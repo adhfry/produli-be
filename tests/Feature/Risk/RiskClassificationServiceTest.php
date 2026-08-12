@@ -375,15 +375,16 @@ class RiskClassificationServiceTest extends TestCase
 
     public function test_early_detection_flag_combo_breadth_saat_4_dari_5_parameter_kombinasi_melebihi_dengan_margin_tinggi(): void
     {
-        // Revisi: combo_breadth sekarang berbasis MARGIN persentase, bukan cuma jumlah -- Gula
-        // Darah Puasa dan Creatinine sengaja dibiarkan normal, 4 dari 5 BERAT_PARAMETERS
-        // (Cholesterol, Trigliserida, LDL, Urea) melebihi ambang SAMA-SAMA 60% (di atas
+        // Revisi: combo_breadth sekarang berbasis MARGIN persentase DAN mewajibkan Gula Darah
+        // Puasa/LDL/Trigliserida (combo_required_parameters) ikut exceeded -- Urea sengaja
+        // dibiarkan normal (Creatinine juga normal), 4 dari 5 BERAT_PARAMETERS (GDP, Cholesterol,
+        // Trigliserida, LDL) melebihi ambang SAMA-SAMA 60% (di atas
         // PRODULI_EARLY_DETECTION_COMBO_MARGIN_THRESHOLD_PERCENT=50), bukan cuma "exceeded".
         $this->addFullPanel([
+            'Gula Darah Puasa' => '192', // ambang 120 -> margin 60%
             'Cholesterol' => '320',   // ambang 200 -> margin 60%
             'Trigliserida' => '240',  // ambang 150 -> margin 60%
             'LDL' => '208',           // ambang 130 -> margin 60%
-            'Urea' => '64',           // ambang 40 -> margin 60%
         ]);
 
         $result = $this->service->classify($this->patient->fresh());
@@ -392,7 +393,7 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertTrue($result->early_detection_flag);
         $comboReasons = collect($result->early_detection_reason)->where('type', 'combo_breadth');
         $this->assertCount(1, $comboReasons);
-        $this->assertSame(['Gula Darah Puasa'], $comboReasons->first()['missing_parameters']);
+        $this->assertSame(['Urea'], $comboReasons->first()['missing_parameters']);
         $this->assertSame(60, $comboReasons->first()['average_margin_percent']);
     }
 
@@ -403,10 +404,10 @@ class RiskClassificationServiceTest extends TestCase
         // sekarang TIDAK BOLEH, karena belum tentu benar-benar "menuju Berat" sebagai satu
         // kesatuan (1 parameter tinggi + beberapa nyaris ambang bukan sinyal kuat).
         $this->addFullPanel([
+            'Gula Darah Puasa' => '126', // ambang 120 -> margin 5%
             'Cholesterol' => '210',   // ambang 200 -> margin 5%
             'Trigliserida' => '155',  // ambang 150 -> margin 3.3%
             'LDL' => '135',           // ambang 130 -> margin 3.8%
-            'Urea' => '42',           // ambang 40 -> margin 5%
         ]);
 
         $result = $this->service->classify($this->patient->fresh());
@@ -420,13 +421,53 @@ class RiskClassificationServiceTest extends TestCase
     {
         // "Bukan hanya 1 parameter" -- Cholesterol jauh di atas ambang (margin 200%) TAPI
         // sendirian, parameter kombo lain normal -- TIDAK cukup untuk combo_breadth (butuh
-        // minimal combo_min_parameters=2 parameter exceeded BERSAMAAN).
+        // minimal combo_min_parameters=3 parameter exceeded BERSAMAAN).
         $this->addFullPanel(['Cholesterol' => '600']); // ambang 200 -> margin 200%, sendirian
 
         $result = $this->service->classify($this->patient->fresh());
 
         $this->assertSame('sedang', $result->level);
         $this->assertFalse($result->early_detection_flag);
+    }
+
+    public function test_early_detection_flag_false_kalau_3_parameter_exceeded_tapi_bukan_semua_parameter_wajib(): void
+    {
+        // Jumlah sudah memenuhi combo_min_parameters (3, yaitu GDP+Cholesterol+Urea), TAPI
+        // parameter yang exceeded bukan superset dari combo_required_parameters (Gula Darah
+        // Puasa, LDL, Trigliserida) -- LDL & Trigliserida sama sekali tidak exceeded di sini,
+        // jadi TIDAK BOLEH memicu combo_breadth meski margin tinggi dan jumlahnya cukup secara
+        // hitungan generik.
+        $this->addFullPanel([
+            'Gula Darah Puasa' => '192', // margin 60%, mandatory tapi cuma 1 dari 3
+            'Cholesterol' => '320', // margin 60%
+            'Urea' => '64',         // margin 60%
+        ]);
+
+        $result = $this->service->classify($this->patient->fresh());
+
+        $this->assertSame('sedang', $result->level);
+        $this->assertFalse($result->early_detection_flag);
+    }
+
+    public function test_early_detection_flag_combo_breadth_saat_hanya_3_parameter_wajib_exceeded(): void
+    {
+        // Kasus minimum yang masih valid: HANYA Gula Darah Puasa, LDL, Trigliserida (persis
+        // combo_required_parameters) yang exceeded, Cholesterol & Urea tetap normal -- tetap
+        // harus memicu combo_breadth karena ketiganya sudah cukup (tidak butuh parameter
+        // tambahan apa pun di luar yang wajib).
+        $this->addFullPanel([
+            'Gula Darah Puasa' => '192', // margin 60%
+            'Trigliserida' => '240',     // margin 60%
+            'LDL' => '208',              // margin 60%
+        ]);
+
+        $result = $this->service->classify($this->patient->fresh());
+
+        $this->assertSame('sedang', $result->level);
+        $this->assertTrue($result->early_detection_flag);
+        $comboReasons = collect($result->early_detection_reason)->where('type', 'combo_breadth');
+        $this->assertCount(1, $comboReasons);
+        $this->assertSame(['Cholesterol', 'Urea'], $comboReasons->first()['missing_parameters']);
     }
 
     public function test_early_detection_flag_true_dari_kombinasi_creatinine_hampir_berat_walau_kombo_hanya_sedang_rata_rata(): void

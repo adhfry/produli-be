@@ -45,12 +45,12 @@ class WilayahResolverTest extends TestCase
 
         $this->talango = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K28', 'nama' => 'Talango']);
         $desaTalango = Desa::create(['kecamatan_id' => $this->talango->id, 'kode_kemendagri' => 'D-TALANGO', 'nama' => 'Talango']);
-        $pkmTalango = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-TALANGO', 'nama' => 'Puskesmas Talango']);
+        $pkmTalango = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kecamatan_id' => $this->talango->id, 'kode_internal' => 'PKM-TALANGO', 'nama' => 'Puskesmas Talango']);
         $desaTalango->update(['puskesmas_id' => $pkmTalango->id]);
 
         $this->masalembu = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K20', 'nama' => 'Masalembu']);
-        $pkmA = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-MSL-A', 'nama' => 'Puskesmas Masalembu A']);
-        $pkmB = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-MSL-B', 'nama' => 'Puskesmas Masalembu B']);
+        $pkmA = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kecamatan_id' => $this->masalembu->id, 'kode_internal' => 'PKM-MSL-A', 'nama' => 'Puskesmas Masalembu A']);
+        $pkmB = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kecamatan_id' => $this->masalembu->id, 'kode_internal' => 'PKM-MSL-B', 'nama' => 'Puskesmas Masalembu B']);
         Desa::create(['kecamatan_id' => $this->masalembu->id, 'kode_kemendagri' => 'D-MSL-1', 'nama' => 'Pulau Satu', 'puskesmas_id' => $pkmA->id]);
         Desa::create(['kecamatan_id' => $this->masalembu->id, 'kode_kemendagri' => 'D-MSL-2', 'nama' => 'Pulau Dua', 'puskesmas_id' => $pkmB->id]);
 

@@ -158,17 +158,26 @@ return [
         // benar-benar "menuju Berat". Sekarang setiap parameter kombo yang exceeded dihitung
         // margin-nya sbg persentase DI ATAS nilai rujukan ((nilai-ambang)/ambang), dan combo
         // HANYA di-flag kalau (a) minimal combo_min_parameters parameter exceeded sekaligus
-        // (bukan cuma 1 parameter nyasar tinggi) DAN (b) SELURUH parameter yang exceeded itu
-        // (bukan cuma rata-ratanya) sama-sama >= combo_margin_threshold_percent di atas
-        // rujukan -- baru dianggap benar-benar "trending ke Berat" sebagai satu kesatuan.
+        // (bukan cuma 1 parameter nyasar tinggi), (b) SELURUH parameter combo_required_parameters
+        // WAJIB ada di antara yang exceeded itu (keputusan klinis: GDP/LDL/Trigliserida dianggap
+        // pemeriksaan terpenting, Cholesterol/Urea jadi pelengkap opsional -- bukan lagi "3 dari
+        // 5 mana saja"), DAN (c) SELURUH parameter yang exceeded (bukan cuma rata-ratanya)
+        // sama-sama >= combo_margin_threshold_percent di atas rujukan -- baru dianggap benar-benar
+        // "trending ke Berat" sebagai satu kesatuan.
         //
-        // TIDAK ADA batas atas matematis alami seperti proximity Creatinine (kombo tidak
-        // punya tier "Berat" numerik terpisah per parameter, Berat kombo ditentukan lewat
-        // breadth bukan kedalaman) -- kedua angka di bawah murni keputusan kebijakan klinis,
-        // sengaja configurable via .env supaya bisa disetel ulang operator tanpa deploy kode
-        // kalau ternyata kurang/kelewat ketat di lapangan.
-        'combo_min_parameters' => (int) env('PRODULI_EARLY_DETECTION_COMBO_MIN_PARAMETERS', 2),
+        // combo_min_parameters TIDAK BOLEH diset ke 5 (jumlah total BERAT_PARAMETERS) -- kalau
+        // seluruh 5 parameter exceeded bersamaan, determineLevel() sendiri sudah memvonis Berat
+        // (bukan Sedang lagi), sehingga evaluateEarlyDetection() (yang cuma jalan utk matchedLevel
+        // 'sedang') tidak akan pernah sempat dievaluasi -- nilai maksimum yang masih bisa
+        // berfungsi secara matematis adalah 4. Kedua angka + daftar parameter wajib ini murni
+        // keputusan kebijakan klinis, sengaja configurable via .env supaya bisa disetel ulang
+        // operator tanpa deploy kode kalau ternyata kurang/kelewat ketat di lapangan.
+        'combo_min_parameters' => (int) env('PRODULI_EARLY_DETECTION_COMBO_MIN_PARAMETERS', 3),
         'combo_margin_threshold_percent' => (float) env('PRODULI_EARLY_DETECTION_COMBO_MARGIN_THRESHOLD_PERCENT', 50),
+        'combo_required_parameters' => array_filter(array_map('trim', explode(',', (string) env(
+            'PRODULI_EARLY_DETECTION_COMBO_REQUIRED_PARAMETERS',
+            'Gula Darah Puasa,LDL,Trigliserida'
+        )))),
     ],
 
     /*

@@ -238,14 +238,17 @@ class StaffControllerTest extends TestCase
         $puskesmasLain = Puskesmas::create(['kabupaten_id' => $this->puskesmas->kabupaten_id, 'kode_internal' => 'PKM-B', 'nama' => 'Puskesmas B']);
         $adminA = $this->makeAdminPuskesmas();
         $adminB = $this->makeAdminPuskesmas($puskesmasLain);
+        $superAdmin = $this->makeSuperAdmin();
 
-        Sanctum::actingAs($this->makeSuperAdmin());
+        Sanctum::actingAs($superAdmin);
 
         $response = $this->getJson('/api/v1/staff');
 
         $response->assertOk();
         $ids = collect($response->json('data.items'))->pluck('id');
-        $this->assertEqualsCanonicalizing([$adminA->id, $adminB->id], $ids->all());
+        // StaffService::scopedQuery() menyertakan role super_admin (bukan cuma admin_puskesmas/
+        // pj_prolanis) -- super_admin yang login pun ikut muncul di daftarnya sendiri.
+        $this->assertEqualsCanonicalizing([$adminA->id, $adminB->id, $superAdmin->id], $ids->all());
     }
 
     public function test_admin_puskesmas_hanya_melihat_staf_puskesmas_sendiri(): void
