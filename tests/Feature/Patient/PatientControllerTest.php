@@ -231,6 +231,44 @@ class PatientControllerTest extends TestCase
         $this->assertLessThan(strlen($fullResponse->getContent()), strlen($scopedResponse->getContent()));
     }
 
+    /**
+     * Regresi bug nyata: exportPdf() sebelumnya TIDAK membatasi jumlah baris sama sekali --
+     * dompdf kehabisan memory_limit dan proses PHP mati mendadak (500 kosong, tanpa log) kalau
+     * operator lupa mempersempit filter dulu (terbukti nyata dengan >1000 baris di data lokal).
+     * Batas di-override ke 1 di sini supaya test tetap cepat (tidak perlu benar-benar bikin
+     * ratusan baris) -- yang diuji adalah PERILAKU penolakannya, bukan angka batas asli.
+     */
+    public function test_export_pdf_ditolak_kalau_melebihi_batas_baris(): void
+    {
+        config(['produli.reports.pdf_export_max_rows' => 1]);
+
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+        $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients/export-pdf');
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('filter');
+    }
+
+    public function test_export_pdf_tetap_berhasil_saat_persis_di_batas(): void
+    {
+        config(['produli.reports.pdf_export_max_rows' => 2]);
+
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+        $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->get('/api/v1/patients/export-pdf');
+
+        $response->assertOk();
+    }
+
     // ---- Revisi Bu Kadis (Fase 5): riwayat klasifikasi risiko & kunjungan ----
 
     public function test_risk_history_mengembalikan_semua_baris_bukan_cuma_latest(): void
