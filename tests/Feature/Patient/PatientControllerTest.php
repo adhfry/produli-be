@@ -118,22 +118,25 @@ class PatientControllerTest extends TestCase
     }
 
     /**
-     * NIK asli (patients_cache.nik, permintaan Kepala Dinas) HANYA boleh dikonsumsi server-side
-     * di jalur PDF export -- sengaja TIDAK pernah masuk PatientResource (API JSON dashboard),
-     * sama seperti nik_hash sejak awal. Regresi ini menjaga kalau suatu saat kolom itu
-     * ditambahkan ke toArray() tanpa sengaja.
+     * NIK asli (patients_cache.nik, permintaan Kepala Dinas) ditampilkan di dashboard/pasien +
+     * detail pasien, tapi SELALU lewat App\Support\NikDisplay::resolve() -- lihat
+     * NikDisplayTest untuk aturan mask lengkap (3529-prefix). Regresi ini menjaga API tidak
+     * pernah mengembalikan NIK mentah tanpa lewat aturan mask itu.
      */
-    public function test_response_tidak_menyertakan_nik(): void
+    public function test_response_menyertakan_nik_yang_sudah_di_mask(): void
     {
         $superAdmin = $this->makeUser('super_admin');
-        $this->makePatient($this->puskesmasA, 1, ['nik' => '3529010101800001']);
+        $sumenep = $this->makePatient($this->puskesmasA, 1, ['nik' => '3529010101800001']);
+        $luarKode = $this->makePatient($this->puskesmasA, 2, ['nik' => '3510010101800002']);
 
         Sanctum::actingAs($superAdmin);
 
         $response = $this->getJson('/api/v1/patients');
 
         $response->assertOk();
-        $this->assertArrayNotHasKey('nik', $response->json('data.items.0'));
+        $items = collect($response->json('data.items'))->keyBy('id');
+        $this->assertSame('3529010101800001', $items[$sumenep->id]['nik']);
+        $this->assertSame('Tidak Diketahui', $items[$luarKode->id]['nik']);
     }
 
     public function test_filter_wilayah_status(): void
