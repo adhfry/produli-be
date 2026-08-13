@@ -143,6 +143,45 @@ class ProfileTest extends TestCase
             ->assertStatus(401);
     }
 
+    /**
+     * Regresi bug nyata: no_wa/alamat/gender/tgl_lahir cuma bisa diisi SEKALI saat onboarding
+     * (CompleteOnboardingRequest) -- tidak ada jalan untuk mengedit lagi setelahnya, halaman
+     * /dashboard/profil juga tidak pernah menampilkannya sama sekali. Endpoint ini dipakai staf
+     * (admin_puskesmas/pj_prolanis/super_admin/tenaga_kesehatan) -- kader punya halaman profil
+     * terpisah lewat PATCH /kader/profile ke tabel kader, bukan endpoint ini.
+     */
+    public function test_update_profile_bisa_ubah_field_yang_dulu_hanya_bisa_diisi_saat_onboarding(): void
+    {
+        $user = User::factory()->create();
+        $user->assignRole('admin_puskesmas');
+        Sanctum::actingAs($user);
+
+        $response = $this->patchJson('/api/v1/auth/profile', [
+            'no_wa' => '081234567890',
+            'alamat' => 'Jl. Contoh No. 1',
+            'gender' => 'L',
+            'tgl_lahir' => '1990-05-15',
+        ]);
+
+        $response->assertOk();
+        $fresh = $user->fresh();
+        $this->assertSame('081234567890', $fresh->no_wa);
+        $this->assertSame('Jl. Contoh No. 1', $fresh->alamat);
+        $this->assertSame('L', $fresh->gender);
+        $this->assertSame('1990-05-15', $fresh->tgl_lahir->toDateString());
+        $this->assertSame('081234567890', $response->json('data.user.no_wa'));
+    }
+
+    public function test_update_profile_gender_tidak_valid_ditolak_422(): void
+    {
+        $user = $this->makeUser();
+        Sanctum::actingAs($user);
+
+        $response = $this->patchJson('/api/v1/auth/profile', ['gender' => 'X']);
+
+        $response->assertStatus(422);
+    }
+
     public function test_update_profile_diblokir_selagi_must_change_password_true(): void
     {
         $user = User::factory()->create(['password' => Hash::make('x'), 'must_change_password' => true]);

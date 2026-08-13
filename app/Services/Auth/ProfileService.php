@@ -48,15 +48,26 @@ class ProfileService
     }
 
     /**
-     * Field umum semua role (docs/planning/02 §17): preferensi (email_notifications_enabled)
-     * DAN data diri dasar (name/no_hp). SENGAJA tidak termasuk email/puskesmas_id/roles --
-     * identitas resmi & penugasan, dikunci dari self-service (lihat UpdateProfileRequest).
+     * Field umum semua role (docs/planning/02 §17): preferensi (email_notifications_enabled),
+     * data diri dasar (name/no_hp), DAN field yang dulu cuma bisa diisi sekali saat onboarding
+     * (no_wa/alamat/gender/tgl_lahir) -- sebelumnya tidak ada jalan untuk mengedit lagi
+     * setelahnya, halaman /dashboard/profil tidak pernah menampilkannya sama sekali (bug nyata).
+     * SENGAJA tidak termasuk email/puskesmas_id/roles -- identitas resmi & penugasan, dikunci
+     * dari self-service (lihat UpdateProfileRequest).
      *
-     * @param  array{email_notifications_enabled?: bool, name?: string, no_hp?: ?string}  $data
+     * HANYA berlaku utk staf (admin_puskesmas/pj_prolanis/super_admin/tenaga_kesehatan) yang
+     * menyimpan field ini langsung di users -- SAMA seperti ProfileService::updateStaffProfile()
+     * dipakai onboarding. Kader TIDAK pernah lewat endpoint ini (halaman profil kader terpisah,
+     * app/profil/informasi-pribadi.vue, sudah lewat GET/PATCH /kader/profile ke tabel kader).
+     *
+     * @param  array{email_notifications_enabled?: bool, name?: string, no_hp?: ?string, no_wa?: ?string, alamat?: ?string, gender?: ?string, tgl_lahir?: ?string}  $data
      */
     public function updatePreferences(User $user, array $data): User
     {
-        $user->update(Arr::only($data, ['email_notifications_enabled', 'name', 'no_hp']));
+        $user->update(Arr::only($data, [
+            'email_notifications_enabled', 'name', 'no_hp',
+            'no_wa', 'alamat', 'gender', 'tgl_lahir',
+        ]));
 
         return $user->fresh();
     }
