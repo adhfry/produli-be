@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Auth\AccountActivationService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -75,6 +76,70 @@ class TenagaKesehatanService
         $tenagaKesehatan->update(['status_aktif' => $active]);
 
         return $tenagaKesehatan->fresh();
+    }
+
+    /**
+     * Mirror persis KaderService::update() (lihat docblock di sana) -- puskesmas_id SENGAJA
+     * tidak bisa diubah di sini.
+     *
+     * @param  array{name?: string, email?: string, no_hp?: string, no_wa?: ?string, alamat?: ?string,
+     *     gender?: ?string, tgl_lahir?: ?string, pj_id?: ?int}  $data
+     */
+    public function update(User $actor, TenagaKesehatan $tenagaKesehatan, array $data): TenagaKesehatan
+    {
+        DB::transaction(function () use ($actor, $tenagaKesehatan, $data) {
+            $userUpdates = Arr::only($data, ['name', 'email']);
+            if ($userUpdates !== []) {
+                $tenagaKesehatan->user->update($userUpdates);
+            }
+
+            $updates = Arr::only($data, ['no_hp', 'no_wa', 'alamat', 'gender', 'tgl_lahir']);
+            if ($updates !== []) {
+                $tenagaKesehatan->update($updates);
+            }
+
+            if (array_key_exists('pj_id', $data) && ! $actor->hasRole('pj_prolanis')) {
+                $pjId = $data['pj_id'];
+
+                if ($pjId !== null) {
+                    $pj = User::find($pjId);
+
+                    if (! $pj || ! $pj->hasRole('pj_prolanis') || $pj->puskesmas_id !== $tenagaKesehatan->puskesmas_id) {
+                        throw ValidationException::withMessages([
+                            'pj_id' => ['User yang ditunjuk sebagai PJ tidak valid, bukan pj_prolanis, atau beda puskesmas.'],
+                        ]);
+                    }
+                }
+
+                $tenagaKesehatan->update(['pj_id' => $pjId]);
+            }
+        });
+
+        return $tenagaKesehatan->fresh(['user', 'puskesmas']);
+    }
+
+    /**
+     * Mirror persis KaderService::delete() (lihat docblock di sana) -- restrictOnDelete di
+     * care_assignments.tenaga_kesehatan_id dicek eksplisit dulu supaya errornya jelas.
+     */
+    public function delete(TenagaKesehatan $tenagaKesehatan): void
+    {
+        if ($tenagaKesehatan->visitAssignments()->exists() || $tenagaKesehatan->careAssignments()->exists()) {
+            throw ValidationException::withMessages([
+                'tenaga_kesehatan' => ['Tenaga kesehatan ini sudah punya riwayat penugasan, tidak bisa dihapus permanen -- nonaktifkan saja supaya riwayatnya tetap tersimpan.'],
+            ]);
+        }
+
+        DB::transaction(function () use ($tenagaKesehatan) {
+            $user = $tenagaKesehatan->user;
+            $tenagaKesehatan->delete();
+
+            if ($user && ! $user->hasAnyRole(['super_admin', 'admin_puskesmas', 'pj_prolanis']) && ! $user->kader()->exists()) {
+                $user->delete();
+            } else {
+                $user?->removeRole('tenaga_kesehatan');
+            }
+        });
     }
 
     /**

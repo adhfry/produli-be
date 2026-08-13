@@ -55,9 +55,14 @@ class KaderPolicy
         return $kader->user_id === $user->id;
     }
 
+    /**
+     * Hapus PERMANEN kader (beda dari nonaktifkan) -- gerbang akses sama dengan update()
+     * (sepuskesmas), tapi KaderService::delete() sendiri menolak kalau kader ini sudah punya
+     * riwayat kunjungan/penugasan sama sekali (data historis tidak boleh hilang).
+     */
     public function delete(User $user, Kader $kader): bool
     {
-        return false;
+        return $this->sharesPuskesmas($user, $kader->puskesmas_id);
     }
 
     public function restore(User $user, Kader $kader): bool

@@ -34,8 +34,12 @@ class TenagaKesehatanPolicy
         return $this->sharesPuskesmas($user, $tenagaKesehatan->puskesmas_id);
     }
 
+    /**
+     * Hapus PERMANEN (beda dari nonaktifkan) -- mirror persis KaderPolicy::delete(), gerbang
+     * service (TenagaKesehatanService::delete()) yang menolak kalau sudah ada riwayat.
+     */
     public function delete(User $user, TenagaKesehatan $tenagaKesehatan): bool
     {
-        return false;
+        return $this->sharesPuskesmas($user, $tenagaKesehatan->puskesmas_id);
     }
 }

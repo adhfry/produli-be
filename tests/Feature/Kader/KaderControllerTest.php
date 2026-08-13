@@ -429,4 +429,147 @@ class KaderControllerTest extends TestCase
         $this->assertFalse($kaderUserLain->can('updateOwnProfile', $kaderA));
         $this->assertTrue($kaderUserA->can('updateOwnProfile', $kaderA));
     }
+
+    // ---- Update (admin/PJ) ----
+
+    public function test_admin_puskesmas_bisa_update_data_kader(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kader = $this->makeKader($this->puskesmasA);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->patchJson("/api/v1/kader/{$kader->id}", [
+            'name' => 'Nama Baru',
+            'no_hp' => '081211112222',
+            'alamat' => 'Alamat Baru',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame('Nama Baru', $response->json('data.user.name'));
+        $this->assertSame('081211112222', $response->json('data.no_hp'));
+
+        $kader->refresh();
+        $this->assertSame('081211112222', $kader->no_hp);
+        $this->assertSame('Nama Baru', $kader->user->name);
+    }
+
+    public function test_update_kader_ditolak_beda_puskesmas(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kaderB = $this->makeKader($this->puskesmasB);
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/kader/{$kaderB->id}", ['name' => 'Coba Ubah'])->assertStatus(403);
+    }
+
+    public function test_update_kader_email_duplikat_ditolak_422(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kader = $this->makeKader($this->puskesmasA);
+        $lainUser = User::factory()->create(['email' => 'sudah.dipakai@example.test']);
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/kader/{$kader->id}", ['email' => 'sudah.dipakai@example.test'])
+            ->assertStatus(422);
+    }
+
+    // ---- Delete (permanen) ----
+
+    public function test_admin_puskesmas_bisa_hapus_kader_tanpa_riwayat(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kader = $this->makeKader($this->puskesmasA);
+        $userId = $kader->user_id;
+
+        Sanctum::actingAs($admin);
+
+        $this->deleteJson("/api/v1/kader/{$kader->id}")->assertOk();
+
+        $this->assertNull(Kader::find($kader->id));
+        // User induk ikut dihapus -- tidak dipakai peran lain.
+        $this->assertNull(User::find($userId));
+    }
+
+    public function test_hapus_kader_dengan_riwayat_kunjungan_ditolak_422(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kader = $this->makeKader($this->puskesmasA);
+
+        $kabupaten = Kabupaten::first();
+        $puskesmas = $this->puskesmasA;
+        $patient = \App\Models\PatientsCache::create([
+            'external_patient_id' => 999001,
+            'nik_hash' => 'HASH-DEL-1',
+            'nama' => 'Pasien Uji',
+            'puskesmas_id' => $puskesmas->id,
+            'wilayah_status' => 'resolved',
+        ]);
+        \App\Models\VisitAssignment::create([
+            'patient_id' => $patient->id,
+            'kader_id' => $kader->id,
+            'puskesmas_id_snapshot' => $puskesmas->id,
+            'scheduled_date' => now()->addDay(),
+            'status' => 'pending',
+            'priority' => 'ringan',
+            'assignment_method' => 'wilayah_resolved',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->deleteJson("/api/v1/kader/{$kader->id}");
+
+        $response->assertStatus(422);
+        $this->assertNotNull(Kader::find($kader->id));
+    }
+
+    public function test_hapus_kader_dual_role_hanya_lepas_role_kader(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $dualUser = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $dualUser->assignRole('kader');
+        $kader = Kader::create(['user_id' => $dualUser->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true, 'no_hp' => '0800']);
+
+        Sanctum::actingAs($admin);
+
+        $this->deleteJson("/api/v1/kader/{$kader->id}")->assertOk();
+
+        $this->assertNull(Kader::find($kader->id));
+        $dualUser->refresh();
+        $this->assertNotNull($dualUser);
+        $this->assertFalse($dualUser->hasRole('kader'));
+        $this->assertTrue($dualUser->hasRole('pj_prolanis'));
+    }
+
+    // ---- Reset password ----
+
+    public function test_super_admin_bisa_reset_password_kader(): void
+    {
+        Mail::fake();
+        $superAdmin = $this->makeUser('super_admin');
+        $kader = $this->makeKader($this->puskesmasA);
+        $oldHash = $kader->user->password;
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->postJson("/api/v1/kader/{$kader->id}/reset-password");
+
+        $response->assertOk();
+        $kader->refresh();
+        $this->assertNotSame($oldHash, $kader->user->password);
+        $this->assertTrue($kader->user->must_change_password);
+        Mail::assertQueued(\App\Mail\AdminPasswordResetMail::class, fn ($mail) => $mail->hasTo($kader->user->email));
+    }
+
+    public function test_admin_puskesmas_tidak_bisa_reset_password_kader(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kader = $this->makeKader($this->puskesmasA);
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/kader/{$kader->id}/reset-password")->assertStatus(403);
+    }
 }

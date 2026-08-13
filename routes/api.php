@@ -115,12 +115,19 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
         // Self-service: riwayat pengajuan pembaruan data pasien milik kader sendiri (/app).
         Route::get('update-requests', [KaderController::class, 'updateRequests']);
         Route::patch('{kader}/status', [KaderController::class, 'setStatus']);
+        Route::patch('{kader}', [KaderController::class, 'update']);
+        Route::delete('{kader}', [KaderController::class, 'destroy']);
+        // super_admin saja -- lihat docblock KaderController::resetPassword().
+        Route::post('{kader}/reset-password', [KaderController::class, 'resetPassword']);
     });
 
     Route::prefix('tenaga-kesehatan')->group(function () {
         Route::get('/', [TenagaKesehatanController::class, 'index']);
         Route::post('/', [TenagaKesehatanController::class, 'store']);
         Route::patch('{tenagaKesehatan}/status', [TenagaKesehatanController::class, 'setStatus']);
+        Route::patch('{tenagaKesehatan}', [TenagaKesehatanController::class, 'update']);
+        Route::delete('{tenagaKesehatan}', [TenagaKesehatanController::class, 'destroy']);
+        Route::post('{tenagaKesehatan}/reset-password', [TenagaKesehatanController::class, 'resetPassword']);
     });
 
     Route::post('care-assignments', [CareAssignmentController::class, 'store']);
@@ -136,6 +143,10 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
 
     Route::get('staff', [StaffController::class, 'index']);
     Route::post('staff', [StaffController::class, 'store']);
+    Route::patch('staff/{user}', [StaffController::class, 'update']);
+    Route::delete('staff/{user}', [StaffController::class, 'destroy']);
+    // super_admin saja -- lihat docblock StaffController::resetPassword().
+    Route::post('staff/{user}/reset-password', [StaffController::class, 'resetPassword']);
 
     Route::get('notifications', [NotificationController::class, 'index']);
     Route::patch('notifications/{id}/read', [NotificationController::class, 'markAsRead']);

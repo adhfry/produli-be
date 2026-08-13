@@ -5,12 +5,15 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Kader\RegisterKaderRequest;
 use App\Http\Requests\Kader\UpdateKaderProfileRequest;
+use App\Http\Requests\Kader\UpdateKaderRequest;
 use App\Http\Resources\KaderResource;
 use App\Models\Kader;
 use App\Models\VisitReport;
+use App\Services\Auth\AdminPasswordResetService;
 use App\Services\Kader\KaderService;
 use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -146,6 +149,57 @@ class KaderController extends Controller
         $message = $validated['status_aktif'] ? 'Kader berhasil diaktifkan' : 'Kader berhasil dinonaktifkan';
 
         return ApiResponse::success(new KaderResource($updated), $message);
+    }
+
+    /**
+     * Update data kader oleh staf pengelola (admin_puskesmas/pj_prolanis/super_admin sepuskesmas)
+     * -- BEDA dari updateProfile() (self-service kader sendiri). Gerbang sama dengan setStatus().
+     */
+    public function update(UpdateKaderRequest $request, Kader $kader): JsonResponse
+    {
+        $this->authorize('update', $kader);
+
+        $updated = $this->service->update($request->user(), $kader, $request->validated());
+
+        return ApiResponse::success(new KaderResource($updated), 'Data kader berhasil diperbarui');
+    }
+
+    /**
+     * Hapus PERMANEN profil kader -- cuma boleh kalau belum pernah ada riwayat kunjungan/
+     * penugasan sama sekali (KaderService::delete()), selain itu tolak dengan pesan jelas
+     * ("nonaktifkan saja"). Gerbang sama dengan update()/setStatus().
+     */
+    public function destroy(Kader $kader): JsonResponse
+    {
+        $this->authorize('delete', $kader);
+
+        $this->service->delete($kader);
+
+        return ApiResponse::success(null, 'Kader berhasil dihapus');
+    }
+
+    /**
+     * Reset password kader, dipicu ADMINISTRATOR (super_admin saja -- bukan admin_puskesmas/
+     * pj_prolanis walau mereka boleh update/delete kader) -- password baru otomatis di-generate
+     * sistem dan dikirim ke email kader, siap dipakai login (AdminPasswordResetService).
+     */
+    public function resetPassword(Request $request, Kader $kader, AdminPasswordResetService $resetService): JsonResponse
+    {
+        if (! $request->user()->hasRole('super_admin')) {
+            throw new AuthorizationException('Hanya super_admin yang bisa mereset password.');
+        }
+
+        $kader->loadMissing('user');
+
+        if ($kader->user === null) {
+            throw ValidationException::withMessages([
+                'kader' => ['Kader ini tidak punya akun user yang valid.'],
+            ]);
+        }
+
+        $resetService->reset($kader->user, $request->user());
+
+        return ApiResponse::success(null, "Password berhasil direset, email berisi password baru sudah dikirim ke {$kader->user->email}.");
     }
 
     /**

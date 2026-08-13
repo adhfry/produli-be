@@ -391,6 +391,38 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(1, $risiko[$talango->id]['sedang']);
     }
 
+    public function test_risiko_per_kecamatan_admin_puskesmas_tetap_lihat_leaderboard_se_kabupaten(): void
+    {
+        // Revisi Bu Kadis: "Top 5 Kecamatan Risiko Tertinggi" adalah leaderboard SE-KABUPATEN,
+        // sama untuk semua role -- BUKAN dipersonalisasi ke kecamatan puskesmas sendiri seperti
+        // metrik dashboard lain. admin_puskesmas sebelumnya cuma melihat 1 kecamatan (kecamatan
+        // puskesmasnya sendiri) di sini karena risikoPerKecamatan() ikut scopedPatients yang
+        // sudah dikunci puskesmas_id -- sekarang harus tetap melihat kecamatan puskesmas lain.
+        $kabupaten = Kabupaten::first();
+        $kecamatanA = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K01', 'nama' => 'Kecamatan A']);
+        $kecamatanB = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K02', 'nama' => 'Kecamatan B']);
+        $this->puskesmasA->update(['kecamatan_id' => $kecamatanA->id]);
+        $this->puskesmasB->update(['kecamatan_id' => $kecamatanB->id]);
+
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        $pasienA = $this->makePatient($this->puskesmasA, 1);
+        RiskClassification::create(['patient_id' => $pasienA->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        $pasienB = $this->makePatient($this->puskesmasB, 2);
+        RiskClassification::create(['patient_id' => $pasienB->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $risiko = collect($response->json('data.risiko_per_kecamatan'))->keyBy('kecamatan_id');
+        $this->assertCount(2, $risiko);
+        $this->assertSame(1, $risiko[$kecamatanA->id]['berat']);
+        $this->assertSame(1, $risiko[$kecamatanB->id]['ringan']);
+    }
+
     // ---- §17: risiko_per_desa ----
 
     public function test_risiko_per_desa_agregat_hanya_wilayah_status_resolved(): void
@@ -483,11 +515,13 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(1, $puskesmasB['breakdown']['ringan_ke_tidak_berisiko']);
     }
 
-    public function test_puskesmas_performance_admin_puskesmas_hanya_lihat_puskesmas_sendiri(): void
+    public function test_puskesmas_performance_admin_puskesmas_tetap_lihat_leaderboard_se_kabupaten(): void
     {
-        // "Kalau data dipersonalisasi ke puskesmas untuk admin_puskesmas/pj_prolanis" -- HANYA
-        // baris puskesmas sendiri yang boleh muncul, tidak pernah bocor ke puskesmas lain
-        // walau puskesmas lain itu juga punya pasien yang membaik.
+        // Revisi Bu Kadis: "Top 5 Puskesmas Kinerja Terbaik" adalah leaderboard SE-KABUPATEN,
+        // sama untuk semua role -- BUKAN dipersonalisasi ke puskesmas sendiri seperti metrik
+        // dashboard lain (total_patients dkk). admin_puskesmas/pj_prolanis sebelumnya cuma
+        // melihat baris puskesmasnya sendiri di sini (bug -- leaderboard jadi tidak berguna
+        // sebagai pembanding), sekarang harus tetap melihat puskesmas lain juga.
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
 
         $pasienA = $this->makePatient($this->puskesmasA, 1);
@@ -504,8 +538,10 @@ class DashboardControllerTest extends TestCase
 
         $response->assertOk();
         $performance = collect($response->json('data.puskesmas_performance'));
-        $this->assertCount(1, $performance);
-        $this->assertSame($this->puskesmasA->id, $performance->first()['puskesmas_id']);
+        $this->assertCount(2, $performance);
+        $puskesmasIds = $performance->pluck('puskesmas_id')->all();
+        $this->assertContains($this->puskesmasA->id, $puskesmasIds);
+        $this->assertContains($this->puskesmasB->id, $puskesmasIds);
     }
 
     public function test_puskesmas_performance_difilter_computed_at_baris_baru_dalam_periode(): void

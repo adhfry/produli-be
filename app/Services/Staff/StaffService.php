@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Services\Auth\AccountActivationService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -95,6 +96,75 @@ class StaffService
         if ($role !== 'pj_prolanis') {
             throw ValidationException::withMessages([
                 'role' => ['admin_puskesmas cuma boleh mendaftarkan pj_prolanis, bukan sesama admin_puskesmas.'],
+            ]);
+        }
+    }
+
+    /**
+     * @param  array{name?: string, email?: string, no_hp?: string}  $data
+     */
+    public function update(User $actor, User $target, array $data): User
+    {
+        $this->ensureCanManage($actor, $target);
+
+        $target->update(Arr::only($data, ['name', 'email', 'no_hp']));
+
+        return $target->fresh();
+    }
+
+    /**
+     * Hapus staf -- BEDA dari kader/tenaga_kesehatan (User bukan model domain PRODULI sendiri,
+     * tidak ada riwayat kunjungan yang menempel langsung ke role staf). Melepas role
+     * super_admin/admin_puskesmas/pj_prolanis dari $target; kalau sesudahnya $target tidak
+     * punya role apa pun lagi (bukan dual-role kader/tenaga_kesehatan), akun User ikut dihapus.
+     */
+    public function delete(User $actor, User $target): void
+    {
+        if ($actor->id === $target->id) {
+            throw ValidationException::withMessages([
+                'staff' => ['Anda tidak bisa menghapus akun Anda sendiri.'],
+            ]);
+        }
+
+        $this->ensureCanManage($actor, $target);
+
+        if ($target->hasRole('super_admin') && User::role('super_admin')->count() <= 1) {
+            throw ValidationException::withMessages([
+                'staff' => ['Tidak bisa menghapus satu-satunya akun super_admin yang tersisa.'],
+            ]);
+        }
+
+        DB::transaction(function () use ($target) {
+            $target->removeRole('super_admin');
+            $target->removeRole('admin_puskesmas');
+            $target->removeRole('pj_prolanis');
+
+            if (! $target->hasAnyRole(['kader', 'tenaga_kesehatan'])) {
+                $target->delete();
+            }
+        });
+    }
+
+    /**
+     * Gerbang sama seperti ensureRoleAllowed()/resolvePuskesmasId() -- super_admin bebas kelola
+     * siapa pun, admin_puskesmas cuma boleh kelola pj_prolanis di puskesmasnya sendiri (bukan
+     * sesama admin_puskesmas/super_admin), dipakai bersama oleh update() dan delete().
+     */
+    private function ensureCanManage(User $actor, User $target): void
+    {
+        if (DataScope::isFullAccess($actor)) {
+            return;
+        }
+
+        if (! $target->hasRole('pj_prolanis') || $target->hasAnyRole(['admin_puskesmas', 'super_admin'])) {
+            throw ValidationException::withMessages([
+                'staff' => ['Anda cuma boleh mengelola PJ Prolanis di puskesmas sendiri.'],
+            ]);
+        }
+
+        if ($actor->puskesmas_id === null || $target->puskesmas_id !== $actor->puskesmas_id) {
+            throw ValidationException::withMessages([
+                'staff' => ['Staf ini bukan bagian dari puskesmas Anda.'],
             ]);
         }
     }

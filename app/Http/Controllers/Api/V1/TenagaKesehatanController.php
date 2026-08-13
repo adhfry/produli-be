@@ -4,12 +4,16 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\TenagaKesehatan\RegisterTenagaKesehatanRequest;
+use App\Http\Requests\TenagaKesehatan\UpdateTenagaKesehatanRequest;
 use App\Http\Resources\TenagaKesehatanResource;
 use App\Models\TenagaKesehatan;
+use App\Services\Auth\AdminPasswordResetService;
 use App\Services\TenagaKesehatan\TenagaKesehatanService;
 use App\Support\ApiResponse;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Mirror persis KaderController (list/store/setStatus) -- lihat docblock KaderService.
@@ -72,5 +76,46 @@ class TenagaKesehatanController extends Controller
         $message = $validated['status_aktif'] ? 'Tenaga kesehatan berhasil diaktifkan' : 'Tenaga kesehatan berhasil dinonaktifkan';
 
         return ApiResponse::success(new TenagaKesehatanResource($updated), $message);
+    }
+
+    public function update(UpdateTenagaKesehatanRequest $request, TenagaKesehatan $tenagaKesehatan): JsonResponse
+    {
+        $this->authorize('update', $tenagaKesehatan);
+
+        $updated = $this->service->update($request->user(), $tenagaKesehatan, $request->validated());
+
+        return ApiResponse::success(new TenagaKesehatanResource($updated), 'Data tenaga kesehatan berhasil diperbarui');
+    }
+
+    public function destroy(TenagaKesehatan $tenagaKesehatan): JsonResponse
+    {
+        $this->authorize('delete', $tenagaKesehatan);
+
+        $this->service->delete($tenagaKesehatan);
+
+        return ApiResponse::success(null, 'Tenaga kesehatan berhasil dihapus');
+    }
+
+    /**
+     * Reset password, dipicu ADMINISTRATOR (super_admin saja) -- mirror persis
+     * KaderController::resetPassword().
+     */
+    public function resetPassword(Request $request, TenagaKesehatan $tenagaKesehatan, AdminPasswordResetService $resetService): JsonResponse
+    {
+        if (! $request->user()->hasRole('super_admin')) {
+            throw new AuthorizationException('Hanya super_admin yang bisa mereset password.');
+        }
+
+        $tenagaKesehatan->loadMissing('user');
+
+        if ($tenagaKesehatan->user === null) {
+            throw ValidationException::withMessages([
+                'tenaga_kesehatan' => ['Tenaga kesehatan ini tidak punya akun user yang valid.'],
+            ]);
+        }
+
+        $resetService->reset($tenagaKesehatan->user, $request->user());
+
+        return ApiResponse::success(null, "Password berhasil direset, email berisi password baru sudah dikirim ke {$tenagaKesehatan->user->email}.");
     }
 }

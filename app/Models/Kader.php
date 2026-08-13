@@ -55,4 +55,9 @@ class Kader extends Model
     {
         return $this->hasMany(VisitAssignment::class);
     }
+
+    public function careAssignments(): HasMany
+    {
+        return $this->hasMany(CareAssignment::class);
+    }
 }

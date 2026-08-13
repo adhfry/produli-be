@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Staff\RegisterStaffRequest;
+use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\StaffResource;
+use App\Models\User;
+use App\Services\Auth\AdminPasswordResetService;
 use App\Services\Staff\StaffService;
 use App\Support\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -62,5 +65,53 @@ class StaffController extends Controller
         $user->load('puskesmas');
 
         return ApiResponse::success(new StaffResource($user), 'Staf berhasil didaftarkan', 201);
+    }
+
+    /**
+     * Update data staf -- gerbang sama dengan store() (super_admin/admin_puskesmas), pembatasan
+     * spesifik ("admin_puskesmas cuma boleh kelola pj_prolanis puskesmas sendiri") ditegakkan di
+     * StaffService::ensureCanManage(), bukan di sini.
+     */
+    public function update(UpdateStaffRequest $request, User $user): JsonResponse
+    {
+        if (! $request->user()->hasAnyRole(['super_admin', 'admin_puskesmas'])) {
+            throw new AuthorizationException('Hanya super_admin atau admin_puskesmas yang bisa mengubah data staf.');
+        }
+
+        $updated = $this->service->update($request->user(), $user, $request->validated());
+        $updated->load('puskesmas');
+
+        return ApiResponse::success(new StaffResource($updated), 'Data staf berhasil diperbarui');
+    }
+
+    /**
+     * Hapus staf -- gerbang sama dengan store()/update(). Tidak bisa hapus diri sendiri atau
+     * satu-satunya super_admin yang tersisa (StaffService::delete()).
+     */
+    public function destroy(Request $request, User $user): JsonResponse
+    {
+        if (! $request->user()->hasAnyRole(['super_admin', 'admin_puskesmas'])) {
+            throw new AuthorizationException('Hanya super_admin atau admin_puskesmas yang bisa menghapus staf.');
+        }
+
+        $this->service->delete($request->user(), $user);
+
+        return ApiResponse::success(null, 'Staf berhasil dihapus');
+    }
+
+    /**
+     * Reset password staf, dipicu ADMINISTRATOR (super_admin saja -- bukan admin_puskesmas,
+     * walau admin_puskesmas boleh update/delete pj_prolanis di puskesmasnya) -- mirror persis
+     * KaderController::resetPassword().
+     */
+    public function resetPassword(Request $request, User $user, AdminPasswordResetService $resetService): JsonResponse
+    {
+        if (! $request->user()->hasRole('super_admin')) {
+            throw new AuthorizationException('Hanya super_admin yang bisa mereset password.');
+        }
+
+        $resetService->reset($user, $request->user());
+
+        return ApiResponse::success(null, "Password berhasil direset, email berisi password baru sudah dikirim ke {$user->email}.");
     }
 }

@@ -297,4 +297,140 @@ class StaffControllerTest extends TestCase
     {
         $this->getJson('/api/v1/staff')->assertStatus(401);
     }
+
+    // ---- Update ----
+
+    public function test_super_admin_bisa_update_staf(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->patchJson("/api/v1/staff/{$admin->id}", [
+            'name' => 'Nama Baru',
+            'no_hp' => '081200001111',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame('Nama Baru', $response->json('data.name'));
+        $this->assertSame('081200001111', $admin->fresh()->no_hp);
+    }
+
+    public function test_admin_puskesmas_ditolak_update_sesama_admin_puskesmas(): void
+    {
+        $admin = $this->makeAdminPuskesmas();
+        $adminLain = $this->makeAdminPuskesmas();
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/staff/{$adminLain->id}", ['name' => 'Coba Ubah'])->assertStatus(422);
+    }
+
+    public function test_admin_puskesmas_bisa_update_pj_prolanis_puskesmas_sendiri(): void
+    {
+        $admin = $this->makeAdminPuskesmas();
+        $pj = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $pj->assignRole('pj_prolanis');
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/staff/{$pj->id}", ['name' => 'PJ Diubah'])->assertOk();
+        $this->assertSame('PJ Diubah', $pj->fresh()->name);
+    }
+
+    // ---- Delete ----
+
+    public function test_super_admin_bisa_hapus_admin_puskesmas(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+
+        Sanctum::actingAs($superAdmin);
+
+        $this->deleteJson("/api/v1/staff/{$admin->id}")->assertOk();
+        $this->assertNull(User::find($admin->id));
+    }
+
+    public function test_tidak_bisa_hapus_diri_sendiri(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        Sanctum::actingAs($superAdmin);
+
+        $this->deleteJson("/api/v1/staff/{$superAdmin->id}")->assertStatus(422);
+        $this->assertNotNull(User::find($superAdmin->id));
+    }
+
+    public function test_super_admin_bisa_hapus_super_admin_lain_kalau_bukan_yang_terakhir(): void
+    {
+        $superAdminA = $this->makeSuperAdmin();
+        $superAdminB = $this->makeSuperAdmin();
+
+        Sanctum::actingAs($superAdminA);
+
+        $this->deleteJson("/api/v1/staff/{$superAdminB->id}")->assertOk();
+        $this->assertNull(User::find($superAdminB->id));
+        $this->assertSame(1, User::role('super_admin')->count());
+    }
+
+    public function test_hapus_staf_dual_role_kader_hanya_lepas_role_staf(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        $dualUser = $this->makeAdminPuskesmas();
+        $dualUser->assignRole('kader');
+        \App\Models\Kader::create(['user_id' => $dualUser->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true, 'no_hp' => '0800']);
+
+        Sanctum::actingAs($superAdmin);
+
+        $this->deleteJson("/api/v1/staff/{$dualUser->id}")->assertOk();
+
+        $dualUser->refresh();
+        $this->assertNotNull($dualUser);
+        $this->assertFalse($dualUser->hasRole('admin_puskesmas'));
+        $this->assertTrue($dualUser->hasRole('kader'));
+    }
+
+    public function test_admin_puskesmas_ditolak_hapus_staf_beda_puskesmas(): void
+    {
+        $puskesmasLain = Puskesmas::create(['kabupaten_id' => $this->puskesmas->kabupaten_id, 'kode_internal' => 'PKM-C', 'nama' => 'Puskesmas C']);
+        $admin = $this->makeAdminPuskesmas();
+        $pjLain = User::factory()->create(['puskesmas_id' => $puskesmasLain->id]);
+        $pjLain->assignRole('pj_prolanis');
+
+        Sanctum::actingAs($admin);
+
+        $this->deleteJson("/api/v1/staff/{$pjLain->id}")->assertStatus(422);
+        $this->assertNotNull(User::find($pjLain->id));
+    }
+
+    // ---- Reset password ----
+
+    public function test_super_admin_bisa_reset_password_staf(): void
+    {
+        Mail::fake();
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+        $oldHash = $admin->password;
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->postJson("/api/v1/staff/{$admin->id}/reset-password");
+
+        $response->assertOk();
+        $admin->refresh();
+        $this->assertNotSame($oldHash, $admin->password);
+        $this->assertTrue($admin->must_change_password);
+        Mail::assertQueued(\App\Mail\AdminPasswordResetMail::class, fn ($mail) => $mail->hasTo($admin->email));
+    }
+
+    public function test_admin_puskesmas_tidak_bisa_reset_password_staf(): void
+    {
+        $admin = $this->makeAdminPuskesmas();
+        $pj = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $pj->assignRole('pj_prolanis');
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/staff/{$pj->id}/reset-password")->assertStatus(403);
+    }
 }

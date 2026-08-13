@@ -49,4 +49,9 @@ class TenagaKesehatan extends Model
     {
         return $this->hasMany(CareAssignment::class);
     }
+
+    public function visitAssignments(): HasMany
+    {
+        return $this->hasMany(VisitAssignment::class);
+    }
 }

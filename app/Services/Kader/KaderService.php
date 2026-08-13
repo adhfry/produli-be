@@ -88,6 +88,83 @@ class KaderService
     }
 
     /**
+     * Update data kader oleh admin_puskesmas/pj_prolanis/super_admin (beda dari
+     * updateOwnProfile() yang self-service kader sendiri) -- name/email menyentuh users.name/
+     * users.email (bukan tabel kader), sisanya (no_hp/no_wa/alamat/gender/tgl_lahir/pj_id) di
+     * tabel kader. puskesmas_id SENGAJA tidak bisa diubah di sini (pindah puskesmas kader bukan
+     * kebutuhan yang diminta, terlalu berisiko diam-diam lewat endpoint umum -- kalau perlu,
+     * nonaktifkan lalu daftarkan ulang di puskesmas baru).
+     *
+     * @param  array{name?: string, email?: string, no_hp?: string, no_wa?: ?string, alamat?: ?string,
+     *     gender?: ?string, tgl_lahir?: ?string, pj_id?: ?int}  $data
+     */
+    public function update(User $actor, Kader $kader, array $data): Kader
+    {
+        DB::transaction(function () use ($actor, $kader, $data) {
+            $userUpdates = Arr::only($data, ['name', 'email']);
+            if ($userUpdates !== []) {
+                $kader->user->update($userUpdates);
+            }
+
+            $kaderUpdates = Arr::only($data, ['no_hp', 'no_wa', 'alamat', 'gender', 'tgl_lahir']);
+            if ($kaderUpdates !== []) {
+                $kader->update($kaderUpdates);
+            }
+
+            // pj_prolanis TIDAK boleh pindahkan supervisinya sendiri lewat sini (cuma
+            // admin_puskesmas/super_admin) -- pola sama seperti resolvePjId() saat registrasi.
+            if (array_key_exists('pj_id', $data) && ! $actor->hasRole('pj_prolanis')) {
+                $pjId = $data['pj_id'];
+
+                if ($pjId !== null) {
+                    $pj = User::find($pjId);
+
+                    if (! $pj || ! $pj->hasRole('pj_prolanis') || $pj->puskesmas_id !== $kader->puskesmas_id) {
+                        throw ValidationException::withMessages([
+                            'pj_id' => ['User yang ditunjuk sebagai PJ tidak valid, bukan pj_prolanis, atau beda puskesmas.'],
+                        ]);
+                    }
+                }
+
+                $kader->update(['pj_id' => $pjId]);
+            }
+        });
+
+        return $kader->fresh(['user', 'puskesmas', 'pj']);
+    }
+
+    /**
+     * Hapus PERMANEN profil kader -- BEDA dari setActive(false) (nonaktifkan, dipertahankan
+     * riwayatnya). Cuma boleh kalau kader ini TIDAK PERNAH punya riwayat kunjungan/penugasan
+     * sama sekali (visit_assignments.kader_id & care_assignments.kader_id restrictOnDelete di
+     * DB -- pengecekan eksplisit di sini supaya errornya jelas, bukan bocoran SQL). Kasus nyata:
+     * kader salah didaftarkan (typo/duplikat) sebelum sempat ditugaskan sama sekali.
+     *
+     * User induk ikut dihapus HANYA kalau tidak dipakai peran lain (super_admin/admin_puskesmas/
+     * pj_prolanis/tenaga_kesehatan) -- kalau dual-role, cuma role 'kader' & baris kader yang
+     * lepas, akun User tetap ada.
+     */
+    public function delete(Kader $kader): void
+    {
+        if ($kader->visitAssignments()->exists() || $kader->careAssignments()->exists()) {
+            throw ValidationException::withMessages([
+                'kader' => ['Kader ini sudah punya riwayat kunjungan/penugasan, tidak bisa dihapus permanen -- nonaktifkan saja supaya riwayatnya tetap tersimpan.'],
+            ]);
+        }
+
+        DB::transaction(function () use ($kader) {
+            $user = $kader->user;
+            $kader->delete();
+
+            if ($user && ! $user->hasAnyRole(['super_admin', 'admin_puskesmas', 'pj_prolanis']) && ! $user->tenagaKesehatan()->exists()) {
+                $user->delete();
+            } else {
+                $user?->removeRole('kader');
+            }
+        });
+    }
+
+    /**
      * Aktifkan/nonaktifkan kader (docs/planning §7 lanjutan) -- nonaktif TIDAK menghapus riwayat
      * assignment/laporan, cuma menghentikan penugasan BARU (kader nonaktif otomatis tersaring
      * dari scopedActiveKaders() dashboard & dari opsi "Tugaskan Kader" di /dashboard/kunjungan,

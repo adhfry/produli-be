@@ -127,9 +127,16 @@ class DashboardService
             kaderAktifCount: (clone $scopedKaders)->count(),
             tingkatKepatuhan: $this->tingkatKepatuhan($totalAssignments, $visitsPerStatus['completed']),
             aktivitasHariIni: $this->aktivitasHariIni($scopedKaders, $dateFrom, $dateTo),
-            risikoPerKecamatan: $this->risikoPerKecamatan($scopedPatients, $asOf),
+            // Leaderboard se-kabupaten (revisi Bu Kadis) -- SENGAJA pakai query pasien TANPA
+            // scope role/puskesmas (bukan $scopedPatients), beda dari metrik dashboard lain di
+            // atas. admin_puskesmas/pj_prolanis sebelumnya cuma melihat 1 kecamatan/1 puskesmas
+            // (miliknya sendiri) di sini karena ikut scopedPatients yang sudah dikunci ke
+            // puskesmas_id mereka -- padahal "Top 5 Kecamatan Risiko Tertinggi" dan "Top 5
+            // Puskesmas Kinerja Terbaik" dimaksudkan sebagai perbandingan se-Kabupaten Sumenep
+            // untuk SEMUA role, bukan cuma super_admin.
+            risikoPerKecamatan: $this->risikoPerKecamatan(PatientsCache::query(), $asOf),
             risikoPerDesa: $this->risikoPerDesa($scopedPatients, $asOf),
-            puskesmasPerformance: $this->puskesmasPerformance($scopedPatients, $dateFrom, $dateTo),
+            puskesmasPerformance: $this->puskesmasPerformance(PatientsCache::query(), $dateFrom, $dateTo),
         );
     }
 
