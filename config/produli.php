@@ -105,6 +105,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Ekspor Laporan PDF (revisi Bu Kadis, Fase 5)
+    |--------------------------------------------------------------------------
+    |
+    | dompdf SANGAT boros memori untuk tabel besar (bukan linear) -- diuji nyata:
+    | 500 baris ~262MB peak, 1000 baris CRASH (kehabisan memory_limit 512M) di
+    | dompdf/src/Cellmap.php. PatientController::exportPdf() sebelumnya TIDAK
+    | membatasi jumlah baris sama sekali -- kalau operator lupa mempersempit
+    | filter dulu, request langsung menarik SEMUA pasien sekaligus dan proses
+    | PHP mati mendadak (500 kosong, TIDAK sempat tercatat di log karena
+    | prosesnya crash duluan). 500 dipilih sebagai batas aman dengan margin
+    | -- kalau terlampaui, endpoint menolak dengan pesan jelas (422) supaya
+    | operator mempersempit filter dulu, bukan diam-diam crash.
+    |
+    */
+    'reports' => [
+        'pdf_export_max_rows' => (int) env('PRODULI_PDF_EXPORT_MAX_ROWS', 500),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Penyimpanan Foto Kunjungan (docs/planning/02 §5)
     |--------------------------------------------------------------------------
     |

@@ -101,12 +101,29 @@ class PatientController extends Controller
      * Dinkes P2KB Kabupaten Sumenep -- revisi Bu Kadis, Fase 5. TIDAK paginated (semua baris
      * yang match filter aktif diekspor) -- operator diharapkan mempersempit filter dulu di
      * /dashboard/pasien sebelum klik unduh, sama seperti tombol ini muncul di halaman itu.
+     *
+     * Batas config('produli.reports.pdf_export_max_rows') DITEGAKKAN di sini (bukan cuma
+     * diharapkan) -- sebelumnya endpoint ini tidak membatasi sama sekali, dompdf kehabisan
+     * memory_limit dan proses PHP mati mendadak (500 kosong, tidak sempat tercatat log) kalau
+     * operator lupa mempersempit filter dulu. Lihat docblock config/produli.php 'reports' utk
+     * angka nyata hasil pengukuran.
      */
     public function exportPdf(ListPatientsRequest $request): Response
     {
         $this->authorize('viewAny', PatientsCache::class);
 
-        $patients = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request)
+        $query = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request);
+
+        $maxRows = (int) config('produli.reports.pdf_export_max_rows');
+        $matchedCount = (clone $query)->count();
+
+        if ($matchedCount > $maxRows) {
+            throw ValidationException::withMessages([
+                'filter' => ["Data yang cocok filter ({$matchedCount} pasien) melebihi batas ekspor PDF ({$maxRows} pasien). Persempit filter dulu (mis. pilih puskesmas/kecamatan/tingkat risiko tertentu) sebelum mengunduh."],
+            ]);
+        }
+
+        $patients = $query
             ->with(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification'])
             ->orderBy('nama')
             ->get();
