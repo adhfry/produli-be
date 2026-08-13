@@ -116,6 +116,25 @@ class PatientControllerTest extends TestCase
         $this->assertArrayNotHasKey('nik_hash', $response->json('data.items.0'));
     }
 
+    /**
+     * NIK asli (patients_cache.nik, permintaan Kepala Dinas) HANYA boleh dikonsumsi server-side
+     * di jalur PDF export -- sengaja TIDAK pernah masuk PatientResource (API JSON dashboard),
+     * sama seperti nik_hash sejak awal. Regresi ini menjaga kalau suatu saat kolom itu
+     * ditambahkan ke toArray() tanpa sengaja.
+     */
+    public function test_response_tidak_menyertakan_nik(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1, ['nik' => '3529010101800001']);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients');
+
+        $response->assertOk();
+        $this->assertArrayNotHasKey('nik', $response->json('data.items.0'));
+    }
+
     public function test_filter_wilayah_status(): void
     {
         $superAdmin = $this->makeUser('super_admin');

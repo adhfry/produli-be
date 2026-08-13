@@ -299,12 +299,13 @@ class PatientController extends Controller
     }
 
     /**
-     * Cari pasien via NIK persis (docs/planning §17 dashboard/pasien) -- PRODULI TIDAK PERNAH
-     * menyimpan NIK asli (patients_cache cuma punya nik_hash HMAC dari SiLAKES), jadi ini
-     * SATU-SATUNYA cara "cari by NIK" yang mungkin: hash input yang diketik user pakai kunci
-     * yang SAMA dengan SiLAKES (produli.silakes.nik_hash_secret), lalu cocokkan hash-vs-hash.
-     * TIDAK PERNAH bisa membalik nik_hash tersimpan jadi NIK asli untuk DITAMPILKAN -- itu
-     * mustahil secara matematis (HMAC satu arah), bukan keterbatasan implementasi.
+     * Cari pasien via NIK persis (docs/planning §17 dashboard/pasien) -- tetap lewat jalur
+     * hash-vs-hash (hash input yang diketik user pakai kunci yang SAMA dengan SiLAKES,
+     * produli.silakes.nik_hash_secret, lalu cocokkan ke nik_hash tersimpan), BUKAN query
+     * langsung ke kolom nik. patients_cache sejak revisi Kepala Dinas juga menyimpan NIK asli
+     * (dipakai jalur PDF export, lihat App\Support\NikDisplay), tapi pencarian ini sengaja
+     * tetap lewat hash supaya perilakunya tidak berubah dan tetap konsisten kalau nik_hash
+     * dan nik pernah tidak sinkron.
      *
      * POST (bukan GET) + wajib re-autentikasi password SENDIRI (bukan password pasien) --
      * pencarian identitas presisi ini lebih sensitif daripada browse list biasa, step-up auth

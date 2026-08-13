@@ -97,7 +97,7 @@
         <tr>
             <th style="width: 4%;">No</th>
             <th style="width: 16%;">Nama</th>
-            <th style="width: 8%;">No. Registrasi</th>
+            <th style="width: 8%;">NIK</th>
             <th style="width: 6%;">Usia/JK</th>
             <th style="width: 18%;">Alamat</th>
             <th style="width: 10%;">Kecamatan / Desa</th>
@@ -124,7 +124,7 @@
             <tr>
                 <td>{{ $index + 1 }}</td>
                 <td>{{ $patient->nama }}</td>
-                <td>{{ $patient->no_reg ?? '-' }}</td>
+                <td>{{ \App\Support\NikDisplay::resolve($patient->nik) }}</td>
                 <td>{{ $ageDisplay }} / {{ $patient->gender ?? '-' }}</td>
                 <td>{{ $patient->alamat ?? '-' }}</td>
                 <td>{{ $patient->kecamatan?->nama ?? '-' }} / {{ $patient->desa?->nama ?? '-' }}</td>
