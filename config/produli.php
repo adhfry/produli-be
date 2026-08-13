@@ -214,4 +214,20 @@ return [
         'api_key' => env('WA_API_KEY'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Geocoding (PuskesmasGeocodingService, cari-otomatis koordinat puskesmas)
+    |--------------------------------------------------------------------------
+    |
+    | OpenStreetMap Nominatim, BUKAN Google -- proyek ini sengaja tidak pakai Google
+    | Maps sama sekali (lihat NUXT_PUBLIC_TILE_SERVER_URL frontend). Kebijakan Nominatim
+    | mewajibkan maksimal 1 request/detik -- rate_limit_delay_microseconds DEFAULT
+    | sedikit di atas 1 detik untuk margin aman, di-override 0 di tests (env.testing)
+    | supaya suite tidak ikut lambat menunggu delay sungguhan.
+    |
+    */
+    'geocoding' => [
+        'rate_limit_delay_microseconds' => (int) env('GEOCODING_RATE_LIMIT_DELAY_MICROSECONDS', 1_100_000),
+    ],
+
 ];

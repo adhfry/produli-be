@@ -95,6 +95,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
     Route::get('puskesmas', [PuskesmasController::class, 'index']);
+    // WAJIB sebelum puskesmas/{puskesmas} -- kalau tertukar urutan, "geocode-all" akan
+    // dicoba di-resolve sebagai {puskesmas} (route model binding gagal, 404 salah alasan).
+    Route::post('puskesmas/geocode-all', [PuskesmasController::class, 'geocodeAll']);
     Route::patch('puskesmas/{puskesmas}', [PuskesmasController::class, 'update']);
 
     // Referensi kecamatan (id kanonik) -- dipakai filter /dashboard/pasien supaya tidak

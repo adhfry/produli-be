@@ -47,6 +47,16 @@ class PuskesmasPolicy
         return $user->hasRole('super_admin');
     }
 
+    /**
+     * Cari-otomatis koordinat SELURUH puskesmas via Nominatim (permintaan Bu Kadis) --
+     * tindakan admin tingkat kabupaten (mengubah data banyak puskesmas sekaligus), bukan
+     * update() biasa yang cuma 1 puskesmas milik sendiri.
+     */
+    public function geocodeAll(User $user): bool
+    {
+        return $user->hasRole('super_admin');
+    }
+
     public function restore(User $user, Puskesmas $puskesmas): bool
     {
         return $user->hasRole('super_admin');
