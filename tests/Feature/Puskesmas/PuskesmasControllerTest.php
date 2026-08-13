@@ -7,6 +7,7 @@ use App\Models\Puskesmas;
 use App\Models\User;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -158,5 +159,90 @@ class PuskesmasControllerTest extends TestCase
     public function test_update_puskesmas_tanpa_login_ditolak_401(): void
     {
         $this->patchJson("/api/v1/puskesmas/{$this->puskesmasA->id}", [])->assertStatus(401);
+    }
+
+    // ---- POST geocode-all (cari-otomatis koordinat via Nominatim, permintaan Bu Kadis) ----
+
+    private function fakeNominatim(): void
+    {
+        Http::fake([
+            'nominatim.openstreetmap.org/*' => Http::sequence()
+                ->push([['lat' => '-7.0111', 'lon' => '113.8222']], 200)
+                ->push([['lat' => '-7.0333', 'lon' => '113.8444']], 200),
+        ]);
+    }
+
+    public function test_super_admin_bisa_jalankan_geocode_all(): void
+    {
+        $this->fakeNominatim();
+        Sanctum::actingAs($this->makeUser('super_admin'));
+
+        $response = $this->postJson('/api/v1/puskesmas/geocode-all');
+
+        $response->assertOk();
+        $this->assertSame(2, $response->json('data.total'));
+        $this->assertSame(2, $response->json('data.updated'));
+        $this->assertSame(0, $response->json('data.failed'));
+        $this->assertEqualsWithDelta(-7.0111, (float) $this->puskesmasA->fresh()->latitude, 0.0001);
+        $this->assertEqualsWithDelta(113.8222, (float) $this->puskesmasA->fresh()->longitude, 0.0001);
+    }
+
+    public function test_admin_puskesmas_ditolak_geocode_all(): void
+    {
+        Sanctum::actingAs($this->makeUser('admin_puskesmas', $this->puskesmasA));
+
+        $response = $this->postJson('/api/v1/puskesmas/geocode-all');
+
+        $response->assertStatus(403);
+    }
+
+    public function test_geocode_all_default_lewati_puskesmas_yang_sudah_punya_koordinat(): void
+    {
+        $this->puskesmasA->update(['latitude' => -7.5, 'longitude' => 113.5]);
+        Http::fake([
+            'nominatim.openstreetmap.org/*' => Http::response([['lat' => '-7.0111', 'lon' => '113.8222']], 200),
+        ]);
+        Sanctum::actingAs($this->makeUser('super_admin'));
+
+        $response = $this->postJson('/api/v1/puskesmas/geocode-all');
+
+        $response->assertOk();
+        $this->assertSame(1, $response->json('data.skipped'));
+        $this->assertSame(1, $response->json('data.updated'));
+        // Puskesmas A TIDAK disentuh -- koordinat lama tetap seperti semula.
+        $this->assertEqualsWithDelta(-7.5, (float) $this->puskesmasA->fresh()->latitude, 0.0001);
+    }
+
+    public function test_geocode_all_overwrite_existing_timpa_yang_sudah_punya_koordinat(): void
+    {
+        $this->puskesmasA->update(['latitude' => -7.5, 'longitude' => 113.5]);
+        $this->fakeNominatim();
+        Sanctum::actingAs($this->makeUser('super_admin'));
+
+        $response = $this->postJson('/api/v1/puskesmas/geocode-all', ['overwrite_existing' => true]);
+
+        $response->assertOk();
+        $this->assertSame(0, $response->json('data.skipped'));
+        $this->assertSame(2, $response->json('data.updated'));
+    }
+
+    public function test_geocode_all_puskesmas_tidak_ditemukan_ditandai_gagal_bukan_crash(): void
+    {
+        Http::fake([
+            'nominatim.openstreetmap.org/*' => Http::response([], 200),
+        ]);
+        Sanctum::actingAs($this->makeUser('super_admin'));
+
+        $response = $this->postJson('/api/v1/puskesmas/geocode-all');
+
+        $response->assertOk();
+        $this->assertSame(2, $response->json('data.failed'));
+        $this->assertSame(0, $response->json('data.updated'));
+        $this->assertNull($this->puskesmasA->fresh()->latitude);
+    }
+
+    public function test_geocode_all_tanpa_login_ditolak_401(): void
+    {
+        $this->postJson('/api/v1/puskesmas/geocode-all')->assertStatus(401);
     }
 }
