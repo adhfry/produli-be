@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Exceptions\SilakesApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\ListPatientsRequest;
 use App\Http\Requests\Patient\ProposePatientUpdateRequest;
@@ -392,7 +393,19 @@ class PatientController extends Controller
     {
         $this->authorize('update', $patient);
 
-        $body = $client->getPembaruanLapanganHistory($patient->external_patient_id);
+        try {
+            $body = $client->getPembaruanLapanganHistory($patient->external_patient_id);
+        } catch (SilakesApiException $e) {
+            // 404 dari SiLAKES = pasien ini belum/tidak dikenal di sana (mis. pasien simulasi
+            // sintetis di lingkungan dev, atau pasien asli yang belum pernah punya pengajuan
+            // sama sekali) -- itu bukan error, cuma berarti "belum ada riwayat". Selain 404
+            // (5xx dkk) tetap dilempar ulang, jangan disembunyikan.
+            if ($e->statusCode !== 404) {
+                throw $e;
+            }
+
+            return ApiResponse::success([]);
+        }
 
         return ApiResponse::success($body['data'] ?? []);
     }

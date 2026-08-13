@@ -15,6 +15,7 @@ use App\Models\VisitAssignment;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -573,5 +574,42 @@ class PatientControllerTest extends TestCase
         $response = $this->getJson('/api/v1/patients');
 
         $response->assertStatus(401);
+    }
+
+    /**
+     * Regresi bug nyata: 404 dari SiLAKES (pasien belum/tidak dikenal di sana -- mis. pasien
+     * simulasi sintetis di lingkungan dev, atau pasien asli yang belum pernah punya pengajuan
+     * pembaruan sama sekali) sempat ikut dilempar sebagai error tak tertangani ke frontend
+     * ("Panggilan SiLAKES .../pembaruan-lapangan gagal (HTTP 404): ..."). Seharusnya cuma
+     * berarti "belum ada riwayat" -- 200 dengan data kosong, bukan error.
+     */
+    public function test_update_history_404_dari_silakes_dianggap_belum_ada_riwayat(): void
+    {
+        Http::fake(['*/pembaruan-lapangan' => Http::response(['status' => 'error', 'message' => 'Not Found'], 404)]);
+
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 900000001);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/update-history");
+
+        $response->assertOk();
+        $this->assertSame('success', $response->json('status'));
+        $this->assertSame([], $response->json('data'));
+    }
+
+    public function test_update_history_error_selain_404_tetap_dilempar(): void
+    {
+        Http::fake(['*/pembaruan-lapangan' => Http::response(['status' => 'error', 'message' => 'Server error'], 500)]);
+
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 2);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/update-history");
+
+        $response->assertStatus(500);
     }
 }
