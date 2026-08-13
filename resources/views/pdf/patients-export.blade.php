@@ -82,14 +82,21 @@
     <tbody>
         @forelse ($patients as $index => $patient)
             @php
-                $age = $patient->tgl_lahir ? $patient->tgl_lahir->diffInYears(now()) : null;
+                // diffInYears() balikin float (mis. "56.283710865058"), bukan cuma soal
+                // pembulatan -- tgl_lahir yang tidak lengkap/kosong dari SiLAKES sering jatuh ke
+                // nilai default mendekati hari ini, menghasilkan usia mendekati 0 tahun. Usia
+                // di bawah 5 tahun untuk populasi Prolanis (target lansia/penyakit kronis)
+                // hampir pasti data tidak lengkap, bukan usia sungguhan -- tampilkan "Tidak
+                // Diketahui" alih-alih angka yang menyesatkan.
+                $ageYears = $patient->tgl_lahir ? (int) floor($patient->tgl_lahir->diffInYears(now())) : null;
+                $ageDisplay = ($ageYears !== null && $ageYears >= 5) ? $ageYears.' th' : 'Tidak Diketahui';
                 $level = $patient->latestRiskClassification?->level;
             @endphp
             <tr>
                 <td>{{ $index + 1 }}</td>
                 <td>{{ $patient->nama }}</td>
                 <td>{{ $patient->no_reg ?? '-' }}</td>
-                <td>{{ $age !== null ? $age.' th' : '-' }} / {{ $patient->gender ?? '-' }}</td>
+                <td>{{ $ageDisplay }} / {{ $patient->gender ?? '-' }}</td>
                 <td>{{ $patient->alamat ?? '-' }}</td>
                 <td>{{ $patient->kecamatan?->nama ?? '-' }} / {{ $patient->desa?->nama ?? '-' }}</td>
                 <td>
