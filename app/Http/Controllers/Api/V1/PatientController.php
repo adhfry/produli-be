@@ -34,6 +34,18 @@ use Symfony\Component\HttpFoundation\Response;
 
 class PatientController extends Controller
 {
+    /**
+     * SAMA persis $riskLabels di resources/views/pdf/patients-export.blade.php -- satu sumber
+     * dipakai controller (subjudul kop laporan) supaya label tidak pernah drift dari yang
+     * ditampilkan di badge tabel.
+     */
+    private const RISK_LEVEL_LABELS = [
+        'berat' => 'Berat',
+        'sedang' => 'Sedang',
+        'ringan' => 'Ringan',
+        'tidak_berisiko' => 'Tidak Berisiko',
+    ];
+
     public function __construct(private readonly PatientQueryService $patientQuery) {}
 
     public function index(ListPatientsRequest $request): JsonResponse
@@ -101,7 +113,8 @@ class PatientController extends Controller
 
     /**
      * Unduh daftar pasien (filter QUERY PARAM SAMA persis dengan index()) sebagai PDF berkop
-     * Dinkes P2KB Kabupaten Sumenep -- revisi Bu Kadis, Fase 5. TIDAK paginated (semua baris
+     * Dinas Kesehatan, Pengendalian Penduduk dan Keluarga Berencana Kabupaten Sumenep -- revisi
+     * Bu Kadis, Fase 5. TIDAK paginated (semua baris
      * yang match filter aktif diekspor) -- operator diharapkan mempersempit filter dulu di
      * /dashboard/pasien sebelum klik unduh, sama seperti tombol ini muncul di halaman itu.
      *
@@ -136,9 +149,45 @@ class PatientController extends Controller
             'generatedAt' => now(),
             'generatedBy' => $request->user(),
             'totalCount' => $patients->count(),
+            'filterSummary' => $this->resolveExportFilterSummary($request),
         ])->setPaper('a4', 'landscape');
 
         return $pdf->download($this->exportPdfFilename($request));
+    }
+
+    /**
+     * Kalimat ringkasan filter wilayah/risiko AKTIF untuk subjudul kop laporan (revisi Bu
+     * Kadis) -- "Puskesmas X" / "Kecamatan Y", disambung ", dengan klasifikasi tingkat risiko
+     * Z" kalau risk_level ikut difilter. Gerbang wilayah SAMA persis exportPdfFilename()
+     * (puskesmas_id cuma berlaku utk super_admin, sesuai applyFilters()) -- SENGAJA null kalau
+     * filter itu tidak dipakai sama sekali (bukan "Seluruh Wilayah"), blade cuma menampilkan
+     * baris ini kalau operator memang menyaring datanya.
+     */
+    private function resolveExportFilterSummary(Request $request): ?string
+    {
+        $wilayah = null;
+
+        if ($request->filled('puskesmas_id') && DataScope::isFullAccess($request->user())) {
+            $puskesmas = Puskesmas::find($request->integer('puskesmas_id'));
+            // puskesmas.nama SUDAH termasuk prefix "Puskesmas " sendiri (lihat PuskesmasSeeder:
+            // 'nama' => 'Puskesmas '.$namaPuskesmas) -- beda dari kecamatan.nama di bawah yang
+            // TIDAK ada prefix "Kecamatan ", jangan disamakan polanya.
+            $wilayah = $puskesmas !== null ? $puskesmas->nama : null;
+        } elseif ($request->filled('kecamatan_id')) {
+            $kecamatan = Kecamatan::find($request->integer('kecamatan_id'));
+            $wilayah = $kecamatan !== null ? "Kecamatan {$kecamatan->nama}" : null;
+        }
+
+        $risiko = $request->filled('risk_level')
+            ? (self::RISK_LEVEL_LABELS[$request->string('risk_level')->toString()] ?? null)
+            : null;
+
+        return match (true) {
+            $wilayah !== null && $risiko !== null => "{$wilayah}, dengan klasifikasi tingkat risiko {$risiko}",
+            $wilayah !== null => $wilayah,
+            $risiko !== null => "Dengan klasifikasi tingkat risiko {$risiko}",
+            default => null,
+        };
     }
 
     /**
@@ -157,7 +206,10 @@ class PatientController extends Controller
             $puskesmas = Puskesmas::find($request->integer('puskesmas_id'));
 
             if ($puskesmas !== null) {
-                $wilayahSegment = 'puskesmas-'.Str::slug($puskesmas->nama);
+                // puskesmas.nama SUDAH termasuk kata "Puskesmas " sendiri (lihat PuskesmasSeeder),
+                // jangan ditambah lagi -- beda dari kecamatan.nama di bawah yang polos tanpa
+                // prefix "Kecamatan ".
+                $wilayahSegment = Str::slug($puskesmas->nama);
             }
         } elseif ($request->filled('kecamatan_id')) {
             $kecamatan = Kecamatan::find($request->integer('kecamatan_id'));

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Patient;
 
+use App\Http\Controllers\Api\V1\PatientController;
 use App\Models\Kabupaten;
 use App\Models\Kader;
 use App\Models\Kecamatan;
@@ -13,6 +14,7 @@ use App\Models\User;
 use App\Models\VisitAssignment;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -257,7 +259,7 @@ class PatientControllerTest extends TestCase
 
         $response->assertOk();
         $disposition = $response->headers->get('Content-Disposition');
-        $this->assertStringContainsString('data-pasien-prolanis-puskesmas-puskesmas-a-risiko-sedang-', $disposition);
+        $this->assertStringContainsString('data-pasien-prolanis-puskesmas-a-risiko-sedang-', $disposition);
     }
 
     public function test_export_pdf_nama_file_mengikuti_filter_kecamatan_kalau_puskesmas_tidak_diisi(): void
@@ -290,6 +292,85 @@ class PatientControllerTest extends TestCase
         $response->assertOk();
         $disposition = $response->headers->get('Content-Disposition');
         $this->assertStringContainsString('data-pasien-prolanis-seluruh-wilayah-semua-risiko-', $disposition);
+    }
+
+    /**
+     * Regresi bug nyata: resolveExportFilterSummary() (subjudul kop laporan PDF) sempat
+     * menghasilkan "Puskesmas Puskesmas A" -- puskesmas.nama SUDAH termasuk kata "Puskesmas "
+     * sendiri (lihat PuskesmasSeeder), jadi menambah "Puskesmas " lagi di depannya jadi dobel.
+     * Ketahuan lewat pemeriksaan manual isi PDF asli (pdftotext), bukan dari test lama --
+     * exportPdfFilename() (dipakai duluan) punya bug SAMA persis, ikut diperbaiki+diuji ulang di
+     * test_export_pdf_nama_file_mengikuti_filter_puskesmas_dan_risiko() di atas.
+     *
+     * Diuji lewat reflection ke method private -- konten PDF dompdf terkompresi (FlateDecode),
+     * tidak bisa dicek isi teksnya via string search biasa (lihat komentar test lain di file
+     * ini), jadi logikanya diuji langsung di sini, terpisah dari test_export_pdf_* yang cuma
+     * memastikan response tetap 200/PDF valid.
+     */
+    public function test_resolve_export_filter_summary_kombinasi_puskesmas_dan_risiko(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $request = Request::create("/api/v1/patients/export-pdf?puskesmas_id={$this->puskesmasA->id}&risk_level=sedang", 'GET');
+        $request->setUserResolver(fn () => $superAdmin);
+
+        $summary = $this->resolveExportFilterSummary($request);
+
+        $this->assertSame('Puskesmas A, dengan klasifikasi tingkat risiko Sedang', $summary);
+    }
+
+    public function test_resolve_export_filter_summary_kecamatan_saja(): void
+    {
+        $kecamatan = Kecamatan::create(['kabupaten_id' => $this->puskesmasA->kabupaten_id, 'kode_kemendagri' => 'K01', 'nama' => 'Manding']);
+        $superAdmin = $this->makeUser('super_admin');
+        $request = Request::create("/api/v1/patients/export-pdf?kecamatan_id={$kecamatan->id}", 'GET');
+        $request->setUserResolver(fn () => $superAdmin);
+
+        $summary = $this->resolveExportFilterSummary($request);
+
+        $this->assertSame('Kecamatan Manding', $summary);
+    }
+
+    public function test_resolve_export_filter_summary_risiko_saja(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $request = Request::create('/api/v1/patients/export-pdf?risk_level=berat', 'GET');
+        $request->setUserResolver(fn () => $superAdmin);
+
+        $summary = $this->resolveExportFilterSummary($request);
+
+        $this->assertSame('Dengan klasifikasi tingkat risiko Berat', $summary);
+    }
+
+    public function test_resolve_export_filter_summary_null_kalau_tidak_ada_filter(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $request = Request::create('/api/v1/patients/export-pdf', 'GET');
+        $request->setUserResolver(fn () => $superAdmin);
+
+        $summary = $this->resolveExportFilterSummary($request);
+
+        $this->assertNull($summary);
+    }
+
+    public function test_resolve_export_filter_summary_puskesmas_diabaikan_untuk_admin_puskesmas(): void
+    {
+        // admin_puskesmas terkunci ke puskesmas sendiri (bukan lewat query param) -- sama gerbang
+        // dengan applyFilters()/exportPdfFilename(), puskesmas_id yang dikirim di sini tidak boleh
+        // ikut nongol di subjudul PDF.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $request = Request::create("/api/v1/patients/export-pdf?puskesmas_id={$this->puskesmasB->id}", 'GET');
+        $request->setUserResolver(fn () => $admin);
+
+        $summary = $this->resolveExportFilterSummary($request);
+
+        $this->assertNull($summary);
+    }
+
+    private function resolveExportFilterSummary(Request $request): ?string
+    {
+        $method = new \ReflectionMethod(PatientController::class, 'resolveExportFilterSummary');
+
+        return $method->invoke(app(PatientController::class), $request);
     }
 
     public function test_export_pdf_puskesmas_id_tidak_ditemukan_ditolak_validasi(): void
