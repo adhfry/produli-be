@@ -173,6 +173,42 @@ class PatientControllerTest extends TestCase
         $this->assertSame('berat', $response->json('data.items.0.risk_level'));
     }
 
+    /**
+     * Regresi bug nyata: admin_puskesmas Pandian kehilangan 5 dari 6 pasien Risiko Berat saat
+     * frontend mengirim kecamatan_id (lockKecamatanToOwnPuskesmas(), dashboard/pasien/index.vue)
+     * -- filter lama cuma cocokkan patients_cache.kecamatan_id (kolom mentah hasil match teks
+     * kecamatan_raw), yang NULL untuk pasien yang puskesmas_id-nya justru SUDAH resolved.
+     * Precedence yang benar: puskesmas_id->puskesmas.kecamatan_id PRIMARY (sama dengan
+     * DashboardService::risikoPerKecamatan()), patients_cache.kecamatan_id cuma fallback saat
+     * puskesmas_id null.
+     */
+    public function test_filter_kecamatan_id_ikut_pasien_yang_kecamatan_id_sendiri_kosong_tapi_puskesmas_resolved(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $kecamatan = Kecamatan::create(['kabupaten_id' => $this->puskesmasA->kabupaten_id, 'kode_kemendagri' => 'K01', 'nama' => 'Kota Sumenep']);
+        $this->puskesmasA->update(['kecamatan_id' => $kecamatan->id]);
+
+        // Sama persis kondisi nyata pasien Pandian: puskesmas_id resolved, tapi kecamatan_id
+        // sendiri (hasil match teks) tidak pernah terisi.
+        $resolvedViaPuskesmas = $this->makePatient($this->puskesmasA, 1, ['kecamatan_id' => null]);
+        // Fallback: puskesmas_id null tapi kecamatan_id sendiri terisi -- tetap harus match.
+        $resolvedViaOwnColumn = PatientsCache::create([
+            'external_patient_id' => 2, 'nik_hash' => 'HASH-2', 'nama' => 'Pasien 2',
+            'puskesmas_id' => null, 'kecamatan_id' => $kecamatan->id, 'wilayah_status' => 'unresolved',
+        ]);
+        // Kecamatan lain sama sekali -- tidak boleh ikut.
+        $this->makePatient($this->puskesmasB, 3);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson("/api/v1/patients?kecamatan_id={$kecamatan->id}");
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id')->sort()->values()->all();
+        $expected = collect([$resolvedViaPuskesmas->id, $resolvedViaOwnColumn->id])->sort()->values()->all();
+        $this->assertEquals($expected, $ids);
+    }
+
     public function test_filter_risk_level_tidak_valid_ditolak_422(): void
     {
         $superAdmin = $this->makeUser('super_admin');

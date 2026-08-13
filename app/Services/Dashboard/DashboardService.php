@@ -69,6 +69,10 @@ class DashboardService
             $scopedPatients->where('puskesmas_id', $puskesmasId);
         }
 
+        // Puskesmas yang SEDANG DILIHAT -- puskesmas_id override super_admin kalau diisi,
+        // selain itu puskesmas_id user sendiri (null utk super_admin tanpa filter/kader).
+        $viewedPuskesmasId = $applyPuskesmasOverride ? $puskesmasId : $user->puskesmas_id;
+
         $patientsPerRiskLevel = (clone $this->effectiveRiskClassifications($scopedPatients, $asOf))
             ->selectRaw('level, count(*) as total')
             ->groupBy('level')
@@ -127,17 +131,60 @@ class DashboardService
             kaderAktifCount: (clone $scopedKaders)->count(),
             tingkatKepatuhan: $this->tingkatKepatuhan($totalAssignments, $visitsPerStatus['completed']),
             aktivitasHariIni: $this->aktivitasHariIni($scopedKaders, $dateFrom, $dateTo),
+            // risikoPerKecamatan SEKARANG scoped (sama seperti risikoPerDesa) -- dipakai peta
+            // "Peta Sebaran Pasien Risiko" (refreshMapRiskData di dashboard/index.vue). Bug
+            // nyata sebelumnya: field ini unscoped, jadi admin_puskesmas melihat data SEMUA
+            // kecamatan Kabupaten Sumenep di peta mereka sendiri (kebocoran data lintas
+            // puskesmas/kecamatan).
+            risikoPerKecamatan: $this->risikoPerKecamatan($scopedPatients, $asOf),
             // Leaderboard se-kabupaten (revisi Bu Kadis) -- SENGAJA pakai query pasien TANPA
-            // scope role/puskesmas (bukan $scopedPatients), beda dari metrik dashboard lain di
-            // atas. admin_puskesmas/pj_prolanis sebelumnya cuma melihat 1 kecamatan/1 puskesmas
-            // (miliknya sendiri) di sini karena ikut scopedPatients yang sudah dikunci ke
-            // puskesmas_id mereka -- padahal "Top 5 Kecamatan Risiko Tertinggi" dan "Top 5
-            // Puskesmas Kinerja Terbaik" dimaksudkan sebagai perbandingan se-Kabupaten Sumenep
-            // untuk SEMUA role, bukan cuma super_admin.
-            risikoPerKecamatan: $this->risikoPerKecamatan(PatientsCache::query(), $asOf),
+            // scope role/puskesmas (bukan $scopedPatients), field TERPISAH dari risikoPerKecamatan
+            // di atas supaya tidak lagi ikut kepakai diam-diam oleh peta. admin_puskesmas/
+            // pj_prolanis sebelumnya cuma melihat 1 kecamatan/1 puskesmas (miliknya sendiri) di
+            // sini karena ikut scopedPatients yang sudah dikunci ke puskesmas_id mereka --
+            // padahal "Top 5 Kecamatan Risiko Tertinggi" dan "Top 5 Puskesmas Kinerja Terbaik"
+            // dimaksudkan sebagai perbandingan se-Kabupaten Sumenep untuk SEMUA role, bukan cuma
+            // super_admin.
+            risikoPerKecamatanSeKabupaten: $this->risikoPerKecamatan(PatientsCache::query(), $asOf),
             risikoPerDesa: $this->risikoPerDesa($scopedPatients, $asOf),
             puskesmasPerformance: $this->puskesmasPerformance(PatientsCache::query(), $dateFrom, $dateTo),
+            kecamatanContext: $this->kecamatanContext($viewedPuskesmasId),
         );
+    }
+
+    /**
+     * Konteks personalisasi peta (permintaan user) -- "Data untuk Puskesmas X yang berada di
+     * Kecamatan Y", HANYA ditampilkan kalau kecamatan itu punya LEBIH DARI 1 puskesmas (mis.
+     * Puskesmas Pandian & Pamolokan sama-sama di Kecamatan Kota Sumenep) -- klarifikasi bahwa
+     * peta scoped ke puskesmas SENDIRI, bukan area kecamatan penuh, kalau kecamatan dibagi
+     * beberapa puskesmas. Null kalau puskesmas tidak diketahui/belum di-assign kecamatan, ATAU
+     * kecamatannya cuma py 1 puskesmas (caption tidak relevan/berguna).
+     *
+     * @return array{puskesmas_nama: string, kecamatan_nama: string, kecamatan_puskesmas_count: int}|null
+     */
+    private function kecamatanContext(?int $puskesmasId): ?array
+    {
+        if ($puskesmasId === null) {
+            return null;
+        }
+
+        $puskesmas = Puskesmas::with('kecamatan')->find($puskesmasId);
+
+        if ($puskesmas === null || $puskesmas->kecamatan === null) {
+            return null;
+        }
+
+        $puskesmasCountInKecamatan = Puskesmas::where('kecamatan_id', $puskesmas->kecamatan_id)->count();
+
+        if ($puskesmasCountInKecamatan <= 1) {
+            return null;
+        }
+
+        return [
+            'puskesmas_nama' => $puskesmas->nama,
+            'kecamatan_nama' => $puskesmas->kecamatan->nama,
+            'kecamatan_puskesmas_count' => $puskesmasCountInKecamatan,
+        ];
     }
 
     /**
