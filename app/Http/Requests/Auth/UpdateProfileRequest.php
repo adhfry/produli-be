@@ -26,6 +26,13 @@ class UpdateProfileRequest extends FormRequest
             'email_notifications_enabled' => ['sometimes', 'boolean'],
             'name' => ['sometimes', 'string', 'max:150'],
             'no_hp' => ['sometimes', 'nullable', 'string', 'max:20'],
+            // Field yang sama dengan CompleteOnboardingRequest (dulu HANYA bisa diisi sekali
+            // saat onboarding, tidak ada jalan untuk diedit lagi setelahnya -- lihat
+            // ProfileService::updatePreferences()).
+            'no_wa' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'alamat' => ['sometimes', 'nullable', 'string'],
+            'gender' => ['sometimes', 'nullable', 'string', 'in:L,P'],
+            'tgl_lahir' => ['sometimes', 'nullable', 'date', 'before:today'],
         ];
     }
 }
