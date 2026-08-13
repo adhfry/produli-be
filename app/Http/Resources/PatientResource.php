@@ -8,6 +8,11 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /**
  * Shaping response pasien -- SENGAJA tidak menyertakan nik_hash (kunci pencocokan internal,
  * tidak berguna & tidak perlu diekspos ke frontend) meski model aslinya menyimpan itu.
+ *
+ * `nik` DITAMPILKAN (permintaan Kepala Dinas, dashboard/pasien + detail pasien) tapi SELALU
+ * lewat App\Support\NikDisplay::resolve() -- NIK asli hanya keluar dari sini kalau diawali kode
+ * wilayah Sumenep (3529), selain itu "Tidak Diketahui". Sama persis aturan yang dipakai laporan
+ * PDF, supaya tidak pernah ada jalur yang membocorkan NIK luar-wilayah/tidak valid mentah-mentah.
  */
 class PatientResource extends JsonResource
 {
@@ -20,6 +25,7 @@ class PatientResource extends JsonResource
             'id' => $this->id,
             'external_patient_id' => $this->external_patient_id,
             'no_reg' => $this->no_reg,
+            'nik' => \App\Support\NikDisplay::resolve($this->nik),
             'nama' => $this->nama,
             'gender' => $this->gender,
             'tgl_lahir' => $this->tgl_lahir?->toDateString(),
