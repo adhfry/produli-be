@@ -15,6 +15,7 @@ class PatientsCache extends Model
         'external_patient_id',
         'no_reg',
         'nik_hash',
+        'nik',
         'nama',
         'gender',
         'tgl_lahir',

@@ -250,6 +250,7 @@ class SyncSilakesService
             [
                 'no_reg' => $row['no_reg'] ?? null,
                 'nik_hash' => $row['nik_hash'],
+                'nik' => $row['nik'] ?? null,
                 'nama' => $row['name'],
                 'gender' => $row['gender'] ?? null,
                 'tgl_lahir' => $row['tgl_lahir'] ?? null,

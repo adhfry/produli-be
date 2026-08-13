@@ -41,7 +41,7 @@ class SyncSilakesServiceTest extends TestCase
                 'data' => [
                     [
                         'patient_id' => 888001, 'no_reg' => 'REG-1', 'name' => 'Pasien Satu',
-                        'nik_hash' => 'HASH1', 'gender' => 'L', 'tgl_lahir' => '1980-01-01',
+                        'nik_hash' => 'HASH1', 'nik' => '3529010101800001', 'gender' => 'L', 'tgl_lahir' => '1980-01-01',
                         'phone' => '0800000001', 'alamat' => 'Jl Uji 1', 'rt_rw' => '001/002',
                         'kel_desa' => 'Talango', 'kecamatan' => 'Talango',
                         'is_prolanis' => true, 'jenis_prolanis' => 'DM', 'is_perokok' => false, 'jenis_perokok' => null,
@@ -103,6 +103,11 @@ class SyncSilakesServiceTest extends TestCase
 
         $this->assertSame('resolved', $p1->wilayah_status);
         $this->assertSame('out_of_scope', $p2->wilayah_status);
+        // NIK asli (permintaan Kepala Dinas) -- disimpan berdampingan dengan nik_hash. Fixture
+        // pasien 2 sengaja tidak mengirim key 'nik' sama sekali, memverifikasi fallback ?? null
+        // di SyncSilakesService::upsertPatient() saat SiLAKES belum/tidak mengirim field ini.
+        $this->assertSame('3529010101800001', $p1->nik);
+        $this->assertNull($p2->nik);
         // Kriteria REVISI (docs/planning/02 §3): Berat butuh keenam parameter lengkap
         // tersedia+melebihi. Fixture ini cuma punya Gula Darah Puasa -> Ringan, bukan Berat.
         $this->assertSame('ringan', $p1->riskClassifications()->where('is_latest', true)->first()->level);
