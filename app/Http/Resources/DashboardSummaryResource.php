@@ -22,8 +22,10 @@ class DashboardSummaryResource extends JsonResource
             'tingkat_kepatuhan' => $this->resource->tingkatKepatuhan,
             'aktivitas_hari_ini' => $this->resource->aktivitasHariIni,
             'risiko_per_kecamatan' => $this->resource->risikoPerKecamatan,
+            'risiko_per_kecamatan_se_kabupaten' => $this->resource->risikoPerKecamatanSeKabupaten,
             'risiko_per_desa' => $this->resource->risikoPerDesa,
             'puskesmas_performance' => $this->resource->puskesmasPerformance,
+            'kecamatan_context' => $this->resource->kecamatanContext,
         ];
     }
 }

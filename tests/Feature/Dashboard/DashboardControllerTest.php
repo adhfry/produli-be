@@ -391,13 +391,15 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(1, $risiko[$talango->id]['sedang']);
     }
 
-    public function test_risiko_per_kecamatan_admin_puskesmas_tetap_lihat_leaderboard_se_kabupaten(): void
+    /**
+     * Bug nyata (dilaporkan user): admin_puskesmas Pandian melihat SEMUA kecamatan Kabupaten
+     * Sumenep terwarnai di peta "Peta Sebaran Pasien Risiko" -- kebocoran data lintas puskesmas.
+     * Root cause: risiko_per_kecamatan (dipakai peta, lihat dashboard/index.vue
+     * refreshMapRiskData) SEBELUMNYA unscoped sama seperti leaderboard. Sekarang HARUS
+     * ter-scope ke puskesmas_id admin sendiri, persis seperti risiko_per_desa.
+     */
+    public function test_risiko_per_kecamatan_untuk_peta_scoped_ke_puskesmas_sendiri(): void
     {
-        // Revisi Bu Kadis: "Top 5 Kecamatan Risiko Tertinggi" adalah leaderboard SE-KABUPATEN,
-        // sama untuk semua role -- BUKAN dipersonalisasi ke kecamatan puskesmas sendiri seperti
-        // metrik dashboard lain. admin_puskesmas sebelumnya cuma melihat 1 kecamatan (kecamatan
-        // puskesmasnya sendiri) di sini karena risikoPerKecamatan() ikut scopedPatients yang
-        // sudah dikunci puskesmas_id -- sekarang harus tetap melihat kecamatan puskesmas lain.
         $kabupaten = Kabupaten::first();
         $kecamatanA = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K01', 'nama' => 'Kecamatan A']);
         $kecamatanB = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K02', 'nama' => 'Kecamatan B']);
@@ -418,6 +420,38 @@ class DashboardControllerTest extends TestCase
 
         $response->assertOk();
         $risiko = collect($response->json('data.risiko_per_kecamatan'))->keyBy('kecamatan_id');
+        $this->assertCount(1, $risiko);
+        $this->assertSame(1, $risiko[$kecamatanA->id]['berat']);
+        $this->assertArrayNotHasKey($kecamatanB->id, $risiko);
+    }
+
+    /**
+     * "Top 5 Kecamatan Risiko Tertinggi" TETAP leaderboard SE-KABUPATEN, sama untuk semua role
+     * (revisi Bu Kadis) -- sekarang field TERPISAH (risiko_per_kecamatan_se_kabupaten) supaya
+     * tidak lagi ikut kepakai diam-diam oleh peta (lihat test di atas).
+     */
+    public function test_risiko_per_kecamatan_se_kabupaten_tetap_unscoped_untuk_leaderboard(): void
+    {
+        $kabupaten = Kabupaten::first();
+        $kecamatanA = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K01', 'nama' => 'Kecamatan A']);
+        $kecamatanB = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K02', 'nama' => 'Kecamatan B']);
+        $this->puskesmasA->update(['kecamatan_id' => $kecamatanA->id]);
+        $this->puskesmasB->update(['kecamatan_id' => $kecamatanB->id]);
+
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        $pasienA = $this->makePatient($this->puskesmasA, 1);
+        RiskClassification::create(['patient_id' => $pasienA->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        $pasienB = $this->makePatient($this->puskesmasB, 2);
+        RiskClassification::create(['patient_id' => $pasienB->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $risiko = collect($response->json('data.risiko_per_kecamatan_se_kabupaten'))->keyBy('kecamatan_id');
         $this->assertCount(2, $risiko);
         $this->assertSame(1, $risiko[$kecamatanA->id]['berat']);
         $this->assertSame(1, $risiko[$kecamatanB->id]['ringan']);
@@ -581,6 +615,70 @@ class DashboardControllerTest extends TestCase
         $user = User::factory()->create(['puskesmas_id' => $puskesmas->id, 'name' => $nama ?? 'Kader Uji']);
 
         return Kader::create(['user_id' => $user->id, 'puskesmas_id' => $puskesmas->id, 'status_aktif' => $aktif]);
+    }
+
+    // ---- Fitur baru: kecamatan_context (caption peta "Data untuk Puskesmas X di Kecamatan Y") ----
+
+    public function test_kecamatan_context_muncul_kalau_kecamatan_punya_lebih_dari_1_puskesmas(): void
+    {
+        $kabupaten = Kabupaten::first();
+        $kotaSumenep = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K17', 'nama' => 'Kota Sumenep']);
+        $this->puskesmasA->update(['kecamatan_id' => $kotaSumenep->id]);
+        $this->puskesmasB->update(['kecamatan_id' => $kotaSumenep->id]);
+
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $this->assertSame([
+            'puskesmas_nama' => 'Puskesmas A',
+            'kecamatan_nama' => 'Kota Sumenep',
+            'kecamatan_puskesmas_count' => 2,
+        ], $response->json('data.kecamatan_context'));
+    }
+
+    public function test_kecamatan_context_null_kalau_kecamatan_cuma_1_puskesmas(): void
+    {
+        $kabupaten = Kabupaten::first();
+        $manding = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K05', 'nama' => 'Manding']);
+        $this->puskesmasA->update(['kecamatan_id' => $manding->id]);
+
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $this->assertNull($response->json('data.kecamatan_context'));
+    }
+
+    public function test_kecamatan_context_null_untuk_super_admin_tanpa_filter_puskesmas(): void
+    {
+        $admin = $this->makeUser('super_admin');
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $this->assertNull($response->json('data.kecamatan_context'));
+    }
+
+    public function test_kecamatan_context_muncul_untuk_super_admin_yang_filter_ke_1_puskesmas(): void
+    {
+        $kabupaten = Kabupaten::first();
+        $kotaSumenep = Kecamatan::create(['kabupaten_id' => $kabupaten->id, 'kode_kemendagri' => 'K17', 'nama' => 'Kota Sumenep']);
+        $this->puskesmasA->update(['kecamatan_id' => $kotaSumenep->id]);
+        $this->puskesmasB->update(['kecamatan_id' => $kotaSumenep->id]);
+
+        $admin = $this->makeUser('super_admin');
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/dashboard/summary?puskesmas_id={$this->puskesmasA->id}");
+
+        $response->assertOk();
+        $this->assertSame(2, $response->json('data.kecamatan_context.kecamatan_puskesmas_count'));
     }
 
     public function test_tanpa_login_ditolak_401(): void

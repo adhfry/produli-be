@@ -90,9 +90,28 @@ class PatientController extends Controller
                     fn ($riskQuery) => $riskQuery->where('level', $request->string('risk_level'))
                 )
             )
+            // BUKAN cuma where('kecamatan_id', ...) langsung ke patients_cache.kecamatan_id --
+            // kolom itu NULL untuk ~19,6% pasien yang puskesmas_id-nya justru SUDAH resolved
+            // (lihat migration add_kecamatan_id_to_patients_cache_table, dan komentar
+            // DashboardService::risikoPerKecamatan()). Filter lama ini diam-diam membuang
+            // pasien seperti itu dari hasil (bug nyata: admin_puskesmas Pandian kehilangan 5
+            // dari 6 pasien Risiko Berat gara-gara lockKecamatanToOwnPuskesmas() di frontend
+            // mengirim kecamatan_id "cuma UX" yang ternyata BUKAN no-op). Precedence SAMA
+            // PERSIS risikoPerKecamatan(): puskesmas_id->puskesmas.kecamatan_id PRIMARY,
+            // patients_cache.kecamatan_id cuma fallback saat puskesmas_id null.
             ->when(
                 $request->filled('kecamatan_id'),
-                fn ($q) => $q->where('kecamatan_id', $request->integer('kecamatan_id'))
+                function ($q) use ($request) {
+                    $kecamatanId = $request->integer('kecamatan_id');
+                    $puskesmasIdsInKecamatan = Puskesmas::where('kecamatan_id', $kecamatanId)->pluck('id');
+
+                    $q->where(function ($sub) use ($kecamatanId, $puskesmasIdsInKecamatan) {
+                        $sub->whereIn('puskesmas_id', $puskesmasIdsInKecamatan)
+                            ->orWhere(function ($fallback) use ($kecamatanId) {
+                                $fallback->whereNull('puskesmas_id')->where('kecamatan_id', $kecamatanId);
+                            });
+                    });
+                }
             )
             // Revisi Bu Kadis (Fase 5) -- HANYA full-access (super_admin) yang boleh persempit
             // lewat param ini; admin_puskesmas/pj_prolanis SUDAH terkunci ke puskesmas sendiri
