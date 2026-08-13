@@ -4,6 +4,7 @@ namespace Tests\Feature\Patient;
 
 use App\Models\Kabupaten;
 use App\Models\Kader;
+use App\Models\Kecamatan;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
@@ -229,6 +230,81 @@ class PatientControllerTest extends TestCase
         $scopedResponse->assertOk();
 
         $this->assertLessThan(strlen($fullResponse->getContent()), strlen($scopedResponse->getContent()));
+    }
+
+    public function test_export_pdf_nama_file_tanpa_filter_pakai_fallback(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->get('/api/v1/patients/export-pdf');
+
+        $response->assertOk();
+        $disposition = $response->headers->get('Content-Disposition');
+        $this->assertStringContainsString('data-pasien-prolanis-seluruh-wilayah-semua-risiko-', $disposition);
+    }
+
+    public function test_export_pdf_nama_file_mengikuti_filter_puskesmas_dan_risiko(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->get("/api/v1/patients/export-pdf?puskesmas_id={$this->puskesmasA->id}&risk_level=sedang");
+
+        $response->assertOk();
+        $disposition = $response->headers->get('Content-Disposition');
+        $this->assertStringContainsString('data-pasien-prolanis-puskesmas-puskesmas-a-risiko-sedang-', $disposition);
+    }
+
+    public function test_export_pdf_nama_file_mengikuti_filter_kecamatan_kalau_puskesmas_tidak_diisi(): void
+    {
+        $kecamatan = Kecamatan::create(['kabupaten_id' => $this->puskesmasA->kabupaten_id, 'kode_kemendagri' => 'K01', 'nama' => 'Kecamatan Manding']);
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->get("/api/v1/patients/export-pdf?kecamatan_id={$kecamatan->id}");
+
+        $response->assertOk();
+        $disposition = $response->headers->get('Content-Disposition');
+        $this->assertStringContainsString('data-pasien-prolanis-kecamatan-kecamatan-manding-semua-risiko-', $disposition);
+    }
+
+    public function test_export_pdf_nama_file_puskesmas_id_diabaikan_untuk_admin_puskesmas(): void
+    {
+        // admin_puskesmas terkunci ke puskesmas sendiri (bukan lewat query param, lihat
+        // applyFilters()) -- puskesmas_id yang dikirim di sini HARUS diabaikan juga di nama
+        // file, jatuh ke fallback "seluruh-wilayah", bukan menyelundupkan nama puskesmas lain.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->get("/api/v1/patients/export-pdf?puskesmas_id={$this->puskesmasB->id}");
+
+        $response->assertOk();
+        $disposition = $response->headers->get('Content-Disposition');
+        $this->assertStringContainsString('data-pasien-prolanis-seluruh-wilayah-semua-risiko-', $disposition);
+    }
+
+    public function test_export_pdf_puskesmas_id_tidak_ditemukan_ditolak_validasi(): void
+    {
+        // ListPatientsRequest sudah validasi exists:puskesmas,id -- ID yang tidak ada tidak
+        // pernah sampai ke exportPdfFilename() sama sekali (fallback null-safe di sana tetap
+        // dipertahankan sebagai jaga-jaga, tapi jalur ini yang benar-benar teruji).
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients/export-pdf?puskesmas_id=999999');
+
+        $response->assertStatus(422);
     }
 
     /**
