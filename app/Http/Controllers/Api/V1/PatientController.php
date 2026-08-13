@@ -11,8 +11,10 @@ use App\Http\Resources\PatientResource;
 use App\Http\Resources\RiskClassificationResource;
 use App\Http\Resources\VisitAssignmentResource;
 use App\Jobs\SyncPatientFieldUpdateToSilakesJob;
+use App\Models\Kecamatan;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
+use App\Models\Puskesmas;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
@@ -26,6 +28,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -135,7 +138,40 @@ class PatientController extends Controller
             'totalCount' => $patients->count(),
         ])->setPaper('a4', 'landscape');
 
-        return $pdf->download('data-pasien-prolanis-'.now()->format('Ymd-His').'.pdf');
+        return $pdf->download($this->exportPdfFilename($request));
+    }
+
+    /**
+     * Nama file unduhan mengikuti filter wilayah/risiko yang AKTUAL dipakai (bukan cuma
+     * timestamp generik) -- supaya operator yang unduh beberapa file berturut-turut (mis. per
+     * puskesmas) tidak perlu buka satu-satu buat tahu isinya. Null-safe: kalau filter wilayah/
+     * risiko tidak diisi (atau puskesmas_id-nya diabaikan karena bukan super_admin, sama seperti
+     * applyFilters()), jatuh ke fallback "seluruh-wilayah"/"semua-risiko" -- tidak pernah
+     * menghasilkan segmen kosong/tanda hubung dobel.
+     */
+    private function exportPdfFilename(Request $request): string
+    {
+        $wilayahSegment = 'seluruh-wilayah';
+
+        if ($request->filled('puskesmas_id') && DataScope::isFullAccess($request->user())) {
+            $puskesmas = Puskesmas::find($request->integer('puskesmas_id'));
+
+            if ($puskesmas !== null) {
+                $wilayahSegment = 'puskesmas-'.Str::slug($puskesmas->nama);
+            }
+        } elseif ($request->filled('kecamatan_id')) {
+            $kecamatan = Kecamatan::find($request->integer('kecamatan_id'));
+
+            if ($kecamatan !== null) {
+                $wilayahSegment = 'kecamatan-'.Str::slug($kecamatan->nama);
+            }
+        }
+
+        $risikoSegment = $request->filled('risk_level')
+            ? 'risiko-'.Str::slug($request->string('risk_level')->toString())
+            : 'semua-risiko';
+
+        return "data-pasien-prolanis-{$wilayahSegment}-{$risikoSegment}-".now()->format('Ymd-His').'.pdf';
     }
 
     /**
