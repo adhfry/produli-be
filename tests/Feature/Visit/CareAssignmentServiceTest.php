@@ -11,6 +11,7 @@ use App\Models\RiskClassification;
 use App\Models\TenagaKesehatan;
 use App\Models\User;
 use App\Models\VisitAssignment;
+use App\Models\VisitAssignmentCompanion;
 use App\Services\Visit\CareAssignmentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
@@ -155,6 +156,49 @@ class CareAssignmentServiceTest extends TestCase
         $this->expectException(ValidationException::class);
 
         $this->service->assignTenagaKesehatan($patient, $this->tkA, $this->assignedBy, now()->toDateString());
+    }
+
+    public function test_assign_tenaga_kesehatan_dengan_kader_menandai_companion_dan_aktifkan_plan_kader(): void
+    {
+        $patient = $this->makePatient();
+
+        $plan = $this->service->assignTenagaKesehatan(
+            $patient,
+            $this->tkA,
+            $this->assignedBy,
+            now()->toDateString(),
+            $this->kaderA,
+        );
+
+        $visit = VisitAssignment::where('care_assignment_id', $plan->id)->first();
+        $this->assertSame($this->tkA->id, $visit->tenaga_kesehatan_id);
+        $this->assertNull($visit->kader_id);
+        $this->assertSame(1, VisitAssignmentCompanion::where('assignment_id', $visit->id)->where('kader_id', $this->kaderA->id)->count());
+
+        $kaderPlan = CareAssignment::where('patient_id', $patient->id)->where('worker_type', 'kader')->where('kader_id', $this->kaderA->id)->first();
+        $this->assertNotNull($kaderPlan);
+        $this->assertSame('active', $kaderPlan->status);
+    }
+
+    public function test_assign_tenaga_kesehatan_dengan_kader_tidak_aktif_ditolak(): void
+    {
+        $this->kaderA->update(['status_aktif' => false]);
+        $patient = $this->makePatient();
+
+        $this->expectException(ValidationException::class);
+
+        $this->service->assignTenagaKesehatan($patient, $this->tkA, $this->assignedBy, now()->toDateString(), $this->kaderA);
+    }
+
+    public function test_assign_tenaga_kesehatan_dengan_kader_beda_puskesmas_ditolak(): void
+    {
+        $patient = $this->makePatient();
+        $kaderUserB = User::factory()->create();
+        $kaderB = Kader::create(['user_id' => $kaderUserB->id, 'puskesmas_id' => $this->puskesmasB->id, 'status_aktif' => true]);
+
+        $this->expectException(ValidationException::class);
+
+        $this->service->assignTenagaKesehatan($patient, $this->tkA, $this->assignedBy, now()->toDateString(), $kaderB);
     }
 
     public function test_generate_due_visit_membuat_kunjungan_baru_dan_update_last_triggered(): void

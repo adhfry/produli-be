@@ -57,11 +57,19 @@ class VisitAssignmentResource extends JsonResource
                 'kader_id' => $companion->kader_id,
                 'nama' => $companion->kader?->user?->name,
             ])->values()),
-            // 'primary'|'companion'|null -- peran kader yang SEDANG LOGIN di assignment ini,
+            // 'primary'|'companion'|null -- peran petugas yang SEDANG LOGIN di assignment ini,
             // dipakai frontend beri label ("Anda mendampingi [nama primer]"). null kalau viewer
-            // bukan kader (atau tidak berperan sama sekali di assignment ini).
+            // tidak berperan sama sekali di assignment ini. Diperluas untuk tenaga_kesehatan
+            // (revisi Bu Kadis PMO) -- nakes cuma bisa 'primary' (assignment miliknya sendiri),
+            // tidak ada konsep companion untuk nakes (itu cuma kader pendamping).
             'role_in_assignment' => $this->whenLoaded('companions', function () use ($request) {
-                $viewerKaderId = $request->user()?->kader?->id;
+                $viewer = $request->user();
+                $viewerKaderId = $viewer?->kader?->id;
+                $viewerTenagaKesehatanId = $viewer?->tenagaKesehatan?->id;
+
+                if ($viewerTenagaKesehatanId !== null && $this->tenaga_kesehatan_id === $viewerTenagaKesehatanId) {
+                    return 'primary';
+                }
 
                 if ($viewerKaderId === null) {
                     return null;

@@ -70,6 +70,10 @@ Route::prefix('auth')->group(function () {
 Route::middleware(['auth:sanctum', 'password.changed'])->group(function () {
     Route::get('puskesmas/{puskesmas}', [PuskesmasController::class, 'show']);
     Route::get('kader/profile', [KaderController::class, 'showProfile']);
+    // Mirror persis kader/profile di atas -- tenaga_kesehatan juga lewat /onboarding
+    // ("Konfirmasi Penempatan"), butuh baca unit kerja & PJ sebelum onboarding_completed_at
+    // terisi (revisi Bu Kadis PMO).
+    Route::get('tenaga-kesehatan/profile', [TenagaKesehatanController::class, 'showProfile']);
 });
 
 Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])->group(function () {
@@ -127,6 +131,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::prefix('tenaga-kesehatan')->group(function () {
         Route::get('/', [TenagaKesehatanController::class, 'index']);
         Route::post('/', [TenagaKesehatanController::class, 'store']);
+        Route::patch('profile', [TenagaKesehatanController::class, 'updateProfile']);
+        // Self-service: riwayat pengajuan pembaruan data pasien milik tenaga_kesehatan sendiri (/app).
+        Route::get('update-requests', [TenagaKesehatanController::class, 'updateRequests']);
         Route::patch('{tenagaKesehatan}/status', [TenagaKesehatanController::class, 'setStatus']);
         Route::patch('{tenagaKesehatan}', [TenagaKesehatanController::class, 'update']);
         Route::delete('{tenagaKesehatan}', [TenagaKesehatanController::class, 'destroy']);

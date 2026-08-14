@@ -35,6 +35,21 @@ class TenagaKesehatanPolicy
     }
 
     /**
+     * Self-service (revisi Bu Kadis PMO, mode /app) -- mirror persis KaderPolicy::
+     * updateOwnProfile()/viewOwnProfile(): tenaga_kesehatan cuma boleh baca/edit profilnya
+     * sendiri, bukan punya orang lain.
+     */
+    public function updateOwnProfile(User $user, TenagaKesehatan $tenagaKesehatan): bool
+    {
+        return $tenagaKesehatan->user_id === $user->id;
+    }
+
+    public function viewOwnProfile(User $user, TenagaKesehatan $tenagaKesehatan): bool
+    {
+        return $tenagaKesehatan->user_id === $user->id;
+    }
+
+    /**
      * Hapus PERMANEN (beda dari nonaktifkan) -- mirror persis KaderPolicy::delete(), gerbang
      * service (TenagaKesehatanService::delete()) yang menolak kalau sudah ada riwayat.
      */

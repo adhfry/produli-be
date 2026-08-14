@@ -4,21 +4,27 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\TenagaKesehatan\RegisterTenagaKesehatanRequest;
+use App\Http\Requests\TenagaKesehatan\UpdateTenagaKesehatanProfileRequest;
 use App\Http\Requests\TenagaKesehatan\UpdateTenagaKesehatanRequest;
 use App\Http\Resources\TenagaKesehatanResource;
 use App\Models\TenagaKesehatan;
+use App\Models\VisitReport;
 use App\Services\Auth\AdminPasswordResetService;
+use App\Services\Silakes\SilakesApiClient;
 use App\Services\TenagaKesehatan\TenagaKesehatanService;
 use App\Support\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Mirror persis KaderController (list/store/setStatus) -- lihat docblock KaderService.
- * Self-service (profil sendiri) sengaja belum ada di fase ini (tenaga_kesehatan belum punya
- * mode mobile /app seperti kader, cuma dashboard staf) -- bisa menyusul kalau dibutuhkan.
+ * Self-service (profil sendiri, mode /app) ditambahkan revisi Bu Kadis PMO -- tenaga_kesehatan
+ * sekarang ikut kunjungan lapangan seperti kader (lihat CareAssignmentService::
+ * assignTenagaKesehatan()), jadi butuh /app juga, bukan cuma dashboard staf.
  */
 class TenagaKesehatanController extends Controller
 {
@@ -117,5 +123,121 @@ class TenagaKesehatanController extends Controller
         $resetService->reset($tenagaKesehatan->user, $request->user());
 
         return ApiResponse::success(null, "Password berhasil direset, email berisi password baru sudah dikirim ke {$tenagaKesehatan->user->email}.");
+    }
+
+    /**
+     * Self-service: tenaga_kesehatan baca profilnya SENDIRI -- mirror persis
+     * KaderController::showProfile().
+     */
+    public function showProfile(Request $request): JsonResponse
+    {
+        $tenagaKesehatan = $request->user()->tenagaKesehatan;
+
+        if ($tenagaKesehatan === null) {
+            throw ValidationException::withMessages([
+                'tenaga_kesehatan' => ['Akun Anda belum punya profil tenaga kesehatan.'],
+            ]);
+        }
+
+        $this->authorize('viewOwnProfile', $tenagaKesehatan);
+
+        return ApiResponse::success(new TenagaKesehatanResource($tenagaKesehatan->load(['user', 'puskesmas', 'pj'])));
+    }
+
+    /**
+     * Self-service: tenaga_kesehatan update profilnya SENDIRI (no_wa/alamat/gender/tgl_lahir) --
+     * mirror persis KaderController::updateProfile().
+     */
+    public function updateProfile(UpdateTenagaKesehatanProfileRequest $request): JsonResponse
+    {
+        $tenagaKesehatan = $request->user()->tenagaKesehatan;
+
+        if ($tenagaKesehatan === null) {
+            throw ValidationException::withMessages([
+                'tenaga_kesehatan' => ['Akun Anda belum punya profil tenaga kesehatan.'],
+            ]);
+        }
+
+        $this->authorize('updateOwnProfile', $tenagaKesehatan);
+
+        $updated = $this->service->updateOwnProfile($tenagaKesehatan, $request->validated());
+
+        return ApiResponse::success(new TenagaKesehatanResource($updated), 'Profil berhasil diperbarui');
+    }
+
+    /**
+     * Self-service: riwayat pengajuan pembaruan data pasien yang PERNAH DIAJUKAN
+     * tenaga_kesehatan ini sendiri saat kunjungan -- mirror persis
+     * KaderController::updateRequests(), filter tenaga_kesehatan_id bukan kader_id.
+     */
+    public function updateRequests(Request $request, SilakesApiClient $client): JsonResponse
+    {
+        $tenagaKesehatan = $request->user()->tenagaKesehatan;
+
+        if ($tenagaKesehatan === null) {
+            throw ValidationException::withMessages([
+                'tenaga_kesehatan' => ['Akun Anda belum punya profil tenaga kesehatan.'],
+            ]);
+        }
+
+        $paginator = VisitReport::query()
+            ->whereHas('assignment', fn ($q) => $q->where('tenaga_kesehatan_id', $tenagaKesehatan->id))
+            ->where(fn ($q) => $q->whereNotNull('patient_field_updates')->orWhereNotNull('latitude'))
+            ->with('assignment.patient')
+            ->orderByDesc('created_at')
+            ->paginate($request->integer('per_page', 20));
+
+        $reports = collect($paginator->items());
+
+        $historyByPatient = $reports
+            ->pluck('assignment.patient.external_patient_id')
+            ->unique()
+            ->filter()
+            ->mapWithKeys(function (int $externalPatientId) use ($client) {
+                try {
+                    $body = $client->getPembaruanLapanganHistory($externalPatientId);
+
+                    return [$externalPatientId => collect($body['data'] ?? [])->groupBy('kopipu_visit_id')];
+                } catch (Throwable $e) {
+                    report($e);
+
+                    return [$externalPatientId => collect()];
+                }
+            });
+
+        $data = $reports->map(function (VisitReport $report) use ($historyByPatient) {
+            $patient = $report->assignment->patient;
+            /** @var Collection $fieldsForThisVisit */
+            $fieldsForThisVisit = $historyByPatient->get($patient->external_patient_id, collect())
+                ->get($report->id, collect());
+
+            return [
+                'visit_report_id' => $report->id,
+                'patient_id' => $patient->id,
+                'patient_nama' => $patient->nama,
+                'kunjungan_tanggal' => $report->created_at?->toIso8601String(),
+                'push_status' => $report->sync_status,
+                'push_error' => $report->sync_error,
+                'fields' => $fieldsForThisVisit->map(fn ($row) => [
+                    'kategori' => $row['kategori'],
+                    'field_name' => $row['field_name'],
+                    'old_value' => $row['old_value'],
+                    'new_value' => $row['new_value'],
+                    'status' => $row['status'],
+                    'reviewed_at' => $row['reviewed_at'],
+                    'catatan_reviewer' => $row['catatan_reviewer'],
+                ])->values(),
+            ];
+        })->values();
+
+        return ApiResponse::success([
+            'items' => $data,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ]);
     }
 }

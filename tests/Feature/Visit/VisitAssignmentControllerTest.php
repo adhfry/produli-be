@@ -8,6 +8,7 @@ use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
 use App\Models\RiskClassification;
+use App\Models\TenagaKesehatan;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Models\VisitAssignmentCompanion;
@@ -574,6 +575,39 @@ class VisitAssignmentControllerTest extends TestCase
         $this->assertEquals([$pending->id], $ids->all());
     }
 
+    public function test_tenaga_kesehatan_hanya_melihat_assignment_miliknya_sendiri(): void
+    {
+        $tenagaKesehatanA = $this->makeTenagaKesehatan($this->puskesmasA);
+        $tenagaKesehatanLain = $this->makeTenagaKesehatan($this->puskesmasA);
+        $patient1 = $this->makePatient($this->puskesmasA, 1);
+        $patient2 = $this->makePatient($this->puskesmasA, 2);
+
+        $milikSendiri = VisitAssignment::create([
+            'patient_id' => $patient1->id, 'tenaga_kesehatan_id' => $tenagaKesehatanA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        // Assignment kader murni juga ada di puskesmas yang sama -- nakes TIDAK boleh ikut lihat ini.
+        VisitAssignment::create([
+            'patient_id' => $patient2->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitAssignment::create([
+            'patient_id' => $patient1->id, 'tenaga_kesehatan_id' => $tenagaKesehatanLain->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($tenagaKesehatanA->user);
+
+        $response = $this->getJson('/api/v1/visit-assignments');
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertEquals([$milikSendiri->id], $ids->all());
+    }
+
     public function test_tanpa_login_ditolak_401(): void
     {
         $this->getJson('/api/v1/visit-assignments')->assertStatus(401);
@@ -587,5 +621,15 @@ class VisitAssignmentControllerTest extends TestCase
         $user = User::factory()->create(['puskesmas_id' => $puskesmas->id, 'email' => "kader{$n}@example.test"]);
 
         return Kader::create(['user_id' => $user->id, 'puskesmas_id' => $puskesmas->id, 'status_aktif' => $aktif]);
+    }
+
+    private function makeTenagaKesehatan(Puskesmas $puskesmas, bool $aktif = true): TenagaKesehatan
+    {
+        static $n = 200;
+        $n++;
+        $user = User::factory()->create(['puskesmas_id' => $puskesmas->id, 'email' => "tenagakesehatan{$n}@example.test"]);
+        $user->assignRole('tenaga_kesehatan');
+
+        return TenagaKesehatan::create(['user_id' => $user->id, 'puskesmas_id' => $puskesmas->id, 'status_aktif' => $aktif]);
     }
 }

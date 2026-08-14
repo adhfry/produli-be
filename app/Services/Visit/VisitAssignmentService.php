@@ -297,6 +297,18 @@ class VisitAssignmentService
             });
         }
 
+        if (DataScope::isTenagaKesehatanOnly($user)) {
+            $tenagaKesehatan = $user->tenagaKesehatan;
+
+            if ($tenagaKesehatan === null) {
+                return VisitAssignment::query()->whereRaw('1 = 0');
+            }
+
+            // Tidak ada konsep companion untuk tenaga_kesehatan (itu cuma untuk kader
+            // pendamping/kunjungan berombongan kader) -- cukup assignment miliknya sendiri.
+            return VisitAssignment::query()->where('tenaga_kesehatan_id', $tenagaKesehatan->id);
+        }
+
         return $user->puskesmas_id !== null
             ? VisitAssignment::query()->where('puskesmas_id_snapshot', $user->puskesmas_id)
             : VisitAssignment::query()->whereRaw('1 = 0');

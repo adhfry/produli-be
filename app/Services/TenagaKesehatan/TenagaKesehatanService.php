@@ -79,6 +79,19 @@ class TenagaKesehatanService
     }
 
     /**
+     * Self-service update profil sendiri (revisi Bu Kadis PMO, mode /app) -- mirror persis
+     * KaderService::updateOwnProfile().
+     *
+     * @param  array{no_wa?: ?string, alamat?: ?string, gender?: ?string, tgl_lahir?: ?string}  $data
+     */
+    public function updateOwnProfile(TenagaKesehatan $tenagaKesehatan, array $data): TenagaKesehatan
+    {
+        $tenagaKesehatan->update(Arr::only($data, ['no_wa', 'alamat', 'gender', 'tgl_lahir']));
+
+        return $tenagaKesehatan->fresh();
+    }
+
+    /**
      * Mirror persis KaderService::update() (lihat docblock di sana) -- puskesmas_id SENGAJA
      * tidak bisa diubah di sini.
      *

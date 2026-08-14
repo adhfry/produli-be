@@ -38,7 +38,7 @@ class WatermarkGenerator implements VisitValidationLayer
 
         $text = sprintf(
             "%s\n%s\nLat %.6f, Lng %.6f",
-            $context->kaderName !== '' ? $context->kaderName : 'Kader',
+            $context->submitterName !== '' ? $context->submitterName : 'Kader',
             now()->format('d-m-Y H:i:s'),
             $context->latitude,
             $context->longitude,
