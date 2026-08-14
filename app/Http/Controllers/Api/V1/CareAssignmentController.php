@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CareAssignment\AssignTenagaKesehatanRequest;
 use App\Http\Requests\CareAssignment\CreateAdhocVisitRequest;
 use App\Models\CareAssignment;
+use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\TenagaKesehatan;
 use App\Services\Visit\CareAssignmentService;
@@ -32,12 +33,16 @@ class CareAssignmentController extends Controller
 
         $patient = PatientsCache::findOrFail($request->validated('patient_id'));
         $tenagaKesehatan = TenagaKesehatan::findOrFail($request->validated('tenaga_kesehatan_id'));
+        $kader = $request->validated('kader_id') !== null
+            ? Kader::findOrFail($request->validated('kader_id'))
+            : null;
 
         $plan = $this->service->assignTenagaKesehatan(
             $patient,
             $tenagaKesehatan,
             $request->user(),
             $request->validated('scheduled_date'),
+            $kader,
         );
         $plan->load(['patient', 'tenagaKesehatan.user', 'assignedBy']);
 

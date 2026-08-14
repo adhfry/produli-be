@@ -202,4 +202,63 @@ class TenagaKesehatanControllerTest extends TestCase
 
         $this->postJson("/api/v1/tenaga-kesehatan/{$tk->id}/reset-password")->assertStatus(403);
     }
+
+    // ---- Self-service profil (revisi Bu Kadis PMO, mode /app) -- mirror KaderControllerTest ----
+
+    public function test_tenaga_kesehatan_bisa_lihat_profil_sendiri(): void
+    {
+        $tk = $this->makeTenagaKesehatan($this->puskesmasA);
+
+        Sanctum::actingAs($tk->user);
+
+        $response = $this->getJson('/api/v1/tenaga-kesehatan/profile');
+
+        $response->assertOk();
+        $this->assertSame($tk->id, $response->json('data.id'));
+        $this->assertSame($this->puskesmasA->id, $response->json('data.puskesmas.id'));
+    }
+
+    public function test_tenaga_kesehatan_bisa_update_profil_sendiri(): void
+    {
+        $tk = $this->makeTenagaKesehatan($this->puskesmasA);
+
+        Sanctum::actingAs($tk->user);
+
+        $response = $this->patchJson('/api/v1/tenaga-kesehatan/profile', [
+            'no_wa' => '081298765432',
+            'alamat' => 'Jl. Contoh No. 9',
+            'gender' => 'L',
+        ]);
+
+        $response->assertOk();
+        $tk->refresh();
+        $this->assertSame('081298765432', $tk->no_wa);
+        $this->assertSame('Jl. Contoh No. 9', $tk->alamat);
+        $this->assertSame('L', $tk->gender);
+    }
+
+    public function test_tenaga_kesehatan_tidak_bisa_update_profil_via_puskesmas_id(): void
+    {
+        $tk = $this->makeTenagaKesehatan($this->puskesmasA);
+
+        Sanctum::actingAs($tk->user);
+
+        $this->patchJson('/api/v1/tenaga-kesehatan/profile', ['puskesmas_id' => $this->puskesmasB->id])->assertOk();
+
+        $this->assertSame($this->puskesmasA->id, $tk->fresh()->puskesmas_id);
+    }
+
+    public function test_admin_puskesmas_tidak_punya_profil_tenaga_kesehatan_ditolak_422(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/tenaga-kesehatan/profile')->assertStatus(422);
+    }
+
+    public function test_lihat_profil_tenaga_kesehatan_tanpa_login_ditolak_401(): void
+    {
+        $this->getJson('/api/v1/tenaga-kesehatan/profile')->assertStatus(401);
+    }
 }

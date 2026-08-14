@@ -32,7 +32,7 @@ class VisitAssignmentController extends Controller
 
         $paginator = $this->service->scopedQuery($request->user())
             ->with([
-                'patient', 'kader.user', 'assignedBy', 'puskesmasSnapshot', 'companions.kader.user',
+                'patient', 'kader.user', 'tenagaKesehatan.user', 'assignedBy', 'puskesmasSnapshot', 'companions.kader.user',
                 'latestReport.pjReviewedBy', 'latestReport.validatedBy', 'latestReport.attendees.kader.user',
             ])
             ->when(

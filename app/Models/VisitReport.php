@@ -42,6 +42,8 @@ class VisitReport extends Model
         'diastolic',
         'keluhan',
         'tindakan',
+        'kepatuhan_obat',
+        'sisa_obat',
     ];
 
     protected function casts(): array

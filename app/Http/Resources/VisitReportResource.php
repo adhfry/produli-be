@@ -39,6 +39,10 @@ class VisitReportResource extends JsonResource
             'diastolic' => $this->diastolic,
             'keluhan' => $this->keluhan,
             'tindakan' => $this->tindakan,
+            // PMO mingguan kader (revisi Bu Kadis) -- opsional, terpisah dari pemeriksaan klinis
+            // di atas yang jadi tanggung jawab tenaga_kesehatan.
+            'kepatuhan_obat' => $this->kepatuhan_obat,
+            'sisa_obat' => $this->sisa_obat,
             // Kunjungan berombongan (docs/planning/02 §16) -- kader yang AKTUAL hadir (beda
             // dari rencana companion di VisitAssignmentResource).
             'attendees' => $this->whenLoaded('attendees', fn () => $this->attendees->map(fn ($attendee) => [

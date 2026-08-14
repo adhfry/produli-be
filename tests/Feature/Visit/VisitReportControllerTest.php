@@ -6,6 +6,7 @@ use App\Models\Kabupaten;
 use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
+use App\Models\TenagaKesehatan;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Models\VisitAssignmentCompanion;
@@ -31,6 +32,10 @@ class VisitReportControllerTest extends TestCase
 
     private Kader $kader;
 
+    private Puskesmas $puskesmas;
+
+    private PatientsCache $patient;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -40,6 +45,7 @@ class VisitReportControllerTest extends TestCase
 
         $kabupaten = Kabupaten::create(['kode_kemendagri' => '35.29', 'nama' => 'Sumenep']);
         $puskesmas = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-A', 'nama' => 'Puskesmas A']);
+        $this->puskesmas = $puskesmas;
 
         $kaderUser = User::factory()->create(['puskesmas_id' => $puskesmas->id, 'name' => 'Bu Siti']);
         $kaderUser->assignRole('kader');
@@ -55,6 +61,7 @@ class VisitReportControllerTest extends TestCase
             'latitude' => -7.0123,
             'longitude' => 113.8456,
         ]);
+        $this->patient = $patient;
 
         $this->assignment = VisitAssignment::create([
             'patient_id' => $patient->id,
@@ -292,6 +299,69 @@ class VisitReportControllerTest extends TestCase
         $response = $this->post('/api/v1/visit-reports', $payload, ['Accept' => 'application/json']);
 
         $response->assertStatus(422);
+    }
+
+    // ---- Tenaga kesehatan submit laporan (revisi Bu Kadis PMO) ----
+
+    public function test_tenaga_kesehatan_berhasil_submit_laporan_kunjungan(): void
+    {
+        $tkUser = User::factory()->create(['puskesmas_id' => $this->puskesmas->id, 'name' => 'Pak Budi']);
+        $tkUser->assignRole('tenaga_kesehatan');
+        $tenagaKesehatan = TenagaKesehatan::create(['user_id' => $tkUser->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true]);
+
+        $tkAssignment = VisitAssignment::create([
+            'patient_id' => $this->patient->id,
+            'tenaga_kesehatan_id' => $tenagaKesehatan->id,
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'pending',
+            'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+        ]);
+
+        Sanctum::actingAs($tkUser);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'assignment_id' => $tkAssignment->id,
+            'gda' => '180',
+            'systolic' => '130',
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertCreated();
+        $this->assertSame('completed', $tkAssignment->fresh()->status);
+        $report = VisitReport::first();
+        $this->assertEquals(180, (float) $report->gda);
+        $this->assertSame(130, $report->systolic);
+    }
+
+    public function test_tenaga_kesehatan_tidak_bisa_submit_untuk_assignment_kader(): void
+    {
+        $tkUser = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $tkUser->assignRole('tenaga_kesehatan');
+        TenagaKesehatan::create(['user_id' => $tkUser->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true]);
+
+        Sanctum::actingAs($tkUser);
+
+        // $this->assignment adalah milik kader, bukan tenaga_kesehatan ini.
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload(), ['Accept' => 'application/json']);
+
+        $response->assertStatus(403);
+        $this->assertSame(0, VisitReport::count());
+    }
+
+    public function test_kader_berhasil_submit_laporan_pmo_kepatuhan_dan_sisa_obat(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'kepatuhan_obat' => 'kurang_patuh',
+            'sisa_obat' => 'menipis',
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertCreated();
+        $report = VisitReport::first();
+        $this->assertSame('kurang_patuh', $report->kepatuhan_obat);
+        $this->assertSame('menipis', $report->sisa_obat);
+        $this->assertSame('kurang_patuh', $response->json('data.kepatuhan_obat'));
     }
 
     public function test_tanpa_login_ditolak_401(): void

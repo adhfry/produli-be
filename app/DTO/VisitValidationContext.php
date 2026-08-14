@@ -24,6 +24,9 @@ final class VisitValidationContext
         public readonly bool $isOffline = false,
         public readonly ?string $clientSubmissionId = null,
         public readonly ?bool $faceDetectedClientSide = null,
-        public readonly string $kaderName = '',
+        // Kader ATAU tenaga_kesehatan -- siapa pun pemilik assignment yang submit laporan ini
+        // (VisitAssignment.kader_id XOR tenaga_kesehatan_id), dipakai WatermarkGenerator untuk
+        // teks watermark foto.
+        public readonly string $submitterName = '',
     ) {}
 }

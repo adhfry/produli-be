@@ -111,7 +111,7 @@ class VisitReportService
                     'geo_source' => 'kader_verified',
                     'latitude' => $context->latitude,
                     'longitude' => $context->longitude,
-                    'geo_verified_by' => $assignment->kader->user_id,
+                    'geo_verified_by' => $assignment->kader?->user_id ?? $assignment->tenagaKesehatan?->user_id,
                     'geo_verified_at' => now(),
                 ]);
             }

@@ -29,6 +29,10 @@ class TenagaKesehatanResource extends JsonResource
                 'id' => $this->puskesmas->id,
                 'nama' => $this->puskesmas->nama,
             ]),
+            'pj' => $this->whenLoaded('pj', fn () => $this->pj ? [
+                'id' => $this->pj->id,
+                'name' => $this->pj->name,
+            ] : null),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

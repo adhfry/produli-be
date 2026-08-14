@@ -110,7 +110,7 @@ class VisitReportServiceTest extends TestCase
             isOffline: $overrides['isOffline'] ?? false,
             clientSubmissionId: $overrides['clientSubmissionId'] ?? null,
             faceDetectedClientSide: $overrides['faceDetectedClientSide'] ?? null,
-            kaderName: $overrides['kaderName'] ?? 'Bu Siti',
+            submitterName: $overrides['submitterName'] ?? 'Bu Siti',
         );
     }
 

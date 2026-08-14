@@ -19,13 +19,17 @@ class VisitAssignmentPolicy
 
     public function viewAny(User $user): bool
     {
-        return $user->hasAnyRole(['super_admin', 'admin_puskesmas', 'pj_prolanis', 'kader']);
+        return $user->hasAnyRole(['super_admin', 'admin_puskesmas', 'pj_prolanis', 'kader', 'tenaga_kesehatan']);
     }
 
     public function view(User $user, VisitAssignment $assignment): bool
     {
         if (DataScope::isKaderOnly($user)) {
             return $user->kader !== null && $assignment->kader_id === $user->kader->id;
+        }
+
+        if (DataScope::isTenagaKesehatanOnly($user)) {
+            return $user->tenagaKesehatan !== null && $assignment->tenaga_kesehatan_id === $user->tenagaKesehatan->id;
         }
 
         return $this->sharesPuskesmas($user, $assignment->puskesmas_id_snapshot);
@@ -75,11 +79,16 @@ class VisitAssignmentPolicy
     }
 
     /**
-     * "kader hanya bisa submit laporan untuk assignment miliknya sendiri" (docs/planning/02 §7).
+     * "kader/tenaga_kesehatan hanya bisa submit laporan untuk assignment miliknya sendiri"
+     * (docs/planning/02 §7, diperluas ke tenaga_kesehatan -- revisi Bu Kadis PMO).
      */
     public function submitReport(User $user, VisitAssignment $assignment): bool
     {
-        return $user->kader !== null && $assignment->kader_id === $user->kader->id;
+        if ($user->kader !== null && $assignment->kader_id === $user->kader->id) {
+            return true;
+        }
+
+        return $user->tenagaKesehatan !== null && $assignment->tenaga_kesehatan_id === $user->tenagaKesehatan->id;
     }
 
     public function update(User $user, VisitAssignment $assignment): bool

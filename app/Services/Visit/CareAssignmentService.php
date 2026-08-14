@@ -3,10 +3,12 @@
 namespace App\Services\Visit;
 
 use App\Models\CareAssignment;
+use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\TenagaKesehatan;
 use App\Models\User;
 use App\Models\VisitAssignment;
+use App\Models\VisitAssignmentCompanion;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
@@ -36,9 +38,31 @@ class CareAssignmentService
             return null;
         }
 
-        $existing = CareAssignment::where('patient_id', $firstAssignment->patient_id)
+        return $this->ensureKaderPlanFor(
+            $firstAssignment->patient_id,
+            $firstAssignment->kader_id,
+            $firstAssignment->assigned_by,
+            $firstAssignment->puskesmas_id_snapshot,
+            $firstAssignment->scheduled_date,
+        );
+    }
+
+    /**
+     * Inti ensureKaderPlan() di atas, dipisah supaya bisa dipanggil dari jalur assign
+     * tenaga_kesehatan juga (CareAssignmentController -- kunjungan hari-1 bersama kader+nakes,
+     * revisi Bu Kadis PMO) yang tidak punya VisitAssignment ber-kader_id untuk dinaiki
+     * (assignment hari-1 itu MILIK nakes, kader cuma jadi companion).
+     */
+    public function ensureKaderPlanFor(
+        int $patientId,
+        int $kaderId,
+        int $assignedById,
+        ?int $puskesmasIdSnapshot,
+        string $scheduledDate,
+    ): CareAssignment {
+        $existing = CareAssignment::where('patient_id', $patientId)
             ->where('worker_type', 'kader')
-            ->where('kader_id', $firstAssignment->kader_id)
+            ->where('kader_id', $kaderId)
             ->where('status', 'active')
             ->first();
 
@@ -47,13 +71,13 @@ class CareAssignmentService
         }
 
         return CareAssignment::create([
-            'patient_id' => $firstAssignment->patient_id,
+            'patient_id' => $patientId,
             'worker_type' => 'kader',
-            'kader_id' => $firstAssignment->kader_id,
-            'assigned_by' => $firstAssignment->assigned_by,
-            'puskesmas_id_snapshot' => $firstAssignment->puskesmas_id_snapshot,
+            'kader_id' => $kaderId,
+            'assigned_by' => $assignedById,
+            'puskesmas_id_snapshot' => $puskesmasIdSnapshot,
             'status' => 'active',
-            'last_triggered_at' => $firstAssignment->scheduled_date,
+            'last_triggered_at' => $scheduledDate,
         ]);
     }
 
@@ -62,15 +86,27 @@ class CareAssignmentService
      * TIDAK ada jalur assign satu-kali existing untuk dinaiki, jadi plan DAN kunjungan pertama
      * dibuat sekaligus di sini.
      */
+    /**
+     * $kader opsional -- kunjungan hari-1 bersama (revisi Bu Kadis PMO): kalau diisi, kader
+     * ditandai sebagai pendamping (companion) kunjungan pertama nakes ini (hadir fisik, TIDAK
+     * submit laporan terpisah -- nakes yang isi laporan lengkap hari itu) DAN rencana kunjungan
+     * mingguan kader langsung diaktifkan supaya kunjungan PMO mingguan berikutnya otomatis
+     * ter-generate tanpa perlu assign kader terpisah lagi.
+     */
     public function assignTenagaKesehatan(
         PatientsCache $patient,
         TenagaKesehatan $tenagaKesehatan,
         User $assignedBy,
         string $scheduledDate,
+        ?Kader $kader = null,
     ): CareAssignment {
         $this->ensureTenagaKesehatanAvailable($tenagaKesehatan, $patient);
 
-        return DB::transaction(function () use ($patient, $tenagaKesehatan, $assignedBy, $scheduledDate) {
+        if ($kader !== null) {
+            $this->ensureKaderAvailableForJointVisit($kader, $patient);
+        }
+
+        return DB::transaction(function () use ($patient, $tenagaKesehatan, $assignedBy, $scheduledDate, $kader) {
             $plan = CareAssignment::create([
                 'patient_id' => $patient->id,
                 'worker_type' => 'tenaga_kesehatan',
@@ -80,10 +116,46 @@ class CareAssignmentService
                 'status' => 'active',
             ]);
 
-            $this->createVisit($plan, $scheduledDate, 'cadence_generated');
+            $visit = $this->createVisit($plan, $scheduledDate, 'cadence_generated');
+
+            if ($kader !== null) {
+                VisitAssignmentCompanion::create([
+                    'assignment_id' => $visit->id,
+                    'kader_id' => $kader->id,
+                ]);
+
+                $this->ensureKaderPlanFor(
+                    $patient->id,
+                    $kader->id,
+                    $assignedBy->id,
+                    $visit->puskesmas_id_snapshot,
+                    $scheduledDate,
+                );
+            }
 
             return $plan;
         });
+    }
+
+    /**
+     * Kader pendamping kunjungan hari-1 -- validasi sama seperti companion kunjungan kader biasa
+     * (VisitAssignmentService::ensureCompanionsAvailable(): aktif + sepuskesmas), dibandingkan
+     * ke PASIEN di sini (bukan ke kader primer lain, karena tidak ada kader primer di kunjungan
+     * hari-1 ini -- nakes yang primer).
+     */
+    private function ensureKaderAvailableForJointVisit(Kader $kader, PatientsCache $patient): void
+    {
+        if (! $kader->status_aktif) {
+            throw ValidationException::withMessages([
+                'kader_id' => ['Kader tidak aktif.'],
+            ]);
+        }
+
+        if ($patient->puskesmas_id !== null && $kader->puskesmas_id !== $patient->puskesmas_id) {
+            throw ValidationException::withMessages([
+                'kader_id' => ['Kader bukan dari puskesmas yang sama dengan pasien.'],
+            ]);
+        }
     }
 
     private function ensureTenagaKesehatanAvailable(TenagaKesehatan $tenagaKesehatan, PatientsCache $patient): void

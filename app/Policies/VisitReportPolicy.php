@@ -14,8 +14,9 @@ use App\Models\VisitReport;
 class VisitReportPolicy
 {
     /**
-     * PJ Prolanis menerima laporan HANYA dari kader yang disupervisinya sendiri
-     * (kader.pj_id = user.id).
+     * PJ Prolanis menerima laporan HANYA dari kader/tenaga_kesehatan yang disupervisinya sendiri
+     * (kader.pj_id = user.id, atau tenaga_kesehatan.pj_id = user.id -- revisi Bu Kadis PMO,
+     * assignment.kader_id/tenaga_kesehatan_id saling eksklusif jadi salah satu selalu null).
      */
     public function accept(User $user, VisitReport $visitReport): bool
     {
@@ -23,9 +24,9 @@ class VisitReportPolicy
             return false;
         }
 
-        $kader = $visitReport->assignment->kader;
+        $worker = $visitReport->assignment->kader ?? $visitReport->assignment->tenagaKesehatan;
 
-        return $kader !== null && $kader->pj_id === $user->id;
+        return $worker !== null && $worker->pj_id === $user->id;
     }
 
     /**

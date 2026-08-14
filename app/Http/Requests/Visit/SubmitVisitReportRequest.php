@@ -69,6 +69,11 @@ class SubmitVisitReportRequest extends FormRequest
             'keluhan' => ['nullable', 'string'],
             'tindakan' => ['nullable', 'string', 'in:diberi_obat,dirujuk_puskesmas,tidak_ada'],
 
+            // PMO mingguan kader (revisi Bu Kadis) -- opsional, sama seperti field pemeriksaan
+            // klinis di atas.
+            'kepatuhan_obat' => ['nullable', 'string', 'in:patuh,kurang_patuh,tidak_patuh'],
+            'sisa_obat' => ['nullable', 'string', 'in:cukup,menipis,habis'],
+
             // Kunjungan berombongan (docs/planning/02 §16) -- kehadiran AKTUAL. Opsional: kalau
             // tidak dikirim sama sekali, VisitReportService pre-fill dari
             // visit_assignment_companions milik assignment ini (lihat attendeeKaderIds() di
@@ -116,6 +121,7 @@ class SubmitVisitReportRequest extends FormRequest
         return Arr::only($this->validated(), [
             'gda', 'gdp', 'gd2jpp', 'uric_acid', 'cholesterol',
             'systolic', 'diastolic', 'keluhan', 'tindakan',
+            'kepatuhan_obat', 'sisa_obat',
         ]);
     }
 

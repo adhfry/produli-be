@@ -277,7 +277,7 @@ class PatientController extends Controller
         $this->authorize('view', $patient);
 
         $visits = $patient->visitAssignments()
-            ->with(['kader.user', 'tenagaKesehatan.user', 'latestReport', 'puskesmasSnapshot'])
+            ->with(['kader.user', 'tenagaKesehatan.user', 'companions.kader.user', 'latestReport', 'puskesmasSnapshot'])
             ->orderByDesc('scheduled_date')
             ->orderByDesc('id')
             ->limit(100)

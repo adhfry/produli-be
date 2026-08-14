@@ -32,7 +32,7 @@ class VisitReportController extends Controller
      */
     public function store(SubmitVisitReportRequest $request): JsonResponse
     {
-        $assignment = VisitAssignment::with(['patient', 'kader.user'])
+        $assignment = VisitAssignment::with(['patient', 'kader.user', 'tenagaKesehatan.user'])
             ->findOrFail($request->validated('assignment_id'));
 
         $this->authorize('submitReport', $assignment);
@@ -54,7 +54,7 @@ class VisitReportController extends Controller
             faceDetectedClientSide: $request->has('face_detected_client_side')
                 ? $request->boolean('face_detected_client_side')
                 : null,
-            kaderName: $assignment->kader->user->name,
+            submitterName: $assignment->kader?->user->name ?? $assignment->tenagaKesehatan?->user->name ?? '',
         );
 
         $report = $this->service->submit(
