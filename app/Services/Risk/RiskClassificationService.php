@@ -13,16 +13,22 @@ use Illuminate\Support\Facades\Log;
  * Hitung level risiko dari lab_results_cache x risk_thresholds, simpan snapshot versioned.
  * Lihat docs/planning/02-arsitektur-backend-produli.md §3.
  *
- * Kriteria (REVISI) — lintas-parameter, bukan lagi diambil dari level tertinggi per baris
- * threshold yang match:
+ * Kriteria (REVISI kedua, laporan bug A. JAZILI — pasien Trigliserida 192 SENDIRIAN yang
+ * salah naik ke Sedang padahal Cholesterol/LDL/Urea semuanya normal/tidak ada) — lintas-
+ * parameter, AND ketat utk kedua tier kombinasi, BUKAN "salah satu parameter saja cukup":
  * - Berat: kelima parameter di BERAT_PARAMETERS harus LENGKAP tersedia (hasil numerik untuk
  *   semuanya) DAN seluruhnya melebihi nilai rujukan sekaligus. Sengaja BUKAN "yang tersedia
  *   melebihi" secara longgar — kalau cuma Gula Darah Puasa yang pernah diperiksa (parameter
- *   lain belum ada hasil), itu TIDAK BOLEH otomatis jadi Berat (lihat definisi Ringan di bawah).
- * - Sedang: salah satu dari SEDANG_PARAMETERS (subset dari BERAT_PARAMETERS) melebihi rujukan,
- *   tapi tidak memenuhi kriteria Berat di atas.
- * - Ringan: HANYA Gula Darah Puasa yang melebihi rujukan di antara SEDANG_PARAMETERS (parameter
- *   lain di subset itu normal atau tidak diperiksa).
+ *   lain belum ada hasil), itu TIDAK BOLEH otomatis jadi Berat.
+ * - Sedang: pola IDENTIK dengan Berat, cuma bedanya set parameter — keempat parameter di
+ *   SEDANG_PARAMETERS harus LENGKAP tersedia DAN seluruhnya melebihi nilai rujukan sekaligus.
+ *   SEBELUMNYA cukup "salah satu dari 4 parameter melebihi" (OR) — itu yang menyebabkan bug
+ *   A. Jazili: Trigliserida 192 sendirian (Cholesterol/LDL normal, Gula Darah Puasa tidak
+ *   diperiksa) salah dianggap Sedang. Tidak ada lagi tier "Ringan" hasil kombinasi parsial
+ *   (mis. "cuma Gula Darah Puasa melebihi") — kombinasi yang tidak memenuhi AND penuh untuk
+ *   Sedang maupun Berat dianggap BELUM cukup jadi perhatian sama sekali, jatuh ke
+ *   'tidak_berisiko' (atau null kalau pasien memang belum pernah diklasifikasikan), bukan
+ *   'ringan' — keputusan eksplisit user, bukan default yang ditebak.
  *
  * REVISI Bu Kadis: Creatinine BUKAN lagi bagian BERAT_PARAMETERS/SEDANG_PARAMETERS (tidak
  * dobel-hitung) — dipindah jadi "direct classifier" (RiskThreshold.is_direct_classifier=true).
@@ -439,13 +445,18 @@ class RiskClassificationService
             return 'berat';
         }
 
-        $sedangExceeded = array_values(array_intersect(self::SEDANG_PARAMETERS, $exceededParameters));
+        // AND ketat, pola IDENTIK dengan Berat di atas (bukan lagi "salah satu dari
+        // SEDANG_PARAMETERS melebihi" -- itu bug A. Jazili, lihat docblock kelas). Kombinasi
+        // parsial (mis. cuma Trigliserida, atau cuma Gula Darah Puasa) TIDAK cukup -- jatuh ke
+        // null di sini, ditangani classify() sebagai 'tidak_berisiko'/tetap null seperti biasa.
+        $sedangLengkap = array_diff(self::SEDANG_PARAMETERS, $availableParameters) === [];
+        $sedangSemuaMelebihi = array_diff(self::SEDANG_PARAMETERS, $exceededParameters) === [];
 
-        if ($sedangExceeded === []) {
-            return null;
+        if ($sedangLengkap && $sedangSemuaMelebihi) {
+            return 'sedang';
         }
 
-        return $sedangExceeded === ['Gula Darah Puasa'] ? 'ringan' : 'sedang';
+        return null;
     }
 
     /**
