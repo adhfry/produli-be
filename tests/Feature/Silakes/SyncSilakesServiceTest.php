@@ -96,7 +96,11 @@ class SyncSilakesServiceTest extends TestCase
 
         $this->assertSame(2, $result['patients_synced']);
         $this->assertSame(2, $result['lab_results_synced']);
-        $this->assertSame(1, $result['patients_classified']);
+        // Kriteria AND ketat (revisi bug A. Jazili, RiskClassificationService): Sedang
+        // butuh 4 parameter kombinasi lengkap+melebihi, Berat butuh 5 -- fixture ini cuma
+        // punya Gula Darah Puasa (sendirian, bukan direct-classifier seperti Creatinine),
+        // jadi tidak ada pasien yang ter-klasifikasi sama sekali lewat sync ini.
+        $this->assertSame(0, $result['patients_classified']);
 
         $p1 = PatientsCache::where('external_patient_id', 888001)->first();
         $p2 = PatientsCache::where('external_patient_id', 888002)->first();
@@ -108,9 +112,9 @@ class SyncSilakesServiceTest extends TestCase
         // di SyncSilakesService::upsertPatient() saat SiLAKES belum/tidak mengirim field ini.
         $this->assertSame('3529010101800001', $p1->nik);
         $this->assertNull($p2->nik);
-        // Kriteria REVISI (docs/planning/02 §3): Berat butuh keenam parameter lengkap
-        // tersedia+melebihi. Fixture ini cuma punya Gula Darah Puasa -> Ringan, bukan Berat.
-        $this->assertSame('ringan', $p1->riskClassifications()->where('is_latest', true)->first()->level);
+        // Gula Darah Puasa sendirian tidak lagi menghasilkan klasifikasi apa pun (AND ketat) --
+        // lihat RiskClassificationServiceTest utk cakupan lengkap logika klasifikasi itu sendiri.
+        $this->assertNull($p1->riskClassifications()->where('is_latest', true)->first());
     }
 
     public function test_hmac_signature_dan_timestamp_terkirim_di_setiap_request(): void

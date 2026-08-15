@@ -12,19 +12,22 @@ use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 /**
- * Regresi untuk RiskClassificationService (docs/planning/02 §3, kriteria REVISI —
- * lintas-parameter, bukan lagi level tertinggi per baris threshold yang match):
+ * Regresi untuk RiskClassificationService (docs/planning/02 §3, kriteria REVISI KEDUA --
+ * laporan bug A. JAZILI, Trigliserida 192 SENDIRIAN salah naik ke Sedang):
  * - Berat: KELIMA parameter kombinasi (Gula Darah Puasa, Cholesterol, Trigliserida, LDL,
  *   Urea) harus LENGKAP tersedia DAN semuanya melebihi nilai rujukan sekaligus.
- * - Sedang: salah satu dari Gula Darah Puasa/Cholesterol/Trigliserida/LDL melebihi rujukan,
- *   tapi tidak memenuhi kriteria Berat.
- * - Ringan: HANYA Gula Darah Puasa yang melebihi rujukan di antara subset Sedang itu.
+ * - Sedang: pola IDENTIK dengan Berat -- KEEMPAT parameter (Gula Darah Puasa, Cholesterol,
+ *   Trigliserida, LDL) harus LENGKAP tersedia DAN semuanya melebihi nilai rujukan sekaligus.
+ *   BUKAN LAGI "salah satu dari 4 parameter melebihi" (OR) -- itu bug A. Jazili. Tidak ada lagi
+ *   tier 'ringan' hasil kombinasi parsial (mis. "cuma Gula Darah Puasa melebihi") -- kombinasi
+ *   yang tidak memenuhi AND penuh untuk Sedang maupun Berat dianggap belum cukup jadi
+ *   perhatian sama sekali (null / 'tidak_berisiko'), bukan 'ringan'.
  *
  * REVISI Bu Kadis (lihat juga docblock RiskClassificationService): Creatinine keluar dari
- * kombinasi 5-parameter di atas, jadi "direct classifier" bertingkat (1.7-1.9=Sedang,
- * >=2.0=Berat) yang bisa menentukan level SENDIRIAN. Level akhir = paling parah antara jalur
- * kombinasi dan jalur direct-classifier. Tier baru 'tidak_berisiko' ditulis saat pasien yang
- * PERNAH diklasifikasi membaik total (tidak ada lagi yang melebihi rujukan).
+ * kombinasi di atas, jadi "direct classifier" bertingkat (1.7-1.9=Sedang, >=2.0=Berat) yang
+ * bisa menentukan level SENDIRIAN, independen dari kombinasi 4/5-parameter. Level akhir =
+ * paling parah antara jalur kombinasi dan jalur direct-classifier. Tier 'tidak_berisiko'
+ * ditulis saat pasien yang PERNAH diklasifikasi membaik/tidak lagi memenuhi kriteria apa pun.
  *
  * Nama parameter di sini HARUS persis sama dengan kolom lab_results_cache.parameter dari
  * SiLAKES asli -- "GDP" (singkatan medis umum) TIDAK PERNAH muncul di data nyata, cuma
@@ -32,7 +35,9 @@ use Tests\TestCase;
  * selalu 0 meski ribuan hasil lab sudah tersinkron -- lihat riwayat percakapan.
  *
  * Termasuk regresi khusus untuk kekhawatiran "delta sync tidak menjamin urutan kronologis"
- * (docs/planning/02 §3) yang sempat ditanyakan user.
+ * (docs/planning/02 §3) yang sempat ditanyakan user -- dipindah pakai Creatinine (direct
+ * classifier, bisa berdiri sendiri) alih-alih Gula Darah Puasa sendirian sejak Gula Darah
+ * Puasa sendirian sudah tidak lagi menghasilkan klasifikasi apa pun (lihat revisi di atas).
  */
 class RiskClassificationServiceTest extends TestCase
 {
@@ -126,6 +131,42 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertSame('berat', $result->level);
     }
 
+    public function test_keempat_parameter_sedang_lengkap_dan_melebihi_menghasilkan_sedang(): void
+    {
+        // Kebalikan Berat: PERSIS keempat SEDANG_PARAMETERS (GDP/Cholesterol/Trigliserida/LDL)
+        // lengkap tersedia DAN semuanya melebihi ambang -- Urea sengaja dibiarkan normal
+        // (kalau Urea ikut melebihi + Creatinine juga, itu sudah masuk kasus Berat, bukan tes ini).
+        $this->addFullPanel([
+            'Gula Darah Puasa' => '150',
+            'Cholesterol' => '250',
+            'Trigliserida' => '180',
+            'LDL' => '160',
+        ]);
+
+        $result = $this->service->classify($this->patient->fresh());
+
+        $this->assertSame('sedang', $result->level);
+    }
+
+    public function test_trigliserida_sendirian_tidak_menghasilkan_sedang_bug_a_jazili(): void
+    {
+        // Regresi persis laporan bug: pasien A. Jazili, Trigliserida 192 (ambang >140) SATU-
+        // SATUNYA yang melebihi -- Cholesterol/LDL normal, Gula Darah Puasa TIDAK PERNAH
+        // diperiksa sama sekali (bukan "tersedia tapi normal"). Sebelum perbaikan ini, satu
+        // parameter saja cukup untuk salah naik ke Sedang -- sekarang harus TIDAK menghasilkan
+        // klasifikasi apa pun (pasien belum pernah diklasifikasi sebelumnya di tes ini).
+        $this->addLabResult(500001, 'Cholesterol', '181', '2026-05-08');
+        $this->addLabResult(500002, 'LDL', '75', '2026-05-08');
+        $this->addLabResult(500003, 'Trigliserida', '192', '2026-05-08');
+        $this->addLabResult(500004, 'Urea', '30', '2026-05-08');
+        $this->addLabResult(500005, 'Creatinine', '0.6', '2026-05-08');
+
+        $result = $this->service->classify($this->patient->fresh());
+
+        $this->assertNull($result);
+        $this->assertSame(0, RiskClassification::where('patient_id', $this->patient->id)->count());
+    }
+
     public function test_creatinine_1_8_sendirian_menghasilkan_sedang_lewat_direct_classifier(): void
     {
         // HANYA Creatinine yang diperiksa, tidak ada parameter lain sama sekali -- kombinasi
@@ -160,8 +201,9 @@ class RiskClassificationServiceTest extends TestCase
     public function test_creatinine_berat_menang_walau_kombinasi_lain_cuma_sedang(): void
     {
         // Creatinine 2.1 (direct-classifier Berat) berdiri sendiri, parameter lain hanya
-        // memicu Sedang lewat jalur kombinasi (GDP normal, jadi bukan Berat kombinasi) --
-        // level akhir harus ambil yang TERPARAH (Berat), bukan Sedang dari jalur kombinasi.
+        // Cholesterol yang melebihi (GDP/Trigliserida/LDL normal, jadi bukan Sedang ATAUPUN
+        // Berat lewat jalur kombinasi -- keduanya butuh AND penuh sekarang) -- level akhir
+        // harus ambil yang TERPARAH (Berat) dari jalur direct-classifier, bukan diam di null.
         $this->addFullPanel([
             'Creatinine' => '2.1',
             'Cholesterol' => '300',
@@ -172,13 +214,13 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertSame('berat', $result->level);
     }
 
-    public function test_satu_parameter_tersedia_tapi_normal_gagalkan_kriteria_berat_jatuh_ke_sedang(): void
+    public function test_gula_darah_puasa_normal_gagalkan_kriteria_sedang_maupun_berat_tetap_null(): void
     {
-        // Gula Darah Puasa sengaja dibiarkan normal -- 4 dari 5 parameter kombinasi melebihi.
-        // Karena TIDAK SEMUA yang tersedia melebihi, ini bukan Berat lewat jalur kombinasi,
-        // tapi Cholesterol/Trigliserida/LDL tetap melebihi -> Sedang (bukan Ringan, karena
-        // bukan "hanya Gula Darah Puasa"). Creatinine SENGAJA dibiarkan normal (bukan 2.0)
-        // supaya tidak ikut memicu jalur direct-classifier Berat -- itu diuji terpisah.
+        // Gula Darah Puasa sengaja dibiarkan normal -- 4 dari 5 parameter kombinasi Berat
+        // melebihi (Cholesterol/Trigliserida/LDL/Urea), tapi karena Gula Darah Puasa TERSEDIA
+        // dan TIDAK melebihi, ini gagal AND penuh untuk Berat MAUPUN Sedang (SEDANG_PARAMETERS
+        // juga mewajibkan Gula Darah Puasa ikut melebihi sejak revisi AND ketat) -- bukan lagi
+        // otomatis jatuh ke Sedang seperti perilaku lama (OR).
         $this->addFullPanel([
             'Cholesterol' => '300',
             'Trigliserida' => '200',
@@ -188,43 +230,57 @@ class RiskClassificationServiceTest extends TestCase
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertSame('sedang', $result->level);
+        $this->assertNull($result);
     }
 
-    public function test_hanya_gula_darah_puasa_tersedia_dan_melebihi_menghasilkan_ringan_bukan_berat(): void
+    public function test_hanya_gula_darah_puasa_tersedia_dan_melebihi_tidak_menghasilkan_apa_apa(): void
     {
-        // Kasus yang sengaja diklarifikasi: parameter lain belum PERNAH diperiksa (bukan
-        // "tersedia tapi normal") -- kriteria Berat butuh KELENGKAPAN keenam parameter,
-        // jadi Gula Darah Puasa sendirian yang tinggi tidak boleh otomatis jadi Berat.
+        // Kasus yang sengaja diklarifikasi: parameter lain belum PERNAH diperiksa sama sekali
+        // (bukan "tersedia tapi normal") -- AND penuh untuk Sedang butuh KELENGKAPAN keempat
+        // parameter, jadi Gula Darah Puasa sendirian yang tinggi tidak lagi otomatis jadi
+        // apa pun (dulu 'ringan', sekarang tidak ada tier itu lagi utk kasus ini -- lihat
+        // docblock kelas).
         $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertSame('ringan', $result->level);
+        $this->assertNull($result);
     }
 
-    public function test_gula_darah_puasa_dan_kolesterol_melebihi_tanpa_parameter_lain_menghasilkan_sedang(): void
+    public function test_gula_darah_puasa_dan_kolesterol_saja_tanpa_parameter_lain_tidak_menghasilkan_apa_apa(): void
     {
+        // Cuma 2 dari 4 SEDANG_PARAMETERS yang PERNAH diperiksa (Trigliserida/LDL tidak
+        // pernah ada hasil labnya sama sekali) -- AND penuh butuh keempatnya TERSEDIA, jadi
+        // ini gagal di tahap ketersediaan, bukan sekadar nilai.
         $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
         $this->addLabResult(500002, 'Cholesterol', '300', '2026-07-20');
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertSame('sedang', $result->level);
+        $this->assertNull($result);
     }
 
     public function test_gula_darah_puasa_melebihi_dan_nilai_non_numerik_di_skip_dengan_log(): void
     {
         Log::spy();
 
+        // Cholesterol 'ABNORMAL' di-skip (non-numerik) -- itu artinya Cholesterol dianggap
+        // TIDAK TERSEDIA sama sekali, jadi kombinasi Sedang/Berat otomatis gagal di tahap
+        // ketersediaan walau Gula Darah Puasa sendiri melebihi. Creatinine 1.8 ditambahkan
+        // supaya tes ini tetap punya hasil klasifikasi non-null untuk diperiksa (lewat jalur
+        // direct-classifier yang independen dari kombinasi), tanpa mengubah esensi yang diuji:
+        // nilai non-numerik di-skip + dicatat log warning.
         $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
         $this->addLabResult(500002, 'Cholesterol', 'ABNORMAL', '2026-07-20');
+        $this->addLabResult(500003, 'Creatinine', '1.8', '2026-07-20');
 
         $result = $this->service->classify($this->patient->fresh());
 
         $this->assertNotNull($result);
-        $this->assertSame('ringan', $result->level); // Cholesterol di-skip -> cuma GDP yang tersedia
-        $this->assertCount(2, $result->criteria_snapshot); // match baris threshold sedang DAN berat
+        $this->assertSame('sedang', $result->level); // lewat direct-classifier Creatinine, bukan kombinasi
+        // GDP 250 match 2 baris threshold (sedang >120 DAN berat >200) + Creatinine 1.8 match
+        // 1 baris (sedang, between 1.7-1.9) = 3 baris kriteria total.
+        $this->assertCount(3, $result->criteria_snapshot);
         Log::shouldHaveReceived('warning')->once();
     }
 
@@ -241,15 +297,17 @@ class RiskClassificationServiceTest extends TestCase
         ]);
         $first = $this->service->classify($this->patient->fresh());
 
-        // Gula Darah Puasa turun ke normal -> kriteria Berat gagal (tidak semua yang tersedia
-        // melebihi lagi), tapi Cholesterol/Trigliserida/LDL masih melebihi -> turun ke Sedang.
+        // Gula Darah Puasa turun ke normal -> AND penuh Berat MAUPUN Sedang gagal (keduanya
+        // sekarang mewajibkan Gula Darah Puasa ikut melebihi) -- pasien sudah pernah
+        // diklasifikasi sebelumnya, jadi ini ditulis sebagai 'tidak_berisiko' (membaik),
+        // BUKAN 'sedang' seperti perilaku lama (OR).
         LabResultCache::where('patient_id', $this->patient->external_patient_id)
             ->where('parameter', 'Gula Darah Puasa')
             ->update(['value' => '90']);
         $second = $this->service->classify($this->patient->fresh());
 
         $this->assertSame('berat', $first->level);
-        $this->assertSame('sedang', $second->level);
+        $this->assertSame('tidak_berisiko', $second->level);
         $this->assertSame(2, RiskClassification::where('patient_id', $this->patient->id)->count());
         $this->assertSame(1, RiskClassification::where('patient_id', $this->patient->id)->where('is_latest', true)->count());
         $this->assertFalse($first->fresh()->is_latest);
@@ -262,12 +320,19 @@ class RiskClassificationServiceTest extends TestCase
         // termasuk saat data lab sama sekali tidak berubah (mis. delta sync melihat "ada data
         // baru" padahal cuma updated_at yang bergeser, atau produli:reclassify-risk dijalankan
         // ulang manual) -- riwayat jadi penuh baris duplikat identik, cuma computed_at beda.
-        $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
+        // Pakai kombinasi 4-parameter penuh (bukan Gula Darah Puasa sendirian) supaya panggilan
+        // pertama benar-benar menghasilkan baris untuk diuji idempotensinya.
+        $this->addFullPanel([
+            'Gula Darah Puasa' => '250',
+            'Cholesterol' => '300',
+            'Trigliserida' => '200',
+            'LDL' => '180',
+        ]);
         $first = $this->service->classify($this->patient->fresh());
 
         $second = $this->service->classify($this->patient->fresh());
 
-        $this->assertSame('ringan', $first->level);
+        $this->assertSame('sedang', $first->level);
         $this->assertNull($second, 'Panggilan kedua tanpa perubahan data harus no-op (null), bukan baris baru.');
         $this->assertSame(1, RiskClassification::where('patient_id', $this->patient->id)->count());
     }
@@ -276,10 +341,17 @@ class RiskClassificationServiceTest extends TestCase
     {
         // Kebalikan dari test di atas -- guard idempotensi TIDAK BOLEH menghalangi perubahan
         // kondisi pasien yang sungguhan.
-        $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
+        $this->addFullPanel([
+            'Gula Darah Puasa' => '250',
+            'Cholesterol' => '300',
+            'Trigliserida' => '200',
+            'LDL' => '180',
+        ]);
         $this->service->classify($this->patient->fresh());
 
-        LabResultCache::where('external_id', 500001)->update(['value' => '260']);
+        LabResultCache::where('patient_id', $this->patient->external_patient_id)
+            ->where('parameter', 'Gula Darah Puasa')
+            ->update(['value' => '260']);
         $second = $this->service->classify($this->patient->fresh());
 
         $this->assertNotNull($second);
@@ -301,16 +373,24 @@ class RiskClassificationServiceTest extends TestCase
 
     public function test_membaik_dari_pernah_diklasifikasi_menjadi_tidak_ada_yang_match_menulis_tidak_berisiko(): void
     {
-        // Pasien PERNAH divonis Ringan (GDP 250), lalu nilainya kembali normal sepenuhnya --
-        // revisi Bu Kadis: ini harus ditulis sebagai baris baru 'tidak_berisiko' (pasien
-        // membaik total), bukan diam-diam tetap 'ringan' selamanya di is_latest.
-        $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
+        // Pasien PERNAH divonis Sedang (kombinasi 4-parameter penuh), lalu SELURUH nilainya
+        // kembali normal -- revisi Bu Kadis: ini harus ditulis sebagai baris baru
+        // 'tidak_berisiko' (pasien membaik total), bukan diam-diam tetap 'sedang' selamanya
+        // di is_latest.
+        $this->addFullPanel([
+            'Gula Darah Puasa' => '250',
+            'Cholesterol' => '300',
+            'Trigliserida' => '200',
+            'LDL' => '180',
+        ]);
         $first = $this->service->classify($this->patient->fresh());
 
-        LabResultCache::where('external_id', 500001)->update(['value' => '80']);
+        LabResultCache::where('patient_id', $this->patient->external_patient_id)
+            ->whereIn('parameter', ['Gula Darah Puasa', 'Cholesterol', 'Trigliserida', 'LDL'])
+            ->update(['value' => '1']); // jauh di bawah ambang manapun, "1" berlaku utk semua kolom ini
         $second = $this->service->classify($this->patient->fresh());
 
-        $this->assertSame('ringan', $first->level);
+        $this->assertSame('sedang', $first->level);
         $this->assertNotNull($second);
         $this->assertSame('tidak_berisiko', $second->level);
         $this->assertSame(2, RiskClassification::where('patient_id', $this->patient->id)->count());
@@ -321,28 +401,32 @@ class RiskClassificationServiceTest extends TestCase
     public function test_klasifikasi_pakai_tanggal_periksa_terbaru_bukan_urutan_insert_atau_synced_at(): void
     {
         // synced_at sengaja DIBALIK dari tanggal_periksa: hasil lama (tanggal jauh, nilai
-        // rendah) baru "disinkron" HARI INI, hasil baru (tanggal dekat, nilai tinggi) justru
-        // sudah lama tersinkron — meniru delta sync yang tidak berurutan kronologis
-        // (docs/planning/02 §3). Kalau kode salah urut pakai synced_at/insert order, hasilnya
-        // akan salah pilih 90 (tidak match threshold apa pun) alih-alih 250 (ringan, sendirian).
-        $this->addLabResult(500002, 'Gula Darah Puasa', '90', '2026-01-10', now()->toDateTimeString());
-        $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20', '2026-01-01 00:00:00');
+        // normal) baru "disinkron" HARI INI, hasil baru (tanggal dekat, nilai direct-classifier
+        // Sedang) justru sudah lama tersinkron -- meniru delta sync yang tidak berurutan
+        // kronologis (docs/planning/02 §3). Pakai Creatinine (direct-classifier, berdiri
+        // sendiri) alih-alih Gula Darah Puasa sendirian -- Gula Darah Puasa sendirian sudah
+        // tidak lagi menghasilkan klasifikasi apa pun sejak revisi AND ketat, jadi tidak lagi
+        // bisa dipakai menguji urutan tanggal ini. Kalau kode salah urut pakai synced_at/
+        // insert order, hasilnya akan salah pilih 1.0 (normal, tidak match apa pun) alih-alih
+        // 1.8 (sedang, lewat direct-classifier).
+        $this->addLabResult(500002, 'Creatinine', '1.0', '2026-01-10', now()->toDateTimeString());
+        $this->addLabResult(500001, 'Creatinine', '1.8', '2026-07-20', '2026-01-01 00:00:00');
 
         $result = $this->service->classify($this->patient->fresh());
 
         $this->assertNotNull($result, 'Harusnya tetap match dari tanggal_periksa 2026-07-20, bukan NULL');
-        $this->assertSame('ringan', $result->level);
+        $this->assertSame('sedang', $result->level);
     }
 
     public function test_tiebreak_synced_at_saat_tanggal_periksa_sama_persis(): void
     {
-        $this->addLabResult(500001, 'Gula Darah Puasa', '90', '2026-07-20', '2026-07-20 08:00:00');
-        $this->addLabResult(500002, 'Gula Darah Puasa', '250', '2026-07-20', '2026-07-20 09:00:00');
+        $this->addLabResult(500001, 'Creatinine', '1.0', '2026-07-20', '2026-07-20 08:00:00');
+        $this->addLabResult(500002, 'Creatinine', '1.8', '2026-07-20', '2026-07-20 09:00:00');
 
         $result = $this->service->classify($this->patient->fresh());
 
-        // synced_at lebih baru (retest di hari yang sama) yang menang -> 250 -> ringan (sendirian).
-        $this->assertSame('ringan', $result->level);
+        // synced_at lebih baru (retest di hari yang sama) yang menang -> 1.8 -> sedang (direct-classifier).
+        $this->assertSame('sedang', $result->level);
     }
 
     public function test_early_detection_flag_proximity_saat_creatinine_mendekati_ambang_berat(): void
@@ -380,6 +464,8 @@ class RiskClassificationServiceTest extends TestCase
         // dibiarkan normal (Creatinine juga normal), 4 dari 5 BERAT_PARAMETERS (GDP, Cholesterol,
         // Trigliserida, LDL) melebihi ambang SAMA-SAMA 60% (di atas
         // PRODULI_EARLY_DETECTION_COMBO_MARGIN_THRESHOLD_PERCENT=50), bukan cuma "exceeded".
+        // Catatan: keempat parameter ini PERSIS SEDANG_PARAMETERS, jadi level akhirnya 'sedang'
+        // lewat jalur kombinasi AND penuh yang baru juga (bukan cuma dari early detection).
         $this->addFullPanel([
             'Gula Darah Puasa' => '192', // ambang 120 -> margin 60%
             'Cholesterol' => '320',   // ambang 200 -> margin 60%
@@ -402,7 +488,8 @@ class RiskClassificationServiceTest extends TestCase
         // Regresi bug lama: 4 dari 5 parameter kombinasi exceeded TAPI cuma sedikit di atas
         // ambang (margin jauh di bawah 50%) -- dulu tetap ke-flag cuma karena JUMLAHNYA 4,
         // sekarang TIDAK BOLEH, karena belum tentu benar-benar "menuju Berat" sebagai satu
-        // kesatuan (1 parameter tinggi + beberapa nyaris ambang bukan sinyal kuat).
+        // kesatuan (1 parameter tinggi + beberapa nyaris ambang bukan sinyal kuat). Level akhir
+        // tetap 'sedang' (keempatnya persis SEDANG_PARAMETERS, AND penuh terpenuhi).
         $this->addFullPanel([
             'Gula Darah Puasa' => '126', // ambang 120 -> margin 5%
             'Cholesterol' => '210',   // ambang 200 -> margin 5%
@@ -421,8 +508,12 @@ class RiskClassificationServiceTest extends TestCase
     {
         // "Bukan hanya 1 parameter" -- Cholesterol jauh di atas ambang (margin 200%) TAPI
         // sendirian, parameter kombo lain normal -- TIDAK cukup untuk combo_breadth (butuh
-        // minimal combo_min_parameters=3 parameter exceeded BERSAMAAN).
-        $this->addFullPanel(['Cholesterol' => '600']); // ambang 200 -> margin 200%, sendirian
+        // minimal combo_min_parameters=3 parameter exceeded BERSAMAAN). Creatinine 1.8
+        // ditambahkan supaya level akhir tetap 'sedang' (lewat direct-classifier, independen
+        // dari kombinasi yang cuma 1 parameter) -- tanpa ini, cuma Cholesterol sendirian sejak
+        // revisi AND ketat tidak menghasilkan klasifikasi apa pun (lihat tes lain di atas),
+        // sehingga premise "level sedang tapi flag false" tidak akan pernah tercapai.
+        $this->addFullPanel(['Cholesterol' => '600', 'Creatinine' => '1.8']); // ambang 200 -> margin 200%, sendirian
 
         $result = $this->service->classify($this->patient->fresh());
 
@@ -436,11 +527,14 @@ class RiskClassificationServiceTest extends TestCase
         // parameter yang exceeded bukan superset dari combo_required_parameters (Gula Darah
         // Puasa, LDL, Trigliserida) -- LDL & Trigliserida sama sekali tidak exceeded di sini,
         // jadi TIDAK BOLEH memicu combo_breadth meski margin tinggi dan jumlahnya cukup secara
-        // hitungan generik.
+        // hitungan generik. Creatinine 1.8 ditambahkan supaya level akhir tetap 'sedang' lewat
+        // direct-classifier (kombinasi kombo di sini TIDAK memenuhi AND penuh Sedang karena
+        // Trigliserida/LDL normal, jadi tanpa Creatinine hasilnya null, bukan 'sedang').
         $this->addFullPanel([
             'Gula Darah Puasa' => '192', // margin 60%, mandatory tapi cuma 1 dari 3
             'Cholesterol' => '320', // margin 60%
             'Urea' => '64',         // margin 60%
+            'Creatinine' => '1.8',  // direct-classifier -> sedang, independen dari kombo di atas
         ]);
 
         $result = $this->service->classify($this->patient->fresh());
@@ -454,11 +548,15 @@ class RiskClassificationServiceTest extends TestCase
         // Kasus minimum yang masih valid: HANYA Gula Darah Puasa, LDL, Trigliserida (persis
         // combo_required_parameters) yang exceeded, Cholesterol & Urea tetap normal -- tetap
         // harus memicu combo_breadth karena ketiganya sudah cukup (tidak butuh parameter
-        // tambahan apa pun di luar yang wajib).
+        // tambahan apa pun di luar yang wajib). Creatinine 1.8 ditambahkan supaya level akhir
+        // tetap 'sedang' (Cholesterol normal di sini artinya AND penuh Sedang kombinasi GAGAL
+        // sejak revisi AND ketat -- direct-classifier Creatinine yang membawa level ke 'sedang',
+        // combo_breadth early-detection tetap dihitung dari kriteria yang sama seperti biasa).
         $this->addFullPanel([
             'Gula Darah Puasa' => '192', // margin 60%
             'Trigliserida' => '240',     // margin 60%
             'LDL' => '208',              // margin 60%
+            'Creatinine' => '1.8',       // direct-classifier -> sedang
         ]);
 
         $result = $this->service->classify($this->patient->fresh());
@@ -473,9 +571,12 @@ class RiskClassificationServiceTest extends TestCase
     public function test_early_detection_flag_true_dari_kombinasi_creatinine_hampir_berat_walau_kombo_hanya_sedang_rata_rata(): void
     {
         // Kasus GABUNGAN yang diminta secara eksplisit: indikator kombo cuma "sedang" biasa
-        // (margin rendah, TIDAK memicu combo_breadth sendiri) TAPI Creatinine hampir menyentuh
-        // 2 -- tetap harus ke-flag sebagai pasien beresiko menuju Berat, lewat sinyal proximity
-        // Creatinine SENDIRIAN (OR, bukan AND, dengan sinyal kombo).
+        // (margin rendah, TIDAK memicu combo_breadth sendiri, dan malah TIDAK memenuhi AND
+        // penuh Sedang -- cuma Cholesterol sendirian) TAPI Creatinine hampir menyentuh 2 --
+        // tetap harus ke-flag sebagai pasien beresiko menuju Berat, lewat sinyal proximity
+        // Creatinine SENDIRIAN (OR, bukan AND, dengan sinyal kombo), dan level akhir tetap
+        // 'sedang' dari direct-classifier Creatinine (bukan dari kombo, yang sekarang gagal
+        // AND penuhnya).
         $this->addFullPanel([
             'Cholesterol' => '210', // margin rendah (5%), tidak memicu combo_breadth
             'Creatinine' => '1.89', // proximity 63.3%, di atas ambang 60%
@@ -493,8 +594,13 @@ class RiskClassificationServiceTest extends TestCase
     public function test_early_detection_flag_worsening_trend_lewat_3_klasifikasi_berturut_turut(): void
     {
         // Cholesterol naik terus 3 kali berturut-turut (210 -> 220 -> 230), parameter lain
-        // tetap normal supaya sinyal proximity/combo_breadth tidak ikut memicu di klasifikasi ke-3.
-        $this->addFullPanel(['Cholesterol' => '210']);
+        // tetap normal supaya sinyal proximity/combo_breadth tidak ikut memicu di klasifikasi
+        // ke-3. Creatinine 1.8 (direct-classifier -> sedang) dipertahankan KONSTAN di seluruh 3
+        // tahap supaya level akhir tetap 'sedang' setiap panggilan -- tanpa ini, Cholesterol
+        // sendirian (sejak revisi AND ketat) tidak menghasilkan klasifikasi apa pun sama
+        // sekali, dan riwayat 3-klasifikasi-berturut yang dibutuhkan detectWorseningTrend()
+        // tidak akan pernah terbentuk.
+        $this->addFullPanel(['Cholesterol' => '210', 'Creatinine' => '1.8']);
         $this->service->classify($this->patient->fresh());
 
         LabResultCache::where('patient_id', $this->patient->external_patient_id)
@@ -524,17 +630,6 @@ class RiskClassificationServiceTest extends TestCase
         $result = $this->service->classify($this->patient->fresh());
 
         $this->assertSame('berat', $result->level);
-        $this->assertFalse($result->early_detection_flag);
-        $this->assertNull($result->early_detection_reason);
-    }
-
-    public function test_early_detection_flag_selalu_false_untuk_level_ringan(): void
-    {
-        $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
-
-        $result = $this->service->classify($this->patient->fresh());
-
-        $this->assertSame('ringan', $result->level);
         $this->assertFalse($result->early_detection_flag);
         $this->assertNull($result->early_detection_reason);
     }
