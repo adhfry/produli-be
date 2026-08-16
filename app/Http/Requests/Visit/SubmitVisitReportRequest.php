@@ -4,6 +4,7 @@ namespace App\Http\Requests\Visit;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Arr;
+use Illuminate\Validation\Rule;
 
 class SubmitVisitReportRequest extends FormRequest
 {
@@ -67,7 +68,15 @@ class SubmitVisitReportRequest extends FormRequest
             'systolic' => ['nullable', 'integer', 'min:0'],
             'diastolic' => ['nullable', 'integer', 'min:0'],
             'keluhan' => ['nullable', 'string'],
-            'tindakan' => ['nullable', 'string', 'in:diberi_obat,dirujuk_puskesmas,tidak_ada'],
+            // Bisa lebih dari satu tindakan sekaligus (mis. diberi obat SEKALIGUS dirujuk) --
+            // sebelumnya enum tunggal, sekarang array (docs plan Fase 2).
+            'tindakan' => ['nullable', 'array'],
+            'tindakan.*' => ['string', 'in:diberi_obat,dirujuk_puskesmas,tidak_ada'],
+            // Wajib diisi HANYA kalau 'dirujuk_puskesmas' ada di antara tindakan yang dipilih.
+            'cara_rujukan' => [
+                Rule::requiredIf(fn () => in_array('dirujuk_puskesmas', (array) $this->input('tindakan', []), true)),
+                'nullable', 'string', 'in:datang_sendiri,dijemput_ambulan,diantar_keluarga,diantar_nakes_kader',
+            ],
 
             // PMO mingguan kader (revisi Bu Kadis) -- opsional, sama seperti field pemeriksaan
             // klinis di atas.
@@ -120,7 +129,7 @@ class SubmitVisitReportRequest extends FormRequest
     {
         return Arr::only($this->validated(), [
             'gda', 'gdp', 'gd2jpp', 'uric_acid', 'cholesterol',
-            'systolic', 'diastolic', 'keluhan', 'tindakan',
+            'systolic', 'diastolic', 'keluhan', 'tindakan', 'cara_rujukan',
             'kepatuhan_obat', 'sisa_obat',
         ]);
     }

@@ -39,6 +39,11 @@ class VisitReportResource extends JsonResource
             'diastolic' => $this->diastolic,
             'keluhan' => $this->keluhan,
             'tindakan' => $this->tindakan,
+            // Alur rujukan (docs plan Fase 2/3) -- cara_rujukan diisi kader/nakes kalau tindakan
+            // mencakup 'dirujuk_puskesmas'; rujukan_status diubah admin_puskesmas/pj_prolanis di
+            // /dashboard/rujukan (Fase 3).
+            'cara_rujukan' => $this->cara_rujukan,
+            'rujukan_status' => $this->rujukan_status,
             // PMO mingguan kader (revisi Bu Kadis) -- opsional, terpisah dari pemeriksaan klinis
             // di atas yang jadi tanggung jawab tenaga_kesehatan.
             'kepatuhan_obat' => $this->kepatuhan_obat,

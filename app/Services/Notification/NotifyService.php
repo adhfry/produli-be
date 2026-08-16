@@ -101,6 +101,9 @@ class NotifyService
         return match ($target->scope) {
             'puskesmas' => User::where('puskesmas_id', $target->puskesmasId)->pluck('id'),
             'broadcast' => User::pluck('id'),
+            'roles_in_puskesmas' => User::where('puskesmas_id', $target->puskesmasId)
+                ->role($target->roles)
+                ->pluck('id'),
             default => throw new RuntimeException("NotifiableTarget scope '{$target->scope}' tidak didukung untuk fan-out."),
         };
     }

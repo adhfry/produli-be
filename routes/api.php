@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\KecamatanController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PatientController;
 use App\Http\Controllers\Api\V1\PuskesmasController;
+use App\Http\Controllers\Api\V1\RujukanController;
 use App\Http\Controllers\Api\V1\SilakesSyncController;
 use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\TenagaKesehatanController;
@@ -150,6 +151,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::post('visit-reports', [VisitReportController::class, 'store']);
     Route::patch('visit-reports/{visitReport}/accept', [VisitReportController::class, 'accept']);
     Route::patch('validasi-laporan/{visitReport}', [VisitReportController::class, 'validateReport']);
+
+    Route::get('rujukan', [RujukanController::class, 'index']);
+    Route::patch('rujukan/{visitReport}/konfirmasi', [RujukanController::class, 'konfirmasi']);
 
     Route::get('staff', [StaffController::class, 'index']);
     Route::post('staff', [StaffController::class, 'store']);

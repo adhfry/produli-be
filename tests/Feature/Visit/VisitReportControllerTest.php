@@ -142,7 +142,7 @@ class VisitReportControllerTest extends TestCase
             'systolic' => '140',
             'diastolic' => '90',
             'keluhan' => 'Pusing dan mudah lelah.',
-            'tindakan' => 'diberi_obat',
+            'tindakan' => ['diberi_obat'],
         ]), ['Accept' => 'application/json']);
 
         $response->assertCreated();
@@ -156,11 +156,42 @@ class VisitReportControllerTest extends TestCase
         $this->assertSame(140, $report->systolic);
         $this->assertSame(90, $report->diastolic);
         $this->assertSame('Pusing dan mudah lelah.', $report->keluhan);
-        $this->assertSame('diberi_obat', $report->tindakan);
+        $this->assertSame(['diberi_obat'], $report->tindakan);
 
         // Ikut tampil di response resource, bukan cuma tersimpan di DB.
         $this->assertSame(140, $response->json('data.systolic'));
-        $this->assertSame('diberi_obat', $response->json('data.tindakan'));
+        $this->assertSame(['diberi_obat'], $response->json('data.tindakan'));
+    }
+
+    public function test_kader_bisa_pilih_lebih_dari_satu_tindakan_sekaligus(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['diberi_obat', 'dirujuk_puskesmas'],
+            'cara_rujukan' => 'diantar_keluarga',
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertCreated();
+        $report = VisitReport::first();
+        $this->assertSame(['diberi_obat', 'dirujuk_puskesmas'], $report->tindakan);
+        $this->assertSame('diantar_keluarga', $report->cara_rujukan);
+        $this->assertSame('menunggu_konfirmasi', $report->rujukan_status);
+        $this->assertSame('menunggu_konfirmasi', $response->json('data.rujukan_status'));
+    }
+
+    public function test_cara_rujukan_wajib_kalau_tindakan_mencakup_dirujuk_puskesmas(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['dirujuk_puskesmas'],
+            // cara_rujukan SENGAJA tidak dikirim.
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('cara_rujukan');
+        $this->assertSame(0, VisitReport::count());
     }
 
     // ---- Kunjungan berombongan: attendee (docs/planning/02 §16) ----
@@ -242,7 +273,7 @@ class VisitReportControllerTest extends TestCase
         Sanctum::actingAs($this->kader->user);
 
         $response = $this->post('/api/v1/visit-reports', $this->validPayload([
-            'tindakan' => 'dipulangkan_saja',
+            'tindakan' => ['dipulangkan_saja'],
         ]), ['Accept' => 'application/json']);
 
         $response->assertStatus(422);

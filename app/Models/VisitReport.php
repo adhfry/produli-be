@@ -42,6 +42,8 @@ class VisitReport extends Model
         'diastolic',
         'keluhan',
         'tindakan',
+        'cara_rujukan',
+        'rujukan_status',
         'kepatuhan_obat',
         'sisa_obat',
     ];
@@ -53,6 +55,7 @@ class VisitReport extends Model
             'gps_lng' => 'decimal:7',
             'exif_meta' => 'array',
             'patient_field_updates' => 'array',
+            'tindakan' => 'array',
             'face_detected' => 'boolean',
             'latitude' => 'decimal:7',
             'longitude' => 'decimal:7',

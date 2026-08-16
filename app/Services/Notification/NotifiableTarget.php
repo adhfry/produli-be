@@ -15,6 +15,7 @@ final class NotifiableTarget
         public readonly string $scope,
         public readonly ?User $user = null,
         public readonly ?int $puskesmasId = null,
+        public readonly array $roles = [],
     ) {}
 
     public static function user(User $user): self
@@ -30,5 +31,17 @@ final class NotifiableTarget
     public static function broadcast(): self
     {
         return new self('broadcast');
+    }
+
+    /**
+     * User dengan salah satu $roles DI SATU puskesmas tertentu -- dipakai untuk menotif
+     * "admin_puskesmas + pj_prolanis di puskesmas X" tanpa ikut mengenai kader/tenaga_kesehatan
+     * puskesmas yang sama (beda dari puskesmas() yang menyasar SEMUA user di puskesmas itu).
+     *
+     * @param  array<int, string>  $roles
+     */
+    public static function rolesInPuskesmas(array $roles, int $puskesmasId): self
+    {
+        return new self('roles_in_puskesmas', puskesmasId: $puskesmasId, roles: $roles);
     }
 }

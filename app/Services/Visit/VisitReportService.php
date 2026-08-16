@@ -7,11 +7,16 @@ use App\Jobs\SyncFieldUpdateToSilakesJob;
 use App\Models\VisitAssignment;
 use App\Models\VisitReport;
 use App\Models\VisitReportAttendee;
+use App\Services\Notification\NotifiableTarget;
+use App\Services\Notification\NotificationPayload;
+use App\Services\Notification\NotifyService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
+use Throwable;
 
 /**
  * Simpan laporan kunjungan kader — SELALU berhasil secara lokal meski SiLAKES down/lambat
@@ -29,7 +34,10 @@ use RuntimeException;
  */
 class VisitReportService
 {
-    public function __construct(private readonly VisitValidationService $validationService) {}
+    public function __construct(
+        private readonly VisitValidationService $validationService,
+        private readonly NotifyService $notifyService,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $patientFieldUpdates  Usulan pelengkapan/koreksi data pasien
@@ -101,6 +109,13 @@ class VisitReportService
                 'sync_status' => 'pending',
                 'patient_field_updates' => $patientFieldUpdates !== [] ? $patientFieldUpdates : null,
                 ...$pemeriksaan,
+                // Otomatis menunggu konfirmasi admin_puskesmas/pj_prolanis begitu kader/nakes
+                // memilih 'dirujuk_puskesmas' di antara tindakan (bisa lebih dari satu tindakan
+                // sekaligus, docs plan Fase 2) -- dikonfirmasi/dibatalkan di /dashboard/rujukan
+                // (Fase 3, di luar cakupan perubahan ini).
+                'rujukan_status' => in_array('dirujuk_puskesmas', $pemeriksaan['tindakan'] ?? [], true)
+                    ? 'menunggu_konfirmasi'
+                    : null,
             ]);
 
             $this->recordAttendees($report, $assignment, $attendeeKaderIds);
@@ -129,7 +144,116 @@ class VisitReportService
             SyncFieldUpdateToSilakesJob::dispatch($report->id)->afterCommit();
         }
 
+        $this->notifyReportSubmitted($assignment);
+
+        if ($report->rujukan_status === 'menunggu_konfirmasi') {
+            $this->notifyPasienDirujuk($assignment, $report);
+        }
+
         return $report;
+    }
+
+    /**
+     * Notifikasi ke admin_puskesmas + pj_prolanis di puskesmas PETUGAS PELAPOR (kader/nakes) --
+     * BUKAN puskesmas_id_snapshot assignment (itu turunan puskesmas PASIEN, lihat
+     * VisitAssignmentService/CareAssignmentService -- salah kalau dipakai di sini, laporan harus
+     * naik ke puskesmas tempat kader/nakes yang mengirim laporan bertugas). Setiap kali laporan
+     * kunjungan masuk -- sebelumnya TIDAK ADA notifikasi yang mengalir ke atas sama sekali
+     * (kader/nakes -> admin/PJ). Dikirim lewat push (bel) DAN fcm (push notification browser/PWA)
+     * supaya benar-benar sampai walau app sedang tidak dibuka. Notifikasi KHUSUS rujukan (channel
+     * push+fcm+email, ditambah halaman /dashboard/rujukan + alarm) ditangani terpisah, bukan di sini.
+     *
+     * Dibungkus try/catch SENGAJA -- laporan kunjungan yang SUDAH tersimpan (transaksi di atas
+     * sudah commit) tidak boleh dianggap gagal cuma karena sisi notifikasi bermasalah (mis. role
+     * belum ter-seed di environment tertentu, NotifyService throw). Prinsip yang sama seperti
+     * NotifyService::deliverToUser() yang menelan kegagalan per-channel -- di sini satu tingkat
+     * lebih luar, membungkus resolveUserIds() yang BISA throw (beda dari deliverToUser() yang
+     * sudah aman sendiri).
+     */
+    private function notifyReportSubmitted(VisitAssignment $assignment): void
+    {
+        try {
+            $petugasPuskesmasId = $assignment->kader?->puskesmas_id ?? $assignment->tenagaKesehatan?->puskesmas_id;
+            if ($petugasPuskesmasId === null) {
+                return;
+            }
+
+            $patientName = $assignment->patient?->nama ?? 'pasien';
+            $petugasName = $assignment->kader?->user?->name ?? $assignment->tenagaKesehatan?->user?->name ?? 'Petugas';
+
+            $this->notifyService->notify(
+                NotifiableTarget::rolesInPuskesmas(['admin_puskesmas', 'pj_prolanis'], $petugasPuskesmasId),
+                new NotificationPayload(
+                    type: 'visit_report_submitted',
+                    title: 'Laporan Kunjungan Baru',
+                    body: "{$petugasName} baru saja mengirim laporan kunjungan untuk {$patientName}.",
+                    data: [
+                        'type' => 'visit_report_submitted',
+                        'severity' => 'danger',
+                        'assignment_id' => $assignment->id,
+                        'patient_id' => $assignment->patient_id,
+                        'action_url' => "/dashboard/kunjungan?assignment_id={$assignment->id}",
+                        'action_label' => 'Lihat Kunjungan',
+                    ],
+                ),
+                ['push', 'fcm'],
+            );
+        } catch (Throwable $e) {
+            Log::warning('VisitReportService: gagal mengirim notifikasi laporan kunjungan, laporan tetap tersimpan', [
+                'assignment_id' => $assignment->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Notifikasi KHUSUS rujukan (docs plan Fase 2/3, beda dari notifyReportSubmitted() di atas
+     * yang notifikasi biasa) -- dipicu HANYA kalau kader/nakes memilih 'dirujuk_puskesmas' di
+     * antara tindakan. Dikirim 3 kanal sekaligus (push+fcm+email) karena ini butuh RESPON CEPAT
+     * (pasien akan datang ke puskesmas, admin/PJ perlu tahu & konfirmasi) -- beda dari laporan
+     * kunjungan biasa yang cukup 2 kanal. Halaman /dashboard/rujukan (Fase 3, belum dibangun di
+     * perubahan ini) yang akan memicu alarm sfx saat polling menemukan baris baru -- notifikasi
+     * ini sendiri TIDAK memicu alarm, cuma penyalur data.
+     *
+     * Target puskesmas & try/catch mengikuti prinsip PERSIS sama seperti notifyReportSubmitted()
+     * di atas -- lihat docblock method itu.
+     */
+    private function notifyPasienDirujuk(VisitAssignment $assignment, VisitReport $report): void
+    {
+        try {
+            $petugasPuskesmasId = $assignment->kader?->puskesmas_id ?? $assignment->tenagaKesehatan?->puskesmas_id;
+            if ($petugasPuskesmasId === null) {
+                return;
+            }
+
+            $patientName = $assignment->patient?->nama ?? 'pasien';
+            $petugasName = $assignment->kader?->user?->name ?? $assignment->tenagaKesehatan?->user?->name ?? 'Petugas';
+
+            $this->notifyService->notify(
+                NotifiableTarget::rolesInPuskesmas(['admin_puskesmas', 'pj_prolanis'], $petugasPuskesmasId),
+                new NotificationPayload(
+                    type: 'pasien_dirujuk',
+                    title: 'Pasien Dirujuk ke Puskesmas',
+                    body: "{$petugasName} merujuk pasien {$patientName} ke puskesmas, menunggu konfirmasi.",
+                    data: [
+                        'type' => 'pasien_dirujuk',
+                        'severity' => 'danger',
+                        'assignment_id' => $assignment->id,
+                        'visit_report_id' => $report->id,
+                        'patient_id' => $assignment->patient_id,
+                        'action_url' => "/dashboard/kunjungan?assignment_id={$assignment->id}",
+                        'action_label' => 'Lihat Kunjungan',
+                    ],
+                ),
+                ['push', 'fcm', 'email'],
+            );
+        } catch (Throwable $e) {
+            Log::warning('VisitReportService: gagal mengirim notifikasi rujukan, laporan tetap tersimpan', [
+                'assignment_id' => $assignment->id,
+                'visit_report_id' => $report->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
