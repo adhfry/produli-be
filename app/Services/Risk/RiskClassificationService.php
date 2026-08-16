@@ -56,6 +56,10 @@ class RiskClassificationService
     /** Urutan keparahan dari yang paling ringan ke paling parah, dipakai buat ambil level terparah. */
     private const SEVERITY_ORDER = ['tidak_berisiko', 'ringan', 'sedang', 'berat'];
 
+    public function __construct(
+        private readonly SilakesReferenceRangeService $silakesReferenceRangeService,
+    ) {}
+
     /**
      * Hitung ulang klasifikasi risiko pasien dari hasil lab terbaru per parameter.
      * Tidak melempar exception untuk nilai non-numerik — parameter itu di-skip + di-log
@@ -100,26 +104,56 @@ class RiskClassificationService
             $value = (float) $result->value;
             $exceeded = false;
 
-            foreach ($thresholds->get($result->parameter, collect()) as $threshold) {
-                if (! $this->matchesThreshold($value, $threshold)) {
-                    continue;
+            // Presisi umur+gender dari SiLAKES (5 dari 6 parameter, BUKAN Creatinine -- lihat
+            // SilakesReferenceRangeService::PARAMETER_MAP) DICOBA DULU. null berarti tidak
+            // berlaku (parameter tidak dipetakan, gender/tgl_lahir pasien belum lengkap, atau
+            // reference_ranges_cache belum pernah sync/tidak punya band untuk kombinasi ini) --
+            // fallback ke RiskThreshold lama PERSIS seperti sebelum fitur ini ada, perilaku lama
+            // tidak berubah sama sekali untuk kasus itu.
+            $precisionBand = $this->resolvePrecisionBand($result->parameter, $value, $patient);
+
+            if ($precisionBand !== null) {
+                if ($precisionBand['severity_rank'] > 0) {
+                    $exceeded = true;
+
+                    $criteria[] = [
+                        'parameter' => $result->parameter,
+                        'value' => $value,
+                        'tanggal_periksa' => $result->tanggal_periksa?->toDateString(),
+                        'operator' => $precisionBand['operator'],
+                        'threshold_min' => $precisionBand['threshold_min'],
+                        'threshold_max' => $precisionBand['threshold_max'],
+                        'level' => 'sedang',
+                        'is_direct_classifier' => false,
+                        'source' => 'silakes_reference_ranges',
+                        'category_label' => $precisionBand['category_label'],
+                    ];
                 }
+                // severity_rank === 0 (kategori "Normal") -- TIDAK menambah baris criteria,
+                // sama seperti dulu saat tidak ada RiskThreshold yang match (parameter memang
+                // tidak exceeded, bukan dianggap "data tidak lengkap").
+            } else {
+                foreach ($thresholds->get($result->parameter, collect()) as $threshold) {
+                    if (! $this->matchesThreshold($value, $threshold)) {
+                        continue;
+                    }
 
-                $exceeded = true;
+                    $exceeded = true;
 
-                $criteria[] = [
-                    'parameter' => $result->parameter,
-                    'value' => $value,
-                    'tanggal_periksa' => $result->tanggal_periksa?->toDateString(),
-                    'operator' => $threshold->operator,
-                    'threshold_min' => $threshold->threshold_min,
-                    'threshold_max' => $threshold->threshold_max,
-                    'level' => $threshold->level,
-                    'is_direct_classifier' => $threshold->is_direct_classifier,
-                ];
+                    $criteria[] = [
+                        'parameter' => $result->parameter,
+                        'value' => $value,
+                        'tanggal_periksa' => $result->tanggal_periksa?->toDateString(),
+                        'operator' => $threshold->operator,
+                        'threshold_min' => $threshold->threshold_min,
+                        'threshold_max' => $threshold->threshold_max,
+                        'level' => $threshold->level,
+                        'is_direct_classifier' => $threshold->is_direct_classifier,
+                    ];
 
-                if ($threshold->is_direct_classifier) {
-                    $directClassifierLevels[] = $threshold->level;
+                    if ($threshold->is_direct_classifier) {
+                        $directClassifierLevels[] = $threshold->level;
+                    }
                 }
             }
 
@@ -493,5 +527,61 @@ class RiskClassificationService
             'between' => $value >= $threshold->threshold_min && $value <= $threshold->threshold_max,
             default => false,
         };
+    }
+
+    /**
+     * Coba klasifikasi presisi umur+gender via SilakesReferenceRangeService. null berarti
+     * TIDAK BERLAKU untuk kasus ini (parameter di luar PARAMETER_MAP -- termasuk Creatinine,
+     * data pasien belum lengkap, atau reference_ranges_cache belum sync/tidak punya band) --
+     * caller WAJIB fallback ke RiskThreshold lama untuk null, BUKAN menganggap "tidak exceeded".
+     *
+     * operator/threshold_min/threshold_max DITURUNKAN dari band yang match (bukan disimpan
+     * literal di reference_ranges_cache) supaya bentuknya PERSIS kompatibel dengan yang sudah
+     * dirender app/pages/dashboard/pasien/[id].vue (PRODULI frontend) untuk parameter dari
+     * RiskThreshold lama -- band upward-open (value_max null) -> '>'/'>=' ; band downward-open
+     * (value_min null) -> '<'/'<=' ; band dua sisi -> 'between'.
+     *
+     * @return array{severity_rank: int, operator: string, threshold_min: ?float, threshold_max: ?float, category_label: string}|null
+     */
+    private function resolvePrecisionBand(string $parameter, float $value, PatientsCache $patient): ?array
+    {
+        if (! $this->silakesReferenceRangeService->isMapped($parameter)) {
+            return null;
+        }
+
+        if ($patient->gender === null || $patient->tgl_lahir === null) {
+            return null;
+        }
+
+        $parameterKey = $this->silakesReferenceRangeService->resolveParameterKey($parameter);
+
+        $band = $this->silakesReferenceRangeService->classify(
+            $parameterKey,
+            $value,
+            $patient->gender,
+            $patient->tgl_lahir,
+        );
+
+        if ($band === null) {
+            return null;
+        }
+
+        $hasMin = $band['value_min'] !== null;
+        $hasMax = $band['value_max'] !== null;
+
+        [$operator, $thresholdMin, $thresholdMax] = match (true) {
+            $hasMin && $hasMax => ['between', $band['value_min'], $band['value_max']],
+            $hasMin => [$band['min_inclusive'] ? '>=' : '>', $band['value_min'], null],
+            $hasMax => [$band['max_inclusive'] ? '<=' : '<', $band['value_max'], null],
+            default => ['>', null, null],
+        };
+
+        return [
+            'severity_rank' => $band['severity_rank'],
+            'operator' => $operator,
+            'threshold_min' => $thresholdMin,
+            'threshold_max' => $thresholdMax,
+            'category_label' => $band['category_label'],
+        ];
     }
 }

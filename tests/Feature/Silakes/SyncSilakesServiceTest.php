@@ -84,6 +84,25 @@ class SyncSilakesServiceTest extends TestCase
                 ],
                 'meta' => ['per_page' => 200, 'has_more' => false, 'next_cursor' => null],
             ], 200),
+            // Wajib difake secara eksplisit (bukan diandalkan lolos ke Http::fake() default stray-
+            // response kosong) -- SyncSilakesService::run() SEKARANG selalu memanggil ini juga.
+            // Tanpa stub eksplisit di sini, test tanpa sadar bisa memukul server SiLAKES lokal
+            // sungguhan kalau kebetulan sedang jalan di localhost:8000 (SILAKES_BASE_URL dev) --
+            // bukan hermetic, bug nyata yang ketahuan saat menambahkan fitur ini.
+            '*/api/v1/integration/reference-ranges*' => Http::response([
+                'status' => 'success',
+                'message' => 'ok',
+                'data' => [
+                    'aliases' => ['gula darah puasa' => 'gula_darah_puasa'],
+                    'tensi_alias' => 'tekanan darah',
+                    'ranges' => [
+                        'gula_darah_puasa' => [
+                            ['id' => 1, 'parameter_key' => 'gula_darah_puasa', 'gender' => null, 'age_min_years' => null, 'age_max_years' => null, 'age_min_days' => null, 'age_max_days' => null, 'value_min' => null, 'value_max' => 130, 'min_inclusive' => false, 'max_inclusive' => false, 'category' => 'normal', 'category_label' => 'Normal', 'severity_rank' => 0, 'sort_order' => 10],
+                            ['id' => 2, 'parameter_key' => 'gula_darah_puasa', 'gender' => null, 'age_min_years' => null, 'age_max_years' => null, 'age_min_days' => null, 'age_max_days' => null, 'value_min' => 130, 'value_max' => null, 'min_inclusive' => true, 'max_inclusive' => true, 'category' => 'high', 'category_label' => 'Tinggi', 'severity_rank' => 1, 'sort_order' => 11],
+                        ],
+                    ],
+                ],
+            ], 200),
         ]);
     }
 
@@ -190,12 +209,18 @@ class SyncSilakesServiceTest extends TestCase
                 'status' => 'success', 'message' => 'ok', 'data' => [],
                 'meta' => ['per_page' => 200, 'has_more' => false, 'next_cursor' => null],
             ], 200),
+            '*/api/v1/integration/reference-ranges*' => Http::response([
+                'status' => 'success', 'message' => 'ok',
+                'data' => ['aliases' => [], 'tensi_alias' => 'tekanan darah', 'ranges' => []],
+            ], 200),
         ]);
 
         app(SyncSilakesService::class)->run();
 
         // Cuma antara 2 halaman patients -- TIDAK sebelum halaman pertama, TIDAK setelah
         // halaman terakhir (has_more=false), dan lab-results di sini cuma 1 halaman (tanpa jeda).
+        // reference-ranges TIDAK dipaginasi sama sekali (satu kali fetch penuh), jadi tidak
+        // menyumbang jeda apa pun ke hitungan ini.
         Sleep::assertSlept(fn ($duration) => $duration->totalMilliseconds === 1200.0, times: 1);
     }
 
@@ -211,5 +236,25 @@ class SyncSilakesServiceTest extends TestCase
 
         $this->assertSame($patientsBefore, PatientsCache::count());
         $this->assertSame($labResultsBefore, LabResultCache::count());
+    }
+
+    public function test_sync_reference_ranges_mengisi_cache_dan_idempotent(): void
+    {
+        $this->fakePatientsAndLabResults();
+
+        $count = app(SyncSilakesService::class)->syncReferenceRanges();
+
+        $this->assertSame(2, $count);
+        $this->assertSame(2, \App\Models\ReferenceRangeCache::count());
+
+        $high = \App\Models\ReferenceRangeCache::where('category', 'high')->first();
+        $this->assertSame('gula_darah_puasa', $high->parameter_key);
+        $this->assertSame(130.0, $high->value_min);
+        $this->assertTrue($high->min_inclusive);
+        $this->assertSame(1, $high->severity_rank);
+
+        // Refresh penuh (truncate+reinsert), bukan delta -- re-run tidak menduplikasi baris.
+        app(SyncSilakesService::class)->syncReferenceRanges();
+        $this->assertSame(2, \App\Models\ReferenceRangeCache::count());
     }
 }

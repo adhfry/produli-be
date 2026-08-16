@@ -7,11 +7,29 @@ use Illuminate\Database\Seeder;
 
 /**
  * Nilai rujukan klinis resmi (docs/planning/02 §3, disediakan langsung oleh operator, bukan
- * hasil tebakan) -- 1 baris per parameter, SEMUA strict greater-than (bukan >=), KECUALI
- * Creatinine (lihat DIRECT_CLASSIFIERS di bawah). Nama `parameter` HARUS persis sama dengan
- * kolom lab_results_cache.parameter dari SiLAKES asli (dikonfirmasi dari data sync nyata:
- * "Gula Darah Puasa" bukan singkatan "GDP"; "Cholesterol" bukan "Cholesterol Total"; "LDL"
- * bukan "Cholesterol LDL" -- lihat riwayat percakapan).
+ * hasil tebakan) -- 1 baris per parameter, strict greater-than (>) secara default, KECUALI
+ * Gula Darah Puasa (>=, lihat catatan di bawah) dan Creatinine (lihat DIRECT_CLASSIFIERS di
+ * bawah). Nama `parameter` HARUS persis sama dengan kolom lab_results_cache.parameter dari
+ * SiLAKES asli (dikonfirmasi dari data sync nyata: "Gula Darah Puasa" bukan singkatan "GDP";
+ * "Cholesterol" bukan "Cholesterol Total"; "LDL" bukan "Cholesterol LDL" -- lihat riwayat
+ * percakapan).
+ *
+ * PERAN BARU (integrasi presisi SiLAKES, lihat App\Services\Risk\SilakesReferenceRangeService):
+ * 5 baris NILAI_RUJUKAN di bawah (semua kecuali Creatinine) sekarang jadi FALLBACK, bukan lagi
+ * sumber utama -- RiskClassificationService::resolvePrecisionBand() mencoba
+ * reference_ranges_cache (disinkron dari SiLAKES, sadar umur+gender) LEBIH DULU, baris di sini
+ * cuma dipakai kalau data pasien belum lengkap (gender/tgl_lahir kosong) atau cache belum
+ * pernah sync. TETAP HARUS di-seed (jangan dihapus) supaya fallback itu punya sesuatu untuk
+ * dipakai, bukan diam-diam gagal total.
+ *
+ * Gula Darah Puasa: threshold_min 120->130, operator '>=' (bukan default '>') -- selaras
+ * dengan keputusan eksplisit user saat menyamakan skema nilai rujukan SiLAKES/PRODULI: "Normal
+ * jika <130, Tinggi jika >=130". Cutoff tunggal 130 ini SENGAJA berbeda dari 3-tier diagnostik
+ * ADA 2026 (Normal <100, Prediabetes 100-125, Diabetes Range >=126) yang dulu dipakai
+ * SiLAKES::reference_ranges untuk badge indikasi per-parameter di laporan lab -- band SiLAKES
+ * untuk gula_darah_puasa SUDAH diubah mengikuti cutoff 130 yang sama (lihat
+ * ReferenceRangeSeeder::gulaDarahPuasa() di repo SiLAKES), supaya fallback di sini dan jalur
+ * presisi menghasilkan keputusan identik untuk kasus umum (semua umur, tidak dibedakan gender).
  *
  * Kolom `level` di NILAI_RUJUKAN (5 parameter, is_direct_classifier=false) SENGAJA cuma label
  * metadata untuk criteria_snapshot (audit) -- RiskClassificationService::determineLevel()
@@ -30,10 +48,10 @@ use Illuminate\Database\Seeder;
 class RiskThresholdSeeder extends Seeder
 {
     /**
-     * @var array<int, array{parameter: string, threshold_min: float}>
+     * @var array<int, array{parameter: string, threshold_min: float, operator?: string}>
      */
     private const NILAI_RUJUKAN = [
-        ['parameter' => 'Gula Darah Puasa', 'threshold_min' => 120],
+        ['parameter' => 'Gula Darah Puasa', 'threshold_min' => 130, 'operator' => '>='],
         ['parameter' => 'Cholesterol', 'threshold_min' => 200],
         ['parameter' => 'Trigliserida', 'threshold_min' => 140],
         ['parameter' => 'LDL', 'threshold_min' => 130],
@@ -54,7 +72,7 @@ class RiskThresholdSeeder extends Seeder
             RiskThreshold::updateOrCreate(
                 ['parameter' => $row['parameter'], 'level' => 'sedang'],
                 [
-                    'operator' => '>',
+                    'operator' => $row['operator'] ?? '>',
                     'is_direct_classifier' => false,
                     'threshold_min' => $row['threshold_min'],
                     'threshold_max' => null,
