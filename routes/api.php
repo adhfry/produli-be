@@ -156,6 +156,7 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // SETELAH 'bulk'/'monitoring' di atas -- kalau tidak, route-model-binding mencoba mencocokkan
     // itu sebagai id VisitAssignment (pola sama seperti 'patients/search-nik' vs 'patients/{patient}').
     Route::get('visit-assignments/{visitAssignment}', [VisitAssignmentController::class, 'show']);
+    Route::patch('visit-assignments/{visitAssignment}/cancel', [VisitAssignmentController::class, 'cancel']);
 
     Route::post('visit-reports', [VisitReportController::class, 'store']);
     Route::patch('visit-reports/{visitReport}/accept', [VisitReportController::class, 'accept']);
@@ -167,6 +168,7 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('staff', [StaffController::class, 'index']);
     Route::post('staff', [StaffController::class, 'store']);
     Route::patch('staff/{user}', [StaffController::class, 'update']);
+    Route::patch('staff/{user}/status', [StaffController::class, 'setStatus']);
     Route::delete('staff/{user}', [StaffController::class, 'destroy']);
     // super_admin saja -- lihat docblock StaffController::resetPassword().
     Route::post('staff/{user}/reset-password', [StaffController::class, 'resetPassword']);

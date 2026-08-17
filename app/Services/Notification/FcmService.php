@@ -41,7 +41,7 @@ class FcmService
     /**
      * @return int  jumlah token yang berhasil dikirimi
      */
-    public function sendToUser(User $user, string $title, string $body, array $data = []): int
+    public function sendToUser(User $user, string $title, string $body, array $data = [], ?string $imageUrl = null): int
     {
         $tokens = $user->fcmTokens()->pluck('token', 'id');
 
@@ -49,13 +49,15 @@ class FcmService
             return 0;
         }
 
-        return $this->sendToTokens($tokens, $title, $body, $data);
+        return $this->sendToTokens($tokens, $title, $body, $data, $imageUrl);
     }
 
     /**
      * @param  \Illuminate\Support\Collection<int, string>  $tokensById  keyed by fcm_tokens.id, supaya token invalid bisa dihapus tepat sasaran
+     * @param  ?string  $imageUrl  Thumbnail bukti foto lapangan (permintaan eksplisit user, VisitReportService::notifyReportSubmitted)
+     *                              -- diteruskan apa adanya ke `notification.image` FCM, null-kan saja kalau payload tidak punya foto (bukan tiap notifikasi punya gambar).
      */
-    private function sendToTokens($tokensById, string $title, string $body, array $data = []): int
+    private function sendToTokens($tokensById, string $title, string $body, array $data = [], ?string $imageUrl = null): int
     {
         if (! $this->isConfigured()) {
             Log::warning('FcmService: FIREBASE_CREDENTIALS belum diisi, push notification dilewati', [
@@ -66,7 +68,7 @@ class FcmService
         }
 
         $message = CloudMessage::new()
-            ->withNotification(FcmNotification::create($title, $body))
+            ->withNotification(FcmNotification::create($title, $body, $imageUrl))
             ->withData(array_map('strval', $data));
 
         try {

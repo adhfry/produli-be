@@ -149,4 +149,23 @@ class VisitAssignmentController extends Controller
             'failed' => $result['failed'],
         ], sprintf('%d assignment berhasil dibuat, %d gagal.', count($result['created']), count($result['failed'])), $code);
     }
+
+    /**
+     * Batalkan penugasan (keputusan Kepala Dinas -- lihat VisitAssignmentPolicy::cancel()) --
+     * admin_puskesmas/pj_prolanis sepuskesmas boleh langsung, TANPA approval super_admin. Alasan
+     * pembatalan opsional (murni informatif, ikut dikirim ke notifikasi kader/nakes yang dibatalkan).
+     */
+    public function cancel(Request $request, VisitAssignment $visitAssignment): JsonResponse
+    {
+        $this->authorize('cancel', $visitAssignment);
+
+        $validated = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $cancelled = $this->service->cancel($visitAssignment, $request->user(), $validated['reason'] ?? null);
+        $cancelled->load(['patient', 'kader.user', 'tenagaKesehatan.user', 'assignedBy', 'puskesmasSnapshot', 'companions.kader.user']);
+
+        return ApiResponse::success(new VisitAssignmentResource($cancelled), 'Penugasan berhasil dibatalkan');
+    }
 }

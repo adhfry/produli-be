@@ -57,6 +57,19 @@ class AuthController extends Controller
             ]);
         }
 
+        // status_aktif TIDAK dicek di kondisi di atas (bareng password) -- pesan generik "email
+        // atau password salah" untuk kredensial salah, pesan SPESIFIK ini kalau kredensialnya
+        // BENAR tapi stafnya dinonaktifkan (StaffService::setActive()), supaya staf yang
+        // dinonaktifkan tahu PERSIS kenapa tidak bisa masuk (bukan menduga typo password sendiri).
+        // Cuma relevan untuk staf -- kader/tenaga_kesehatan TIDAK PERNAH menyentuh kolom ini
+        // (lihat User::$fillable), status_aktif mereka ada di tabel Kader/TenagaKesehatan sendiri
+        // dan sengaja tidak memblokir login (KaderService::setActive() docblock).
+        if (! $user->status_aktif) {
+            throw ValidationException::withMessages([
+                'email' => ['Akun Anda telah dinonaktifkan. Hubungi administrator.'],
+            ]);
+        }
+
         $pair = $this->tokens->issue($user, $request->string('device_id'), $request->string('device_name') ?: null);
 
         return $this->tokenResponse($pair, $user, 'Login berhasil');
@@ -124,6 +137,15 @@ class AuthController extends Controller
         }
 
         $user = User::findOrFail($userId);
+
+        // Gerbang sama seperti login() email/password -- jangan sampai staf yang dinonaktifkan
+        // bisa masuk lewat jalur Google SSO padahal ditolak di jalur biasa.
+        if (! $user->status_aktif) {
+            throw ValidationException::withMessages([
+                'email' => ['Akun Anda telah dinonaktifkan. Hubungi administrator.'],
+            ]);
+        }
+
         $pair = $this->tokens->issue($user, $data['device_id'], $data['device_name'] ?? null);
 
         return $this->tokenResponse($pair, $user, 'Login Google berhasil');

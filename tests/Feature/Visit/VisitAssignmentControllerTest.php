@@ -15,9 +15,11 @@ use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Models\VisitAssignmentCompanion;
 use App\Models\VisitReport;
+use App\Notifications\GenericDatabaseNotification;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -783,6 +785,166 @@ class VisitAssignmentControllerTest extends TestCase
         $this->assertSame('Ambunten Timur', $dua['desa_nama']);
         $this->assertSame(1, $dua['total']);
         $this->assertSame(1, $dua['pending']);
+    }
+
+    // ---- Cancel (keputusan Kepala Dinas: admin_puskesmas/pj_prolanis boleh langsung batalkan) ----
+
+    public function test_pj_prolanis_membatalkan_assignment_pending_sendiri(): void
+    {
+        Notification::fake();
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 51);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $pj->id,
+            'scheduled_date' => now()->addDay()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($pj);
+
+        $response = $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel", [
+            'reason' => 'Salah pilih kader, seharusnya kader lain.',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame('cancelled', $assignment->fresh()->status);
+    }
+
+    public function test_admin_puskesmas_membatalkan_assignment_in_progress(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 52);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'in_progress', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertOk();
+        $this->assertSame('cancelled', $assignment->fresh()->status);
+    }
+
+    public function test_batalkan_assignment_yang_sudah_completed_ditolak(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 53);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'completed', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertStatus(422);
+        $this->assertSame('completed', $assignment->fresh()->status);
+    }
+
+    public function test_batalkan_assignment_yang_sudah_cancelled_ditolak(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 54);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'cancelled', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertStatus(422);
+    }
+
+    public function test_kader_ditolak_membatalkan_assignment_sendiri(): void
+    {
+        $patient = $this->makePatient($this->puskesmasA, 55);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $this->kaderA->user_id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($this->kaderA->user);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertStatus(403);
+        $this->assertSame('pending', $assignment->fresh()->status);
+    }
+
+    public function test_super_admin_ditolak_membatalkan_assignment(): void
+    {
+        // Keputusan Kepala Dinas: pembatalan penugasan itu wewenang OPERASIONAL puskesmas
+        // (admin_puskesmas/pj_prolanis), bukan super_admin -- gerbang sama persis dengan create().
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 56);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertStatus(403);
+    }
+
+    public function test_admin_puskesmas_ditolak_membatalkan_assignment_beda_puskesmas(): void
+    {
+        $adminA = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $kaderB = $this->makeKader($this->puskesmasB);
+        $patientB = $this->makePatient($this->puskesmasB, 57);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patientB->id, 'kader_id' => $kaderB->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasB->id,
+        ]);
+
+        Sanctum::actingAs($adminA);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertStatus(403);
+        $this->assertSame('pending', $assignment->fresh()->status);
+    }
+
+    public function test_batalkan_assignment_kirim_notifikasi_ke_kader_yang_ditugaskan(): void
+    {
+        Notification::fake();
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 58);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $pj->id,
+            'scheduled_date' => now()->addDay()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($pj);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel", ['reason' => 'Typo pasien.'])->assertOk();
+
+        Notification::assertSentTo(
+            $this->kaderA->user,
+            GenericDatabaseNotification::class,
+            fn ($notification) => $notification->toDatabase($this->kaderA->user)['type'] === 'visit_assignment_cancelled'
+        );
+    }
+
+    public function test_batalkan_assignment_untuk_tenaga_kesehatan_kirim_notifikasi(): void
+    {
+        Notification::fake();
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $nakes = $this->makeTenagaKesehatan($this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 59);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'tenaga_kesehatan_id' => $nakes->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->patchJson("/api/v1/visit-assignments/{$assignment->id}/cancel")->assertOk();
+
+        Notification::assertSentTo($nakes->user, GenericDatabaseNotification::class);
     }
 
     private function makeKader(Puskesmas $puskesmas, bool $aktif = true): Kader

@@ -3,9 +3,14 @@
 namespace Tests\Feature\Staff;
 
 use App\Mail\AccountActivationMail;
+use App\Mail\AdminPasswordResetMail;
 use App\Models\Kabupaten;
+use App\Models\Kader;
+use App\Models\PatientsCache;
 use App\Models\Puskesmas;
+use App\Models\RefreshToken;
 use App\Models\User;
+use App\Models\VisitAssignment;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
@@ -378,7 +383,7 @@ class StaffControllerTest extends TestCase
         $superAdmin = $this->makeSuperAdmin();
         $dualUser = $this->makeAdminPuskesmas();
         $dualUser->assignRole('kader');
-        \App\Models\Kader::create(['user_id' => $dualUser->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true, 'no_hp' => '0800']);
+        Kader::create(['user_id' => $dualUser->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true, 'no_hp' => '0800']);
 
         Sanctum::actingAs($superAdmin);
 
@@ -403,6 +408,120 @@ class StaffControllerTest extends TestCase
         $this->assertNotNull(User::find($pjLain->id));
     }
 
+    public function test_staf_yang_sudah_pernah_menugaskan_kunjungan_tidak_bisa_dihapus_permanen(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+        $patient = PatientsCache::create([
+            'external_patient_id' => 900001,
+            'nik_hash' => 'HASH-900001',
+            'nama' => 'Pasien Uji',
+            'wilayah_status' => 'unknown',
+            'puskesmas_id' => $this->puskesmas->id,
+        ]);
+        $kader = Kader::create(['user_id' => $this->makeAdminPuskesmas()->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true, 'no_hp' => '0800']);
+        VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $kader->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'ringan',
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $this->deleteJson("/api/v1/staff/{$admin->id}")->assertStatus(422);
+        $this->assertNotNull(User::find($admin->id));
+    }
+
+    // ---- Aktifkan/Nonaktifkan (setStatus) ----
+
+    public function test_super_admin_bisa_nonaktifkan_lalu_aktifkan_lagi_staf(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+        // Instance factory belum refresh dari DB (default kolom cuma berlaku di level DB, tidak
+        // otomatis terbaca balik ke instance in-memory) -- fresh() dulu supaya assert akurat.
+        $this->assertTrue($admin->fresh()->status_aktif);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->patchJson("/api/v1/staff/{$admin->id}/status", ['status_aktif' => false]);
+        $response->assertOk();
+        $this->assertFalse($admin->fresh()->status_aktif);
+
+        $this->patchJson("/api/v1/staff/{$admin->id}/status", ['status_aktif' => true])->assertOk();
+        $this->assertTrue($admin->fresh()->status_aktif);
+    }
+
+    public function test_nonaktifkan_staf_langsung_revoke_semua_refresh_token_aktifnya(): void
+    {
+        // Keputusan Kepala Dinas: staf nonaktif tidak boleh login lagi (AuthController::login()/
+        // AuthTokenService::refresh()) -- tapi sesi yang SUDAH berjalan sebelum dinonaktifkan
+        // juga harus mati SEKARANG, bukan menunggu refresh token itu kedaluwarsa sendiri
+        // (30 hari). StaffService::setActive() harus langsung revokeAllForUser().
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+
+        RefreshToken::create([
+            'user_id' => $admin->id, 'token_hash' => hash('sha256', 'raw-token-aktif'),
+            'device_id' => 'device-A', 'expires_at' => now()->addDays(30),
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+        $this->patchJson("/api/v1/staff/{$admin->id}/status", ['status_aktif' => false])->assertOk();
+
+        $this->assertDatabaseMissing('refresh_tokens', ['user_id' => $admin->id, 'revoked_at' => null]);
+    }
+
+    public function test_nonaktifkan_staf_tidak_menghapus_riwayat_assigned_by(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+        $patient = PatientsCache::create([
+            'external_patient_id' => 900002,
+            'nik_hash' => 'HASH-900002',
+            'nama' => 'Pasien Uji 2',
+            'wilayah_status' => 'unknown',
+            'puskesmas_id' => $this->puskesmas->id,
+        ]);
+        $kader = Kader::create(['user_id' => $this->makeAdminPuskesmas()->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true, 'no_hp' => '0800']);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $kader->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'ringan',
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $this->patchJson("/api/v1/staff/{$admin->id}/status", ['status_aktif' => false])->assertOk();
+
+        $this->assertFalse($admin->fresh()->status_aktif);
+        $this->assertSame($admin->id, $assignment->fresh()->assigned_by);
+    }
+
+    public function test_tidak_bisa_nonaktifkan_diri_sendiri(): void
+    {
+        $superAdmin = $this->makeSuperAdmin();
+        Sanctum::actingAs($superAdmin);
+
+        $this->patchJson("/api/v1/staff/{$superAdmin->id}/status", ['status_aktif' => false])->assertStatus(422);
+        $this->assertTrue($superAdmin->fresh()->status_aktif);
+    }
+
+    public function test_tidak_bisa_nonaktifkan_satu_satunya_super_admin_aktif(): void
+    {
+        $superAdminAktif = $this->makeSuperAdmin();
+        // Sudah nonaktif dari awal (mis. sesi lama yang belum expired) -- dipakai sebagai actor
+        // di sini murni supaya guard "tidak bisa nonaktifkan diri sendiri" tidak ikut memblokir,
+        // isolasi pengujian guard "satu-satunya super_admin AKTIF" secara spesifik.
+        $superAdminNonaktifLain = $this->makeSuperAdmin();
+        $superAdminNonaktifLain->update(['status_aktif' => false]);
+
+        Sanctum::actingAs($superAdminNonaktifLain);
+
+        $this->patchJson("/api/v1/staff/{$superAdminAktif->id}/status", ['status_aktif' => false])->assertStatus(422);
+        $this->assertTrue($superAdminAktif->fresh()->status_aktif);
+    }
+
     // ---- Reset password ----
 
     public function test_super_admin_bisa_reset_password_staf(): void
@@ -420,7 +539,7 @@ class StaffControllerTest extends TestCase
         $admin->refresh();
         $this->assertNotSame($oldHash, $admin->password);
         $this->assertTrue($admin->must_change_password);
-        Mail::assertQueued(\App\Mail\AdminPasswordResetMail::class, fn ($mail) => $mail->hasTo($admin->email));
+        Mail::assertQueued(AdminPasswordResetMail::class, fn ($mail) => $mail->hasTo($admin->email));
     }
 
     public function test_admin_puskesmas_tidak_bisa_reset_password_staf(): void

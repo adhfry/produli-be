@@ -96,6 +96,23 @@ class VisitAssignmentPolicy
         return false;
     }
 
+    /**
+     * Batalkan penugasan (keputusan Kepala Dinas: salah tugas/typo kader/pasien -- admin_puskesmas
+     * atau pj_prolanis boleh LANGSUNG membatalkan sendiri, TANPA perlu validasi/approval
+     * super_admin, cukup modal konfirmasi di frontend). Gerbang SAMA PERSIS dengan create()
+     * (super_admin SENGAJA TIDAK ikut -- ini keputusan operasional puskesmas, bukan wewenang
+     * administrator kabupaten, lihat docblock create()). VisitAssignmentService::cancel() sendiri
+     * yang menolak kalau assignment sudah completed/cancelled (tidak ada gunanya dibatalkan lagi).
+     */
+    public function cancel(User $user, VisitAssignment $assignment): bool
+    {
+        if (! $user->hasAnyRole(['admin_puskesmas', 'pj_prolanis'])) {
+            return false;
+        }
+
+        return $this->sharesPuskesmas($user, $assignment->puskesmas_id_snapshot);
+    }
+
     public function delete(User $user, VisitAssignment $assignment): bool
     {
         return false;

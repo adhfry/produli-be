@@ -105,17 +105,23 @@ class SyncSilakesService
 
             // Broadcast (revisi Bu Kadis) -- 'push' saja (in-app), bukan email/WA ke SEMUA user
             // tiap sync (jalan dailyAt('02:00') + tiap klik manual, terlalu sering untuk kanal
-            // yang lebih intrusif). Cuma untuk sync yang BENAR-BENAR sukses (bukan branch catch).
-            $this->notifyService->notify(
-                NotifiableTarget::broadcast(),
-                new NotificationPayload(
-                    type: 'silakes_sync_completed',
-                    title: 'Sinkronisasi SiLAKES Selesai',
-                    body: "{$result['patients_synced']} pasien, {$result['lab_results_synced']} hasil lab tersinkron.",
-                    data: array_merge(['type' => 'silakes_sync_completed'], $result),
-                ),
-                ['push'],
-            );
+            // yang lebih intrusif). Cuma untuk sync yang BENAR-BENAR sukses (bukan branch catch)
+            // DAN benar-benar ada perubahan -- sync yang tidak menemukan apa pun (0 pasien, 0
+            // hasil lab, mis. dipanggil manual berkali-kali berturut-turut tanpa data baru di
+            // SiLAKES) TIDAK PERNAH bikin notifikasi "Sinkronisasi Selesai" kosong, keluhan nyata
+            // user: notifikasi berulang padahal tidak ada yang disinkron.
+            if ($result['patients_synced'] > 0 || $result['lab_results_synced'] > 0) {
+                $this->notifyService->notify(
+                    NotifiableTarget::broadcast(),
+                    new NotificationPayload(
+                        type: 'silakes_sync_completed',
+                        title: 'Sinkronisasi SiLAKES Selesai',
+                        body: "{$result['patients_synced']} pasien, {$result['lab_results_synced']} hasil lab tersinkron.",
+                        data: array_merge(['type' => 'silakes_sync_completed'], $result),
+                    ),
+                    ['push'],
+                );
+            }
 
             return $result;
         } catch (Throwable $e) {

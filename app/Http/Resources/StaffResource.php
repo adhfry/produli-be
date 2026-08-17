@@ -18,6 +18,7 @@ class StaffResource extends JsonResource
             'email' => $this->email,
             'no_hp' => $this->no_hp,
             'roles' => $this->getRoleNames(),
+            'status_aktif' => $this->status_aktif,
             'puskesmas' => $this->whenLoaded('puskesmas', fn () => $this->puskesmas ? [
                 'id' => $this->puskesmas->id,
                 'nama' => $this->puskesmas->nama,

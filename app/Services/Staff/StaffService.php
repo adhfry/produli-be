@@ -3,7 +3,9 @@
 namespace App\Services\Staff;
 
 use App\Models\User;
+use App\Models\VisitAssignment;
 use App\Services\Auth\AccountActivationService;
+use App\Services\Auth\AuthTokenService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
@@ -25,7 +27,10 @@ use Illuminate\Validation\ValidationException;
  */
 class StaffService
 {
-    public function __construct(private readonly AccountActivationService $accountActivationService) {}
+    public function __construct(
+        private readonly AccountActivationService $accountActivationService,
+        private readonly AuthTokenService $authTokenService,
+    ) {}
 
     /**
      * @param  array{name: string, email: string, no_hp: string, puskesmas_id?: ?int, role: string}  $data
@@ -113,10 +118,13 @@ class StaffService
     }
 
     /**
-     * Hapus staf -- BEDA dari kader/tenaga_kesehatan (User bukan model domain PRODULI sendiri,
-     * tidak ada riwayat kunjungan yang menempel langsung ke role staf). Melepas role
-     * super_admin/admin_puskesmas/pj_prolanis dari $target; kalau sesudahnya $target tidak
-     * punya role apa pun lagi (bukan dual-role kader/tenaga_kesehatan), akun User ikut dihapus.
+     * Hapus PERMANEN staf -- BEDA dari setActive(false) (nonaktifkan, riwayat tetap tersimpan).
+     * SEKARANG diblokir kalau $target pernah jadi assigned_by di visit_assignments (riwayat
+     * "siapa yang menugaskan" harus tetap ada, sama alasan dengan KaderService::delete()
+     * menolak kader yang punya riwayat kunjungan) -- sebelumnya TIDAK dicek sama sekali, hard
+     * delete staf lama diam-diam melepas jejak audit itu (visit_assignments.assigned_by
+     * nullOnDelete() di migration, jadi tidak error di DB, cuma datanya hilang tanpa jejak).
+     * Kalau sudah punya riwayat, nonaktifkan saja lewat setActive().
      */
     public function delete(User $actor, User $target): void
     {
@@ -134,6 +142,12 @@ class StaffService
             ]);
         }
 
+        if (VisitAssignment::where('assigned_by', $target->id)->exists()) {
+            throw ValidationException::withMessages([
+                'staff' => ['Staf ini sudah pernah menugaskan kunjungan, tidak bisa dihapus permanen -- nonaktifkan saja supaya riwayatnya tetap tersimpan.'],
+            ]);
+        }
+
         DB::transaction(function () use ($target) {
             $target->removeRole('super_admin');
             $target->removeRole('admin_puskesmas');
@@ -143,6 +157,45 @@ class StaffService
                 $target->delete();
             }
         });
+    }
+
+    /**
+     * Aktifkan/nonaktifkan staf (pola sama persis KaderService::setActive()/TenagaKesehatanService::
+     * setActive()) -- BEDA dari delete(): riwayat assigned_by di visit_assignments TETAP UTUH,
+     * cuma menghentikan kemampuan staf ini bertindak lagi (dipakai saat staf keluar/pindah tapi
+     * sudah punya riwayat, jadi tidak bisa dihapus permanen lewat delete() di atas).
+     */
+    public function setActive(User $actor, User $target, bool $active): User
+    {
+        if ($actor->id === $target->id && ! $active) {
+            throw ValidationException::withMessages([
+                'staff' => ['Anda tidak bisa menonaktifkan akun Anda sendiri.'],
+            ]);
+        }
+
+        $this->ensureCanManage($actor, $target);
+
+        if (! $active && $target->hasRole('super_admin') && User::role('super_admin')->where('status_aktif', true)->count() <= 1) {
+            throw ValidationException::withMessages([
+                'staff' => ['Tidak bisa menonaktifkan satu-satunya akun super_admin yang masih aktif.'],
+            ]);
+        }
+
+        $target->update(['status_aktif' => $active]);
+
+        // Nonaktifkan sekarang benar-benar mencabut akses (keputusan Kepala Dinas -- staf
+        // punya akses dashboard/data pasien lebih luas dari kader lapangan, beda dari
+        // KaderService::setActive() yang cuma menghentikan penugasan BARU) -- login() dan
+        // AuthTokenService::refresh() sama-sama menolak user dengan status_aktif=false, TAPI
+        // access token Sanctum yang SUDAH terbit (berlaku sampai config('sanctum.expiration')
+        // menit) tetap valid sampai request refresh berikutnya kalau tidak di-revoke di sini.
+        // Revoke semua refresh token supaya sesi yang sedang berjalan mati secepatnya, bukan
+        // menunggu access token itu kedaluwarsa sendiri.
+        if (! $active) {
+            $this->authTokenService->revokeAllForUser($target->id);
+        }
+
+        return $target->fresh();
     }
 
     /**

@@ -30,6 +30,10 @@ class User extends Authenticatable
         'password',
         'google_id',
         'puskesmas_id',
+        // Cuma relevan utk staf (admin_puskesmas/pj_prolanis/super_admin) -- kader/tenaga_kesehatan
+        // punya status_aktif sendiri di tabelnya masing-masing, kolom ini TIDAK dipakai untuk itu
+        // (lihat StaffService::setActive()).
+        'status_aktif',
         'no_hp',
         // Profil staf non-kader (admin_puskesmas/pj_prolanis) -- diisi saat onboarding step
         // "Lengkapi Profil", field SAMA dengan tabel kader tapi utk role yang tidak punya baris
@@ -87,6 +91,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'tgl_lahir' => 'date',
+            'status_aktif' => 'boolean',
             'must_change_password' => 'boolean',
             'email_notifications_enabled' => 'boolean',
             'onboarding_completed_at' => 'datetime',

@@ -10,8 +10,10 @@ use App\Models\TenagaKesehatan;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Models\VisitReport;
+use App\Notifications\GenericDatabaseNotification;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Notification;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -207,6 +209,7 @@ class RujukanControllerTest extends TestCase
 
     public function test_admin_puskesmas_berhasil_konfirmasi_rujukan(): void
     {
+        Notification::fake();
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
         $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA);
 
@@ -216,10 +219,20 @@ class RujukanControllerTest extends TestCase
 
         $response->assertOk();
         $this->assertSame('dikonfirmasi', $rujukan->fresh()->rujukan_status);
+
+        // GAP yang diperbaiki: sebelumnya konfirmasi/batalkan TIDAK PERNAH menotif balik kader/
+        // nakes pelapor -- mereka cuma tahu lewat cek manual, menggagalkan tujuan alur rujukan.
+        Notification::assertSentTo(
+            $this->kaderA->user,
+            GenericDatabaseNotification::class,
+            fn ($notification) => $notification->toDatabase($this->kaderA->user)['type'] === 'rujukan_dikonfirmasi'
+                && $notification->toDatabase($this->kaderA->user)['rujukan_status'] === 'dikonfirmasi'
+        );
     }
 
     public function test_pj_prolanis_berhasil_membatalkan_rujukan(): void
     {
+        Notification::fake();
         $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
         $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA);
 
@@ -229,6 +242,13 @@ class RujukanControllerTest extends TestCase
 
         $response->assertOk();
         $this->assertSame('dibatalkan', $rujukan->fresh()->rujukan_status);
+
+        Notification::assertSentTo(
+            $this->kaderA->user,
+            GenericDatabaseNotification::class,
+            fn ($notification) => $notification->toDatabase($this->kaderA->user)['type'] === 'rujukan_dikonfirmasi'
+                && $notification->toDatabase($this->kaderA->user)['rujukan_status'] === 'dibatalkan'
+        );
     }
 
     public function test_admin_beda_puskesmas_ditolak_konfirmasi_rujukan(): void

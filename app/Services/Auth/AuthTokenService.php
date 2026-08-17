@@ -67,6 +67,16 @@ class AuthTokenService
             throw new InvalidAuthTokenException('Refresh token tidak cocok dengan perangkat ini.');
         }
 
+        // Staf yang dinonaktifkan SETELAH sesi ini terbit (StaffService::setActive() sudah
+        // langsung revokeAllForUser() saat itu terjadi, tapi jaga-jaga kalau ada refresh token
+        // lain yang lolos/race) -- tolak rotasi di sini juga, jangan sampai staf nonaktif tetap
+        // bisa memperpanjang sesi lewat refresh walau login() baru sudah menolaknya.
+        if (! $record->user->status_aktif) {
+            $record->update(['revoked_at' => now()]);
+
+            throw new InvalidAuthTokenException('Akun Anda telah dinonaktifkan. Hubungi administrator.');
+        }
+
         $record->update(['revoked_at' => now(), 'last_used_at' => now()]);
 
         return $this->issue($record->user, $deviceId, $record->device_name);
