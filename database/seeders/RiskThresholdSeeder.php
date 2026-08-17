@@ -7,11 +7,16 @@ use Illuminate\Database\Seeder;
 
 /**
  * Nilai rujukan klinis resmi (docs/planning/02 §3, disediakan langsung oleh operator, bukan
- * hasil tebakan) -- 1 baris per parameter, SEMUA strict greater-than (bukan >=), KECUALI
- * Creatinine (lihat DIRECT_CLASSIFIERS di bawah). Nama `parameter` HARUS persis sama dengan
- * kolom lab_results_cache.parameter dari SiLAKES asli (dikonfirmasi dari data sync nyata:
- * "Gula Darah Puasa" bukan singkatan "GDP"; "Cholesterol" bukan "Cholesterol Total"; "LDL"
- * bukan "Cholesterol LDL" -- lihat riwayat percakapan).
+ * hasil tebakan) -- 1 baris per parameter, strict greater-than (>) secara default, KECUALI
+ * Gula Darah Puasa (>=, lihat catatan di bawah) dan Creatinine (lihat DIRECT_CLASSIFIERS di
+ * bawah). Nama `parameter` HARUS persis sama dengan kolom lab_results_cache.parameter dari
+ * SiLAKES asli (dikonfirmasi dari data sync nyata: "Gula Darah Puasa" bukan singkatan "GDP";
+ * "Cholesterol" bukan "Cholesterol Total"; "LDL" bukan "Cholesterol LDL" -- lihat riwayat
+ * percakapan).
+ *
+ * Gula Darah Puasa: threshold_min 120->130, operator '>=' (bukan default '>') -- keputusan
+ * eksplisit user menyamakan skema nilai rujukan GDP dengan standar resmi landing page
+ * PRODULI ("Pemeriksaan & Nilai Rujukan"): "Normal jika <130, Tinggi jika >=130".
  *
  * Kolom `level` di NILAI_RUJUKAN (5 parameter, is_direct_classifier=false) SENGAJA cuma label
  * metadata untuk criteria_snapshot (audit) -- RiskClassificationService::determineLevel()
@@ -30,10 +35,10 @@ use Illuminate\Database\Seeder;
 class RiskThresholdSeeder extends Seeder
 {
     /**
-     * @var array<int, array{parameter: string, threshold_min: float}>
+     * @var array<int, array{parameter: string, threshold_min: float, operator?: string}>
      */
     private const NILAI_RUJUKAN = [
-        ['parameter' => 'Gula Darah Puasa', 'threshold_min' => 120],
+        ['parameter' => 'Gula Darah Puasa', 'threshold_min' => 130, 'operator' => '>='],
         ['parameter' => 'Cholesterol', 'threshold_min' => 200],
         ['parameter' => 'Trigliserida', 'threshold_min' => 140],
         ['parameter' => 'LDL', 'threshold_min' => 130],
@@ -54,7 +59,7 @@ class RiskThresholdSeeder extends Seeder
             RiskThreshold::updateOrCreate(
                 ['parameter' => $row['parameter'], 'level' => 'sedang'],
                 [
-                    'operator' => '>',
+                    'operator' => $row['operator'] ?? '>',
                     'is_direct_classifier' => false,
                     'threshold_min' => $row['threshold_min'],
                     'threshold_max' => null,

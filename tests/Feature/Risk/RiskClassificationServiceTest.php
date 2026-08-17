@@ -18,10 +18,10 @@ use Tests\TestCase;
  *   Urea) harus LENGKAP tersedia DAN semuanya melebihi nilai rujukan sekaligus.
  * - Sedang: pola IDENTIK dengan Berat -- KEEMPAT parameter (Gula Darah Puasa, Cholesterol,
  *   Trigliserida, LDL) harus LENGKAP tersedia DAN semuanya melebihi nilai rujukan sekaligus.
- *   BUKAN LAGI "salah satu dari 4 parameter melebihi" (OR) -- itu bug A. Jazili. Tidak ada lagi
- *   tier 'ringan' hasil kombinasi parsial (mis. "cuma Gula Darah Puasa melebihi") -- kombinasi
- *   yang tidak memenuhi AND penuh untuk Sedang maupun Berat dianggap belum cukup jadi
- *   perhatian sama sekali (null / 'tidak_berisiko'), bukan 'ringan'.
+ *   BUKAN LAGI "salah satu dari 4 parameter melebihi" (OR) -- itu bug A. Jazili.
+ * - Ringan (REVISI KETIGA, dikembalikan sesuai standar landing page): KHUSUS Gula Darah Puasa
+ *   melebihi ambang sendirian -- parameter kombinasi lain (mis. "cuma Trigliserida melebihi")
+ *   TETAP tidak menghasilkan apa pun, bug A. Jazili tidak kembali.
  *
  * REVISI Bu Kadis (lihat juga docblock RiskClassificationService): Creatinine keluar dari
  * kombinasi di atas, jadi "direct classifier" bertingkat (1.7-1.9=Sedang, >=2.0=Berat) yang
@@ -233,31 +233,33 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertNull($result);
     }
 
-    public function test_hanya_gula_darah_puasa_tersedia_dan_melebihi_tidak_menghasilkan_apa_apa(): void
+    public function test_hanya_gula_darah_puasa_tersedia_dan_melebihi_menghasilkan_ringan(): void
     {
         // Kasus yang sengaja diklarifikasi: parameter lain belum PERNAH diperiksa sama sekali
-        // (bukan "tersedia tapi normal") -- AND penuh untuk Sedang butuh KELENGKAPAN keempat
-        // parameter, jadi Gula Darah Puasa sendirian yang tinggi tidak lagi otomatis jadi
-        // apa pun (dulu 'ringan', sekarang tidak ada tier itu lagi utk kasus ini -- lihat
-        // docblock kelas).
+        // (bukan "tersedia tapi normal") -- AND penuh untuk Sedang gagal karena kelengkapan
+        // keempat parameter tidak terpenuhi, tapi Gula Darah Puasa sendirian yang tinggi tetap
+        // menghasilkan tier Ringan (REVISI KETIGA, standar landing page -- lihat docblock kelas).
         $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertSame('ringan', $result->level);
     }
 
-    public function test_gula_darah_puasa_dan_kolesterol_saja_tanpa_parameter_lain_tidak_menghasilkan_apa_apa(): void
+    public function test_gula_darah_puasa_dan_kolesterol_saja_tanpa_parameter_lain_menghasilkan_ringan(): void
     {
         // Cuma 2 dari 4 SEDANG_PARAMETERS yang PERNAH diperiksa (Trigliserida/LDL tidak
-        // pernah ada hasil labnya sama sekali) -- AND penuh butuh keempatnya TERSEDIA, jadi
-        // ini gagal di tahap ketersediaan, bukan sekadar nilai.
+        // pernah ada hasil labnya sama sekali) -- AND penuh Sedang gagal di tahap ketersediaan,
+        // tapi Ringan cuma peduli Gula Darah Puasa sendiri (bukan kelengkapan kombinasi), jadi
+        // tetap 'ringan' di sini walau Cholesterol turut melebihi.
         $this->addLabResult(500001, 'Gula Darah Puasa', '250', '2026-07-20');
         $this->addLabResult(500002, 'Cholesterol', '300', '2026-07-20');
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertSame('ringan', $result->level);
     }
 
     public function test_gula_darah_puasa_melebihi_dan_nilai_non_numerik_di_skip_dengan_log(): void

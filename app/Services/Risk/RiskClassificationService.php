@@ -24,11 +24,15 @@ use Illuminate\Support\Facades\Log;
  *   SEDANG_PARAMETERS harus LENGKAP tersedia DAN seluruhnya melebihi nilai rujukan sekaligus.
  *   SEBELUMNYA cukup "salah satu dari 4 parameter melebihi" (OR) — itu yang menyebabkan bug
  *   A. Jazili: Trigliserida 192 sendirian (Cholesterol/LDL normal, Gula Darah Puasa tidak
- *   diperiksa) salah dianggap Sedang. Tidak ada lagi tier "Ringan" hasil kombinasi parsial
- *   (mis. "cuma Gula Darah Puasa melebihi") — kombinasi yang tidak memenuhi AND penuh untuk
- *   Sedang maupun Berat dianggap BELUM cukup jadi perhatian sama sekali, jatuh ke
- *   'tidak_berisiko' (atau null kalau pasien memang belum pernah diklasifikasikan), bukan
- *   'ringan' — keputusan eksplisit user, bukan default yang ditebak.
+ *   diperiksa) salah dianggap Sedang.
+ * - Ringan (REVISI KETIGA, dikembalikan sesuai standar resmi landing page "Pemeriksaan & Nilai
+ *   Rujukan"): KHUSUS kalau Gula Darah Puasa TERSEDIA dan melebihi ambang, TAPI kombinasi
+ *   Sedang/Berat di atas tidak terpenuhi — BUKAN "parameter apa pun sendirian", cuma Gula Darah
+ *   Puasa yang punya tier Ringan berdiri sendiri (mis. Trigliserida 192 sendirian TETAP tidak
+ *   menghasilkan apa pun, bug A. Jazili di atas tidak kembali). Diperiksa PALING TERAKHIR
+ *   (setelah Sedang/Berat gagal), jadi kalau GDP kebetulan juga bagian dari kombinasi Sedang/
+ *   Berat yang lengkap, level yang lebih parah itu yang menang lewat determineLevel() ini
+ *   sendiri, bukan Ringan.
  *
  * REVISI Bu Kadis: Creatinine BUKAN lagi bagian BERAT_PARAMETERS/SEDANG_PARAMETERS (tidak
  * dobel-hitung) — dipindah jadi "direct classifier" (RiskThreshold.is_direct_classifier=true).
@@ -447,13 +451,21 @@ class RiskClassificationService
 
         // AND ketat, pola IDENTIK dengan Berat di atas (bukan lagi "salah satu dari
         // SEDANG_PARAMETERS melebihi" -- itu bug A. Jazili, lihat docblock kelas). Kombinasi
-        // parsial (mis. cuma Trigliserida, atau cuma Gula Darah Puasa) TIDAK cukup -- jatuh ke
-        // null di sini, ditangani classify() sebagai 'tidak_berisiko'/tetap null seperti biasa.
+        // parsial (mis. cuma Trigliserida sendirian) TIDAK cukup -- jatuh ke pengecekan Ringan
+        // di bawah (yang cuma peduli Gula Darah Puasa), lalu null/'tidak_berisiko' kalau itu pun
+        // tidak match.
         $sedangLengkap = array_diff(self::SEDANG_PARAMETERS, $availableParameters) === [];
         $sedangSemuaMelebihi = array_diff(self::SEDANG_PARAMETERS, $exceededParameters) === [];
 
         if ($sedangLengkap && $sedangSemuaMelebihi) {
             return 'sedang';
+        }
+
+        // Ringan (lihat docblock kelas, REVISI KETIGA) -- KHUSUS Gula Darah Puasa, bukan
+        // parameter kombinasi apa pun. Dicek PALING TERAKHIR (Berat/Sedang sudah gagal di atas),
+        // supaya tidak menang-menangan sendiri terhadap kombinasi yang lebih parah.
+        if (in_array('Gula Darah Puasa', $exceededParameters, true)) {
+            return 'ringan';
         }
 
         return null;
