@@ -82,9 +82,14 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // SEBELUM 'patients/{patient}' -- kalau tidak, route-model-binding mencoba mencocokkan
     // 'search-nik'/'export-pdf' sebagai {patient} id (404 model not found), bukan route
     // terpisah ini.
-    Route::post('patients/search-nik', [PatientController::class, 'searchByNik']);
+    // Temuan audit (docs/planning/15): step-up password re-check di controller cegah orang LUAR,
+    // tapi tanpa throttle, staf berwenang (yang sudah tahu password sendiri) tetap bisa mencoba
+    // banyak NIK berturut-turut untuk memetakan siapa saja yang terdaftar sebagai pasien.
+    Route::post('patients/search-nik', [PatientController::class, 'searchByNik'])->middleware('throttle:10,1');
     // Ekspor PDF (revisi Bu Kadis, Fase 5) -- filter query param sama persis dengan index().
-    Route::get('patients/export-pdf', [PatientController::class, 'exportPdf']);
+    // Query besar + generate PDF dompdf sekali panggil cukup berat -- throttle lebih ketat
+    // daripada endpoint baca biasa (temuan audit, docs/planning/15).
+    Route::get('patients/export-pdf', [PatientController::class, 'exportPdf'])->middleware('throttle:5,1');
     Route::get('patients/{patient}', [PatientController::class, 'show']);
     // Usulan koreksi data pasien dari STAF (docs/planning §17 "Ajukan Update Data") -- paralel
     // dari usulan kader lewat POST /visit-reports (itu terikat satu laporan kunjungan).
@@ -147,6 +152,10 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('visit-assignments', [VisitAssignmentController::class, 'index']);
     Route::post('visit-assignments', [VisitAssignmentController::class, 'store']);
     Route::post('visit-assignments/bulk', [VisitAssignmentController::class, 'bulkStore']);
+    Route::get('visit-assignments/monitoring', [VisitAssignmentController::class, 'monitoring']);
+    // SETELAH 'bulk'/'monitoring' di atas -- kalau tidak, route-model-binding mencoba mencocokkan
+    // itu sebagai id VisitAssignment (pola sama seperti 'patients/search-nik' vs 'patients/{patient}').
+    Route::get('visit-assignments/{visitAssignment}', [VisitAssignmentController::class, 'show']);
 
     Route::post('visit-reports', [VisitReportController::class, 'store']);
     Route::patch('visit-reports/{visitReport}/accept', [VisitReportController::class, 'accept']);

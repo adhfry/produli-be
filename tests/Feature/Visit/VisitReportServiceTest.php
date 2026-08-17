@@ -394,4 +394,44 @@ class VisitReportServiceTest extends TestCase
         $this->assertInstanceOf(VisitReport::class, $report);
         $this->assertSame('completed', $this->assignment->fresh()->status);
     }
+
+    /**
+     * Regresi temuan audit (docs/planning/15) -- retry offline dengan client_submission_id yang
+     * SAMA (mis. antrean IndexedDB kader mengirim ulang draft yang sama karena request pertama
+     * timeout tapi sebenarnya sudah tersimpan) TIDAK boleh menghasilkan VisitReport kedua,
+     * assignment TIDAK boleh gagal karena sudah 'completed', dan efek samping (notifikasi, job
+     * sync SiLAKES) TIDAK boleh terpicu dua kali.
+     */
+    public function test_submit_retry_dengan_client_submission_id_sama_idempotent(): void
+    {
+        Queue::fake();
+
+        $context = $this->makeContext(['isOffline' => true, 'clientSubmissionId' => 'draft-uuid-abc123']);
+
+        $first = $this->service->submit($this->assignment, $context, 'Kondisi stabil.', confirmedPatientLocation: true);
+        Queue::assertPushed(SyncFieldUpdateToSilakesJob::class, 1);
+
+        // $this->assignment masih instance LAMA (status 'pending' di memori) -- persis kondisi
+        // nyata saat retry: assignment yang dipakai ulang belum tentu di-refresh, sengaja TIDAK
+        // di-fresh() di sini supaya test benar-benar menguji jalur "assignment terlihat pending
+        // padahal sudah completed di DB".
+        $retry = $this->service->submit($this->assignment, $context, 'Kondisi stabil.', confirmedPatientLocation: true);
+
+        $this->assertSame($first->id, $retry->id);
+        $this->assertSame(1, VisitReport::count());
+        Queue::assertPushed(SyncFieldUpdateToSilakesJob::class, 1);
+    }
+
+    public function test_submit_online_biasa_tanpa_client_submission_id_tetap_berhasil(): void
+    {
+        // Jalur ONLINE (bukan offline) TIDAK pernah mengirim client_submission_id sama sekali
+        // (lihat buildOnlineFormData() di frontend) -- pastikan null di sini tidak memicu
+        // pengecekan idempotensi/unique constraint yang salah.
+        Queue::fake();
+
+        $report = $this->service->submit($this->assignment, $this->makeContext(['isOffline' => false, 'clientSubmissionId' => null]), 'Kondisi stabil.');
+
+        $this->assertInstanceOf(VisitReport::class, $report);
+        $this->assertNull($report->client_submission_id);
+    }
 }
