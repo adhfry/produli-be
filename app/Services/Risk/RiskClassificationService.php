@@ -191,11 +191,25 @@ class RiskClassificationService
         // hasilnya PERSIS SAMA dengan is_latest sekarang tetap menulis baris baru -- bug nyata
         // yang bikin "Riwayat & Tren Kondisi" penuh baris duplikat (level+parameter+nilai sama
         // persis, cuma computed_at beda) tanpa ada perubahan kondisi pasien sungguhan.
+        //
+        // early_detection_flag WAJIB ikut dibandingkan (bukan cuma level+criteria) -- KEJADIAN
+        // NYATA: baris is_latest lama (dari sebelum Smart Early Detection dihitung benar, atau
+        // sebelum tier Sedang/Berat direvisi) bisa saja level+criteria-nya SAMA PERSIS dengan
+        // hasil hitung ulang hari ini, TAPI early_detection_flag hasil hitung ulang itu sekarang
+        // true (Creatinine mendekati ambang Berat / margin kombo tinggi) padahal baris lama
+        // masih false -- tanpa baris ini di kondisi guard, produli:reclassify-risk TIDAK PERNAH
+        // memperbarui flag itu selamanya (guard selalu bilang "tidak berubah", padahal berubah).
+        // early_detection_reason (rincian dalamnya) SENGAJA TIDAK ikut dibandingkan -- angka
+        // seperti proximity_percent/average_margin_percent wajar sedikit bergeser tiap hitung
+        // ulang walau flag-nya tetap true, tidak perlu baris riwayat baru untuk itu.
         $current = RiskClassification::where('patient_id', $patient->id)
             ->where('is_latest', true)
             ->first();
 
-        if ($current !== null && $current->level === $matchedLevel && $this->criteriaEquivalent($current->criteria_snapshot, $criteria)) {
+        if ($current !== null
+            && $current->level === $matchedLevel
+            && $current->early_detection_flag === $earlyDetectionFlag
+            && $this->criteriaEquivalent($current->criteria_snapshot, $criteria)) {
             return null;
         }
 

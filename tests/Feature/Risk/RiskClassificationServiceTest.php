@@ -339,6 +339,33 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertSame(1, RiskClassification::where('patient_id', $this->patient->id)->count());
     }
 
+    public function test_early_detection_flag_berubah_tetap_menulis_baris_baru_walau_level_dan_kriteria_sama(): void
+    {
+        // KEJADIAN NYATA (temuan produksi): baris is_latest lama bisa saja level+criteria-nya
+        // SAMA PERSIS dengan hasil hitung ulang, TAPI early_detection_flag hasil hitung ulang
+        // berbeda (mis. baris lama dari sebelum Smart Early Detection dihitung benar) -- guard
+        // idempotensi SEBELUM perbaikan ini cuma bandingkan level+criteria, jadi flag yang
+        // seharusnya berubah jadi tidak pernah ter-update SELAMANYA lewat reclassify-risk
+        // (guard selalu bilang "tidak berubah", padahal early_detection_flag-nya berubah).
+        $this->addLabResult(500001, 'Creatinine', '1.89', '2026-07-20');
+        $first = $this->service->classify($this->patient->fresh());
+        $this->assertSame('sedang', $first->level);
+        $this->assertTrue($first->early_detection_flag, 'Proximity 63.3% harus ter-flag (baseline test ini).');
+
+        // Simulasi baris lama/stale: level+criteria TETAP sama seperti $first (tidak disentuh),
+        // cuma early_detection_flag-nya dipaksa false -- langsung ke DB, BUKAN lewat classify(),
+        // supaya murni menguji guard idempotensi classify() berikutnya, bukan logika hitungnya.
+        $first->update(['early_detection_flag' => false, 'early_detection_reason' => null]);
+
+        $second = $this->service->classify($this->patient->fresh());
+
+        $this->assertNotNull($second, 'early_detection_flag berbeda dari yang tersimpan HARUS tetap menulis baris baru, bukan null.');
+        $this->assertSame('sedang', $second->level);
+        $this->assertTrue($second->early_detection_flag);
+        $this->assertSame(2, RiskClassification::where('patient_id', $this->patient->id)->count());
+        $this->assertTrue($second->fresh()->is_latest);
+    }
+
     public function test_classify_ulang_dengan_nilai_berubah_tetap_menulis_baris_baru(): void
     {
         // Kebalikan dari test di atas -- guard idempotensi TIDAK BOLEH menghalangi perubahan
