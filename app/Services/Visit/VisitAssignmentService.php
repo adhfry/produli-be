@@ -35,9 +35,7 @@ use Illuminate\Validation\ValidationException;
  */
 class VisitAssignmentService
 {
-    public function __construct(private readonly NotifyService $notifyService)
-    {
-    }
+    public function __construct(private readonly NotifyService $notifyService) {}
 
     public function assign(
         PatientsCache $patient,
@@ -143,6 +141,51 @@ class VisitAssignmentService
         }
 
         return ['created' => $created, 'failed' => $failed];
+    }
+
+    /**
+     * Batalkan penugasan (keputusan Kepala Dinas: admin_puskesmas/pj_prolanis salah tugas atau
+     * typo kader/pasien -- lihat VisitAssignmentPolicy::cancel(), TANPA perlu approval
+     * super_admin, cukup modal konfirmasi di frontend). Cuma boleh dari status 'pending'/
+     * 'in_progress' -- assignment yang sudah 'completed' (laporan sudah masuk) atau
+     * 'cancelled' (sudah dibatalkan sebelumnya) ditolak, tidak ada gunanya dibatalkan lagi.
+     * Kader/nakes yang ditugaskan SELALU dinotif (push+fcm, sama kanal dengan notifyAssignedKaders())
+     * supaya tidak diam-diam terus mengerjakan tugas yang sudah tidak berlaku.
+     */
+    public function cancel(VisitAssignment $assignment, User $actor, ?string $reason = null): VisitAssignment
+    {
+        if (! in_array($assignment->status, ['pending', 'in_progress'], true)) {
+            throw ValidationException::withMessages([
+                'assignment' => ["Assignment ini sudah berstatus {$assignment->status}, tidak bisa dibatalkan."],
+            ]);
+        }
+
+        $assignment->update(['status' => 'cancelled']);
+
+        $assignee = $assignment->assigneeUser();
+
+        if ($assignee !== null) {
+            $this->notifyService->notify(
+                NotifiableTarget::user($assignee),
+                new NotificationPayload(
+                    type: 'visit_assignment_cancelled',
+                    title: 'Penugasan Dibatalkan',
+                    body: $reason
+                        ? "Penugasan kunjungan tanggal {$assignment->scheduled_date->toDateString()} dibatalkan oleh {$actor->name}: {$reason}"
+                        : "Penugasan kunjungan tanggal {$assignment->scheduled_date->toDateString()} dibatalkan oleh {$actor->name}.",
+                    data: [
+                        'type' => 'visit_assignment_cancelled',
+                        'visit_assignment_id' => $assignment->id,
+                        'reason' => $reason,
+                        'action_url' => '/app/tugas',
+                        'action_label' => 'Lihat Tugas',
+                    ],
+                ),
+                ['push', 'fcm'],
+            );
+        }
+
+        return $assignment->fresh();
     }
 
     /**

@@ -85,8 +85,9 @@ class StaffController extends Controller
     }
 
     /**
-     * Hapus staf -- gerbang sama dengan store()/update(). Tidak bisa hapus diri sendiri atau
-     * satu-satunya super_admin yang tersisa (StaffService::delete()).
+     * Hapus PERMANEN staf -- gerbang sama dengan store()/update(). Tidak bisa hapus diri sendiri,
+     * satu-satunya super_admin yang tersisa, atau staf yang sudah punya riwayat penugasan
+     * (StaffService::delete() -- pesan errornya sendiri sudah mengarahkan ke setStatus()).
      */
     public function destroy(Request $request, User $user): JsonResponse
     {
@@ -97,6 +98,29 @@ class StaffController extends Controller
         $this->service->delete($request->user(), $user);
 
         return ApiResponse::success(null, 'Staf berhasil dihapus');
+    }
+
+    /**
+     * Aktifkan/nonaktifkan staf -- gerbang sama dengan update()/destroy(). Dipakai saat staf
+     * keluar/pindah tugas tapi sudah punya riwayat penugasan (destroy() akan menolak kasus itu),
+     * pola sama persis KaderController::setStatus()/TenagaKesehatanController::setStatus().
+     */
+    public function setStatus(Request $request, User $user): JsonResponse
+    {
+        if (! $request->user()->hasAnyRole(['super_admin', 'admin_puskesmas'])) {
+            throw new AuthorizationException('Hanya super_admin atau admin_puskesmas yang bisa mengubah status staf.');
+        }
+
+        $validated = $request->validate([
+            'status_aktif' => ['required', 'boolean'],
+        ]);
+
+        $updated = $this->service->setActive($request->user(), $user, $validated['status_aktif']);
+        $updated->load('puskesmas');
+
+        $message = $validated['status_aktif'] ? 'Staf berhasil diaktifkan' : 'Staf berhasil dinonaktifkan';
+
+        return ApiResponse::success(new StaffResource($updated), $message);
     }
 
     /**

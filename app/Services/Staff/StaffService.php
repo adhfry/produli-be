@@ -3,6 +3,7 @@
 namespace App\Services\Staff;
 
 use App\Models\User;
+use App\Models\VisitAssignment;
 use App\Services\Auth\AccountActivationService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
@@ -113,10 +114,13 @@ class StaffService
     }
 
     /**
-     * Hapus staf -- BEDA dari kader/tenaga_kesehatan (User bukan model domain PRODULI sendiri,
-     * tidak ada riwayat kunjungan yang menempel langsung ke role staf). Melepas role
-     * super_admin/admin_puskesmas/pj_prolanis dari $target; kalau sesudahnya $target tidak
-     * punya role apa pun lagi (bukan dual-role kader/tenaga_kesehatan), akun User ikut dihapus.
+     * Hapus PERMANEN staf -- BEDA dari setActive(false) (nonaktifkan, riwayat tetap tersimpan).
+     * SEKARANG diblokir kalau $target pernah jadi assigned_by di visit_assignments (riwayat
+     * "siapa yang menugaskan" harus tetap ada, sama alasan dengan KaderService::delete()
+     * menolak kader yang punya riwayat kunjungan) -- sebelumnya TIDAK dicek sama sekali, hard
+     * delete staf lama diam-diam melepas jejak audit itu (visit_assignments.assigned_by
+     * nullOnDelete() di migration, jadi tidak error di DB, cuma datanya hilang tanpa jejak).
+     * Kalau sudah punya riwayat, nonaktifkan saja lewat setActive().
      */
     public function delete(User $actor, User $target): void
     {
@@ -134,6 +138,12 @@ class StaffService
             ]);
         }
 
+        if (VisitAssignment::where('assigned_by', $target->id)->exists()) {
+            throw ValidationException::withMessages([
+                'staff' => ['Staf ini sudah pernah menugaskan kunjungan, tidak bisa dihapus permanen -- nonaktifkan saja supaya riwayatnya tetap tersimpan.'],
+            ]);
+        }
+
         DB::transaction(function () use ($target) {
             $target->removeRole('super_admin');
             $target->removeRole('admin_puskesmas');
@@ -143,6 +153,33 @@ class StaffService
                 $target->delete();
             }
         });
+    }
+
+    /**
+     * Aktifkan/nonaktifkan staf (pola sama persis KaderService::setActive()/TenagaKesehatanService::
+     * setActive()) -- BEDA dari delete(): riwayat assigned_by di visit_assignments TETAP UTUH,
+     * cuma menghentikan kemampuan staf ini bertindak lagi (dipakai saat staf keluar/pindah tapi
+     * sudah punya riwayat, jadi tidak bisa dihapus permanen lewat delete() di atas).
+     */
+    public function setActive(User $actor, User $target, bool $active): User
+    {
+        if ($actor->id === $target->id && ! $active) {
+            throw ValidationException::withMessages([
+                'staff' => ['Anda tidak bisa menonaktifkan akun Anda sendiri.'],
+            ]);
+        }
+
+        $this->ensureCanManage($actor, $target);
+
+        if (! $active && $target->hasRole('super_admin') && User::role('super_admin')->where('status_aktif', true)->count() <= 1) {
+            throw ValidationException::withMessages([
+                'staff' => ['Tidak bisa menonaktifkan satu-satunya akun super_admin yang masih aktif.'],
+            ]);
+        }
+
+        $target->update(['status_aktif' => $active]);
+
+        return $target->fresh();
     }
 
     /**
