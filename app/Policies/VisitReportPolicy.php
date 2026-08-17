@@ -4,6 +4,7 @@ namespace App\Policies;
 
 use App\Models\User;
 use App\Models\VisitReport;
+use App\Policies\Concerns\ScopesByPuskesmas;
 
 /**
  * Alur review & validasi laporan kunjungan (docs/planning/02 §11) -- DUA aksi terpisah, DUA
@@ -13,6 +14,7 @@ use App\Models\VisitReport;
  */
 class VisitReportPolicy
 {
+    use ScopesByPuskesmas;
     /**
      * PJ Prolanis menerima laporan HANYA dari kader/tenaga_kesehatan yang disupervisinya sendiri
      * (kader.pj_id = user.id, atau tenaga_kesehatan.pj_id = user.id -- revisi Bu Kadis PMO,
@@ -35,5 +37,30 @@ class VisitReportPolicy
     public function validateReport(User $user): bool
     {
         return $user->hasRole('super_admin');
+    }
+
+    /**
+     * Halaman /dashboard/rujukan (Fase 3) -- admin_puskesmas/pj_prolanis (scope ditegakkan lewat
+     * RujukanService::scopedQuery(), bukan di sini) + super_admin lihat semua.
+     */
+    public function viewAnyRujukan(User $user): bool
+    {
+        return $user->hasAnyRole(['super_admin', 'admin_puskesmas', 'pj_prolanis']);
+    }
+
+    /**
+     * Konfirmasi/batalkan rujukan -- HANYA admin_puskesmas/pj_prolanis di puskesmas KADER/NAKES
+     * pelapor (bukan puskesmas pasien, konsisten dengan RujukanService::scopedQuery() &
+     * VisitReportService::notifyPasienDirujuk()).
+     */
+    public function confirmRujukan(User $user, VisitReport $visitReport): bool
+    {
+        if (! $user->hasAnyRole(['admin_puskesmas', 'pj_prolanis'])) {
+            return false;
+        }
+
+        $worker = $visitReport->assignment?->kader ?? $visitReport->assignment?->tenagaKesehatan;
+
+        return $this->sharesPuskesmas($user, $worker?->puskesmas_id);
     }
 }

@@ -147,6 +147,7 @@ class DashboardService
             // super_admin.
             risikoPerKecamatanSeKabupaten: $this->risikoPerKecamatan(PatientsCache::query(), $asOf),
             risikoPerDesa: $this->risikoPerDesa($scopedPatients, $asOf),
+            risikoPerPuskesmas: $this->risikoPerPuskesmas(PatientsCache::query(), $asOf),
             puskesmasPerformance: $this->puskesmasPerformance(PatientsCache::query(), $dateFrom, $dateTo),
             kecamatanContext: $this->kecamatanContext($viewedPuskesmasId),
         );
@@ -427,6 +428,52 @@ class DashboardService
         }
 
         return array_values($grouped);
+    }
+
+    /**
+     * Agregat jumlah pasien per level risiko per PUSKESMAS (revisi Bu Kadis) -- untuk peta mode
+     * 'puskesmas' di dashboard/index.vue (circle marker satu per puskesmas, warna dari level
+     * risiko terburuk yang ada). SENGAJA dipanggil UNSCOPED (PatientsCache::query(), sama pola
+     * dengan risikoPerKecamatanSeKabupaten) -- peta ini menampilkan SELURUH 31 puskesmas se-
+     * Kabupaten Sumenep ke SEMUA role, cuma agregat angka (bukan data pasien individual),
+     * konsisten dengan leaderboard "Top 5 Kecamatan/Puskesmas" yang juga sengaja se-kabupaten.
+     *
+     * Basisnya SEMUA baris Puskesmas (bukan cuma yang punya baris risk_classifications) --
+     * puskesmas tanpa pasien berisiko sama sekali TETAP muncul sebagai titik "belum ada data"
+     * (abu-abu) di peta, bukan hilang begitu saja (user secara eksplisit minta "titik seluruh
+     * puskesmas se-kabupaten", bukan cuma yang kebetulan sudah py data).
+     *
+     * @param  Builder<PatientsCache>  $scopedPatients
+     * @return array<int, array{puskesmas_id: int, puskesmas_nama: string, latitude: ?float, longitude: ?float, tidak_berisiko: int, ringan: int, sedang: int, berat: int}>
+     */
+    private function risikoPerPuskesmas(Builder $scopedPatients, ?Carbon $asOf): array
+    {
+        $rows = $this->effectiveRiskClassifications($scopedPatients, $asOf)
+            ->join('patients_cache', 'patients_cache.id', '=', 'risk_classifications.patient_id')
+            ->whereNotNull('patients_cache.puskesmas_id')
+            ->selectRaw('patients_cache.puskesmas_id as puskesmas_id, risk_classifications.level as level, count(*) as total')
+            ->groupBy('patients_cache.puskesmas_id', 'risk_classifications.level')
+            ->get();
+
+        $countsByPuskesmas = [];
+        foreach ($rows as $row) {
+            $countsByPuskesmas[(int) $row->puskesmas_id][$row->level] = (int) $row->total;
+        }
+
+        return Puskesmas::all()->map(function (Puskesmas $puskesmas) use ($countsByPuskesmas) {
+            $counts = $countsByPuskesmas[$puskesmas->id] ?? [];
+
+            return [
+                'puskesmas_id' => $puskesmas->id,
+                'puskesmas_nama' => $puskesmas->nama,
+                'latitude' => $puskesmas->latitude !== null ? (float) $puskesmas->latitude : null,
+                'longitude' => $puskesmas->longitude !== null ? (float) $puskesmas->longitude : null,
+                'tidak_berisiko' => $counts['tidak_berisiko'] ?? 0,
+                'ringan' => $counts['ringan'] ?? 0,
+                'sedang' => $counts['sedang'] ?? 0,
+                'berat' => $counts['berat'] ?? 0,
+            ];
+        })->values()->all();
     }
 
     /**

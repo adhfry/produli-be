@@ -24,6 +24,7 @@ class DashboardSummaryResource extends JsonResource
             'risiko_per_kecamatan' => $this->resource->risikoPerKecamatan,
             'risiko_per_kecamatan_se_kabupaten' => $this->resource->risikoPerKecamatanSeKabupaten,
             'risiko_per_desa' => $this->resource->risikoPerDesa,
+            'risiko_per_puskesmas' => $this->resource->risikoPerPuskesmas,
             'puskesmas_performance' => $this->resource->puskesmasPerformance,
             'kecamatan_context' => $this->resource->kecamatanContext,
         ];

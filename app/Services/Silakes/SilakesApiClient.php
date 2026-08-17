@@ -218,6 +218,18 @@ class SilakesApiClient
     }
 
     /**
+     * GET /api/v1/integration/reference-ranges — nilai rujukan terstruktur umur+gender (12
+     * parameter cakupan SiLAKES). TIDAK dipaginasi (dataset kecil, ~143 baris, satu kali fetch
+     * penuh setiap sync) — beda dari patients()/labResults() yang delta-sync dengan cursor.
+     *
+     * @return array{status: string, message: string, data: array{aliases: array<string,string>, tensi_alias: string, ranges: array<string, array<int, array<string, mixed>>>}}
+     */
+    public function referenceRanges(): array
+    {
+        return $this->get('/api/v1/integration/reference-ranges');
+    }
+
+    /**
      * POST /api/v1/integration/patients/{patient_id}/pembaruan-lapangan — SATU-SATUNYA
      * pengecualian dari aturan read-only (docs/planning/01 §9). Semua field body opsional
      * kecuali patient_id di URL. Hasilnya SELALU pending_review di SiLAKES — PRODULI tidak

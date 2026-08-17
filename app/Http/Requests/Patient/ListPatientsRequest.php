@@ -36,6 +36,11 @@ class ListPatientsRequest extends FormRequest
             'search' => ['nullable', 'string', 'max:150'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
+            // "Deteksi Dini Aktif" (revisi Bu Kadis) -- pasien Sedang berpotensi memburuk ke Berat.
+            'early_detection_only' => ['nullable', 'boolean'],
+            // Header tabel dashboard/pasien yang bisa diklik utk sort (revisi Bu Kadis).
+            'sort_by' => ['nullable', 'string', 'in:nama,risk_level'],
+            'sort_direction' => ['nullable', 'string', 'in:asc,desc'],
         ];
     }
 }

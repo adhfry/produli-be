@@ -25,6 +25,7 @@ class PatientResource extends JsonResource
             'id' => $this->id,
             'external_patient_id' => $this->external_patient_id,
             'no_reg' => $this->no_reg,
+            'no_bpjs' => $this->no_bpjs,
             'nik' => \App\Support\NikDisplay::resolve($this->nik),
             'nama' => $this->nama,
             'gender' => $this->gender,

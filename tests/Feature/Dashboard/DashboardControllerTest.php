@@ -509,6 +509,67 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(1, $dua['sedang']);
     }
 
+    // ---- revisi Bu Kadis: risiko_per_puskesmas (peta mode 'puskesmas') ----
+
+    public function test_risiko_per_puskesmas_unscoped_dan_menyertakan_koordinat(): void
+    {
+        $this->puskesmasA->update(['latitude' => -7.0123, 'longitude' => 113.8456]);
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        $beratA = $this->makePatient($this->puskesmasA, 1);
+        RiskClassification::create(['patient_id' => $beratA->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        $tidakBerisikoA = $this->makePatient($this->puskesmasA, 2);
+        RiskClassification::create(['patient_id' => $tidakBerisikoA->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        $ringanB = $this->makePatient($this->puskesmasB, 3);
+        RiskClassification::create(['patient_id' => $ringanB->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $risiko = collect($response->json('data.risiko_per_puskesmas'))->keyBy('puskesmas_id');
+
+        // admin_puskesmas TETAP lihat SEMUA puskesmas (unscoped, sama pola leaderboard) --
+        // bukan cuma puskesmasnya sendiri.
+        $this->assertCount(2, $risiko);
+
+        $a = $risiko[$this->puskesmasA->id];
+        $this->assertSame('Puskesmas A', $a['puskesmas_nama']);
+        $this->assertSame(-7.0123, $a['latitude']);
+        $this->assertSame(113.8456, $a['longitude']);
+        $this->assertSame(1, $a['berat']);
+        $this->assertSame(1, $a['tidak_berisiko']);
+        $this->assertSame(0, $a['ringan']);
+        $this->assertSame(0, $a['sedang']);
+
+        $b = $risiko[$this->puskesmasB->id];
+        $this->assertSame(1, $b['ringan']);
+        $this->assertNull($b['latitude']);
+    }
+
+    public function test_risiko_per_puskesmas_menyertakan_puskesmas_tanpa_pasien_sama_sekali(): void
+    {
+        $puskesmasKosong = Puskesmas::create(['kabupaten_id' => $this->puskesmasA->kabupaten_id, 'kode_internal' => 'PKM-C', 'nama' => 'Puskesmas Kosong']);
+        $admin = $this->makeUser('super_admin');
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $risiko = collect($response->json('data.risiko_per_puskesmas'))->keyBy('puskesmas_id');
+
+        $this->assertCount(3, $risiko);
+        $kosong = $risiko[$puskesmasKosong->id];
+        $this->assertSame(0, $kosong['tidak_berisiko']);
+        $this->assertSame(0, $kosong['ringan']);
+        $this->assertSame(0, $kosong['sedang']);
+        $this->assertSame(0, $kosong['berat']);
+    }
+
     // ---- Fase 4 (revisi Bu Kadis): puskesmas_performance ----
 
     public function test_puskesmas_performance_menghitung_pasien_yang_membaik_dikelompokkan_per_puskesmas(): void

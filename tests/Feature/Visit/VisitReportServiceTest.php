@@ -243,4 +243,195 @@ class VisitReportServiceTest extends TestCase
         Http::assertNothingSent();
         Queue::assertPushed(SyncFieldUpdateToSilakesJob::class);
     }
+
+    public function test_submit_menotif_admin_puskesmas_dan_pj_prolanis_di_puskesmas_yang_sama(): void
+    {
+        Queue::fake();
+        $this->seed(\Database\Seeders\RolesSeeder::class);
+
+        $puskesmasId = $this->assignment->puskesmas_id_snapshot;
+
+        $admin = User::factory()->create(['puskesmas_id' => $puskesmasId]);
+        $admin->assignRole('admin_puskesmas');
+        $pj = User::factory()->create(['puskesmas_id' => $puskesmasId]);
+        $pj->assignRole('pj_prolanis');
+        // Kader di puskesmas yang SAMA -- TIDAK boleh ikut kena notif ini (target cuma
+        // admin_puskesmas + pj_prolanis, bukan puskesmas() yang menyasar semua user).
+        $otherKaderUser = User::factory()->create(['puskesmas_id' => $puskesmasId]);
+        $otherKaderUser->assignRole('kader');
+        // Admin di puskesmas LAIN -- tidak boleh ikut kena notif ini juga.
+        $otherPuskesmas = Puskesmas::create(['kabupaten_id' => $this->patient->puskesmas->kabupaten_id, 'kode_internal' => 'PKM-B', 'nama' => 'Puskesmas B']);
+        $otherPuskesmasAdmin = User::factory()->create(['puskesmas_id' => $otherPuskesmas->id]);
+        $otherPuskesmasAdmin->assignRole('admin_puskesmas');
+
+        $this->service->submit($this->assignment, $this->makeContext(), 'Kondisi stabil.');
+
+        Queue::assertPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($admin) {
+            return $job->userId === $admin->id
+                && $job->payload->type === 'visit_report_submitted'
+                && $job->payload->data['severity'] === 'danger'
+                && $job->payload->data['action_url'] === "/dashboard/kunjungan?assignment_id={$this->assignment->id}"
+                && in_array('fcm', $job->channelKeys, true);
+        });
+        Queue::assertPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($pj) {
+            return $job->userId === $pj->id;
+        });
+        Queue::assertNotPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($otherKaderUser) {
+            return $job->userId === $otherKaderUser->id;
+        });
+        Queue::assertNotPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($otherPuskesmasAdmin) {
+            return $job->userId === $otherPuskesmasAdmin->id;
+        });
+    }
+
+    /**
+     * Verifikasi eksplisit perbaikan targeting: notifikasi HARUS ikut puskesmas KADER pelapor,
+     * bukan puskesmas_id_snapshot assignment (yang turunan puskesmas PASIEN). Skenario ini
+     * sengaja membuat keduanya BEDA -- sebelum perbaikan, test ini akan gagal karena notif salah
+     * sasaran ke admin puskesmas pasien, bukan admin puskesmas kader.
+     */
+    public function test_submit_menotif_berdasar_puskesmas_kader_bukan_puskesmas_snapshot_pasien(): void
+    {
+        Queue::fake();
+        $this->seed(\Database\Seeders\RolesSeeder::class);
+
+        $kabupaten = $this->patient->puskesmas->kabupaten;
+        $puskesmasKader = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-KADER', 'nama' => 'Puskesmas Kader']);
+        $puskesmasPasien = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-PASIEN', 'nama' => 'Puskesmas Pasien']);
+
+        $this->kader->update(['puskesmas_id' => $puskesmasKader->id]);
+        $this->patient->update(['puskesmas_id' => $puskesmasPasien->id]);
+        $this->assignment->update(['puskesmas_id_snapshot' => $puskesmasPasien->id]);
+
+        $adminKader = User::factory()->create(['puskesmas_id' => $puskesmasKader->id]);
+        $adminKader->assignRole('admin_puskesmas');
+        $adminPasien = User::factory()->create(['puskesmas_id' => $puskesmasPasien->id]);
+        $adminPasien->assignRole('admin_puskesmas');
+
+        $this->service->submit($this->assignment->fresh(), $this->makeContext(), 'Kondisi stabil.');
+
+        Queue::assertPushed(\App\Jobs\DispatchNotifyPayloadJob::class, fn ($job) => $job->userId === $adminKader->id);
+        Queue::assertNotPushed(\App\Jobs\DispatchNotifyPayloadJob::class, fn ($job) => $job->userId === $adminPasien->id);
+    }
+
+    public function test_submit_dengan_tindakan_array_tersimpan_apa_adanya(): void
+    {
+        Queue::fake();
+
+        $report = $this->service->submit(
+            $this->assignment,
+            $this->makeContext(),
+            'Kondisi stabil.',
+            pemeriksaan: ['tindakan' => ['diberi_obat', 'tidak_ada']],
+        );
+
+        $this->assertSame(['diberi_obat', 'tidak_ada'], $report->fresh()->tindakan);
+        $this->assertNull($report->fresh()->rujukan_status);
+    }
+
+    /**
+     * Fase 2 -- 'dirujuk_puskesmas' di antara tindakan (bisa dipilih bareng tindakan lain
+     * sekaligus) otomatis set rujukan_status='menunggu_konfirmasi' DAN memicu notifikasi
+     * KHUSUS 'pasien_dirujuk' (3 kanal: push+fcm+email, beda dari visit_report_submitted yang
+     * cuma 2 kanal) -- lihat VisitReportService::notifyPasienDirujuk().
+     */
+    public function test_submit_dengan_dirujuk_puskesmas_set_rujukan_status_dan_notif_3_kanal(): void
+    {
+        Queue::fake();
+        $this->seed(\Database\Seeders\RolesSeeder::class);
+
+        $puskesmasId = $this->kader->puskesmas_id;
+        $admin = User::factory()->create(['puskesmas_id' => $puskesmasId]);
+        $admin->assignRole('admin_puskesmas');
+
+        $report = $this->service->submit(
+            $this->assignment,
+            $this->makeContext(),
+            'Kondisi stabil.',
+            pemeriksaan: ['tindakan' => ['diberi_obat', 'dirujuk_puskesmas'], 'cara_rujukan' => 'dijemput_ambulan'],
+        );
+
+        $this->assertSame('menunggu_konfirmasi', $report->fresh()->rujukan_status);
+        $this->assertSame('dijemput_ambulan', $report->fresh()->cara_rujukan);
+
+        Queue::assertPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($admin, $report) {
+            return $job->userId === $admin->id
+                && $job->payload->type === 'pasien_dirujuk'
+                && $job->payload->data['visit_report_id'] === $report->id
+                && in_array('email', $job->channelKeys, true)
+                && in_array('fcm', $job->channelKeys, true);
+        });
+    }
+
+    public function test_submit_tanpa_dirujuk_puskesmas_tidak_set_rujukan_status_maupun_notif_pasien_dirujuk(): void
+    {
+        Queue::fake();
+        $this->seed(\Database\Seeders\RolesSeeder::class);
+
+        $admin = User::factory()->create(['puskesmas_id' => $this->kader->puskesmas_id]);
+        $admin->assignRole('admin_puskesmas');
+
+        $report = $this->service->submit(
+            $this->assignment,
+            $this->makeContext(),
+            'Kondisi stabil.',
+            pemeriksaan: ['tindakan' => ['diberi_obat']],
+        );
+
+        $this->assertNull($report->fresh()->rujukan_status);
+        Queue::assertNotPushed(\App\Jobs\DispatchNotifyPayloadJob::class, fn ($job) => $job->payload->type === 'pasien_dirujuk');
+    }
+
+    public function test_submit_tetap_sukses_walau_role_belum_ter_seed(): void
+    {
+        // TIDAK seed RolesSeeder -- NotifyService::resolveUserIds() akan throw RoleDoesNotExist
+        // saat resolve target admin_puskesmas/pj_prolanis. Laporan (yang jauh lebih penting)
+        // tetap harus tersimpan -- lihat docblock VisitReportService::notifyReportSubmitted().
+        Queue::fake();
+
+        $report = $this->service->submit($this->assignment, $this->makeContext(), 'Kondisi stabil.');
+
+        $this->assertInstanceOf(VisitReport::class, $report);
+        $this->assertSame('completed', $this->assignment->fresh()->status);
+    }
+
+    /**
+     * Regresi temuan audit (docs/planning/15) -- retry offline dengan client_submission_id yang
+     * SAMA (mis. antrean IndexedDB kader mengirim ulang draft yang sama karena request pertama
+     * timeout tapi sebenarnya sudah tersimpan) TIDAK boleh menghasilkan VisitReport kedua,
+     * assignment TIDAK boleh gagal karena sudah 'completed', dan efek samping (notifikasi, job
+     * sync SiLAKES) TIDAK boleh terpicu dua kali.
+     */
+    public function test_submit_retry_dengan_client_submission_id_sama_idempotent(): void
+    {
+        Queue::fake();
+
+        $context = $this->makeContext(['isOffline' => true, 'clientSubmissionId' => 'draft-uuid-abc123']);
+
+        $first = $this->service->submit($this->assignment, $context, 'Kondisi stabil.', confirmedPatientLocation: true);
+        Queue::assertPushed(SyncFieldUpdateToSilakesJob::class, 1);
+
+        // $this->assignment masih instance LAMA (status 'pending' di memori) -- persis kondisi
+        // nyata saat retry: assignment yang dipakai ulang belum tentu di-refresh, sengaja TIDAK
+        // di-fresh() di sini supaya test benar-benar menguji jalur "assignment terlihat pending
+        // padahal sudah completed di DB".
+        $retry = $this->service->submit($this->assignment, $context, 'Kondisi stabil.', confirmedPatientLocation: true);
+
+        $this->assertSame($first->id, $retry->id);
+        $this->assertSame(1, VisitReport::count());
+        Queue::assertPushed(SyncFieldUpdateToSilakesJob::class, 1);
+    }
+
+    public function test_submit_online_biasa_tanpa_client_submission_id_tetap_berhasil(): void
+    {
+        // Jalur ONLINE (bukan offline) TIDAK pernah mengirim client_submission_id sama sekali
+        // (lihat buildOnlineFormData() di frontend) -- pastikan null di sini tidak memicu
+        // pengecekan idempotensi/unique constraint yang salah.
+        Queue::fake();
+
+        $report = $this->service->submit($this->assignment, $this->makeContext(['isOffline' => false, 'clientSubmissionId' => null]), 'Kondisi stabil.');
+
+        $this->assertInstanceOf(VisitReport::class, $report);
+        $this->assertNull($report->client_submission_id);
+    }
 }

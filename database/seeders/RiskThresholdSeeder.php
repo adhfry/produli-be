@@ -14,9 +14,22 @@ use Illuminate\Database\Seeder;
  * "Cholesterol" bukan "Cholesterol Total"; "LDL" bukan "Cholesterol LDL" -- lihat riwayat
  * percakapan).
  *
+ * Integrasi presisi SiLAKES (lihat App\Services\Risk\SilakesReferenceRangeService) SEMPAT
+ * menjadikan 5 baris NILAI_RUJUKAN di bawah (semua kecuali Creatinine) sebagai FALLBACK,
+ * bukan sumber utama -- tapi keputusan eksplisit user membatalkan itu:
+ * SilakesReferenceRangeService::PARAMETER_MAP sekarang sengaja dikosongkan (lihat docblock
+ * kelas itu), jadi baris di bawah ini KEMBALI jadi sumber utama untuk KESELURUHAN 6 parameter,
+ * bukan cuma fallback. reference_ranges_cache & sinkronisasinya tetap ada (tidak dihapus),
+ * tinggal dorman.
+ *
  * Gula Darah Puasa: threshold_min 120->130, operator '>=' (bukan default '>') -- keputusan
  * eksplisit user menyamakan skema nilai rujukan GDP dengan standar resmi landing page
- * PRODULI ("Pemeriksaan & Nilai Rujukan"): "Normal jika <130, Tinggi jika >=130".
+ * PRODULI ("Pemeriksaan & Nilai Rujukan"): "Normal jika <130, Tinggi jika >=130". Cutoff
+ * tunggal 130 ini SENGAJA berbeda dari 3-tier diagnostik ADA 2026 (Normal <100, Prediabetes
+ * 100-125, Diabetes Range >=126) yang dulu dipakai SiLAKES::reference_ranges untuk badge
+ * indikasi per-parameter di laporan lab -- band SiLAKES untuk gula_darah_puasa SUDAH diubah
+ * mengikuti cutoff 130 yang sama (lihat ReferenceRangeSeeder::gulaDarahPuasa() di repo
+ * SiLAKES).
  *
  * Kolom `level` di NILAI_RUJUKAN (5 parameter, is_direct_classifier=false) SENGAJA cuma label
  * metadata untuk criteria_snapshot (audit) -- RiskClassificationService::determineLevel()

@@ -14,6 +14,7 @@ class PatientsCache extends Model
     protected $fillable = [
         'external_patient_id',
         'no_reg',
+        'no_bpjs',
         'nik_hash',
         'nik',
         'nama',

@@ -17,7 +17,7 @@ PRODULI dibangun sebagai **aplikasi terpisah** (Laravel + Nuxt sendiri), bukan m
 | Kebutuhan                                                                      | Status di SiLAKES                                       | Tindakan                                                                                                                                                                                           |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Hasil lab per parameter (GDP, Kolesterol, Trigliserida, LDL, Ureum/Creatinine) | Kemungkinan sudah ada di struktur `pemeriksaan`/`hasil` | **Tidak perlu tabel baru** — pastikan saja field-field ini terstruktur per parameter, bukan teks bebas, agar bisa dibaca API                                                                       |
-| Nilai rujukan/threshold risiko PRODULI (GDP > 120, dst.)                        | Business rule spesifik PRODULI                           | **Jangan taruh di SiLAKES.** Simpan di PRODULI sendiri (`risk_thresholds`) — ini business rule bounded context PRODULI, bukan standar lab SiLAKES. Mencampur akan melanggar prinsip domain ownership |
+| Nilai rujukan/threshold risiko PRODULI (GDP > 120, dst.)                        | Business rule spesifik PRODULI                           | **Jangan taruh di SiLAKES.** Simpan di PRODULI sendiri (`risk_thresholds`) — ini business rule bounded context PRODULI, bukan standar lab SiLAKES. Mencampur akan melanggar prinsip domain ownership. **Amandemen (lihat §3.1 di bawah):** prinsip kepemilikan algoritma/struktur ini tetap berlaku 100% — yang berubah cuma ANGKA cutoff untuk 5 dari 6 parameter, sekarang disinkron dari `reference_ranges` SiLAKES (presisi umur+gender) lewat cache lokal, dengan `risk_thresholds` sebagai fallback eksplisit, bukan lagi sumber utama untuk kelima parameter itu |
 | Autentikasi service-to-service                                                 | Sanctum `personal_access_tokens`                        | Kalau SiLAKES belum pakai Sanctum → install (1 tabel standar bawaan, bukan tabel custom)                                                                                                           |
 | Audit siapa menarik data & kapan                                               | Belum ada                                               | **Opsional tapi direkomendasikan**: 1 tabel kecil `integration_sync_logs` (service_name, endpoint, requested_at, status, records_count) — untuk observability & kepatuhan                          |
 | Master wilayah (desa/kecamatan/puskesmas)                                      | Kemungkinan sudah ada                                   | Tidak duplikasi struktur — PRODULI konsumsi via API lalu cache lokal                                                                                                                                |
@@ -30,7 +30,27 @@ PRODULI dibangun sebagai **aplikasi terpisah** (Laravel + Nuxt sendiri), bukan m
 GET /api/v1/integration/patients
 GET /api/v1/integration/lab-results?since={timestamp}&cursor={cursor}
 GET /api/v1/integration/master-wilayah
+GET /api/v1/integration/reference-ranges
 ```
+
+### 3.1 Amandemen — Endpoint 5, `reference-ranges` (sinkronisasi nilai rujukan presisi)
+
+Ditambahkan saat SiLAKES membangun sistem nilai rujukan presisi umur+gender
+(`reference_ranges`, `App\Services\LabReferenceService`, 12 parameter). Kontrak lengkap ada di
+`docs/planning/04-kontrak-api-silakes-aktual.md` §Endpoint 5.
+
+**Kenapa ini TIDAK melanggar prinsip "jangan taruh business rule PRODULI di SiLAKES" (§2 di
+atas):** endpoint ini expose data yang MEMANG milik SiLAKES (standar lab presisi per parameter,
+dipakai juga oleh badge indikasi di laporan lab SiLAKES sendiri) — bukan `risk_thresholds`
+PRODULI yang dipindah ke sana. Yang berubah di sisi PRODULI: `RiskClassificationService`
+sekarang punya 2 sumber "exceeded" per parameter (lihat `SilakesReferenceRangeService`) —
+presisi SiLAKES dicoba dulu untuk 5 dari 6 parameter, `risk_thresholds` tetap jadi fallback.
+Keputusan "parameter mana + kombinasi apa yang jadi Ringan/Sedang/Berat" (algoritma AND,
+Smart Early Detection) 100% tetap milik PRODULI, tidak disentuh sama sekali.
+
+Creatinine SENGAJA tidak ikut — SiLAKES cuma punya 3 tier binary (Rendah/Normal/Tinggi) per
+parameter, PRODULI butuh 2 tingkat keparahan terpisah (`is_direct_classifier`, Sedang
+1.7-1.9 / Berat >=2.0) yang tidak punya padanan presisi di SiLAKES.
 
 Aturan wajib:
 

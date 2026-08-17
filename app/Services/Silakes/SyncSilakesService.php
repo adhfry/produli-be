@@ -5,6 +5,7 @@ namespace App\Services\Silakes;
 use App\Models\IntegrationSyncLog;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
+use App\Models\ReferenceRangeCache;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
@@ -40,7 +41,7 @@ class SyncSilakesService
     ) {}
 
     /**
-     * @return array{patients_synced: int, lab_results_synced: int, patients_classified: int}
+     * @return array{patients_synced: int, lab_results_synced: int, patients_classified: int, reference_ranges_synced: int}
      */
     public function run(): array
     {
@@ -48,7 +49,12 @@ class SyncSilakesService
         // sudah mutakhir untuk menggerbang kelayakan (lihat isEligible()). Urutan sebaliknya
         // berarti pasien baru selalu dievaluasi dari data lab yang seangkatan lebih lama.
         //
-        // TAPI klasifikasi sendiri baru bisa dilakukan SETELAH syncPatients() -- untuk pasien
+        // syncReferenceRanges() WAJIB sebelum classifyPatients() -- RiskClassificationService
+        // sekarang baca reference_ranges_cache untuk 5 dari 6 parameter (lihat
+        // SilakesReferenceRangeService), kalau classify() jalan duluan dia akan pakai cache
+        // yang basi dari run sebelumnya untuk data yang baru saja masuk di run ini.
+        //
+        // Klasifikasi sendiri baru bisa dilakukan SETELAH syncPatients() -- untuk pasien
         // yang benar-benar baru (belum pernah ada baris patients_cache sama sekali), baris itu
         // belum ada saat syncLabResults() selesai (dibuat syncPatients() SETELAHNYA), jadi
         // classify() di sana selalu dilewati senyap (patient null) untuk sinkronisasi pertama
@@ -57,12 +63,14 @@ class SyncSilakesService
         // sungguhannya dieksekusi di sini, di bawah syncPatients().
         [$labResultsSynced, $externalPatientIdsWithNewData] = $this->syncLabResults();
         $patientsSynced = $this->syncPatients();
+        $referenceRangesSynced = $this->syncReferenceRanges();
         $patientsClassified = $this->classifyPatients($externalPatientIdsWithNewData);
 
         return [
             'patients_synced' => $patientsSynced,
             'lab_results_synced' => $labResultsSynced,
             'patients_classified' => $patientsClassified,
+            'reference_ranges_synced' => $referenceRangesSynced,
         ];
     }
 
@@ -220,6 +228,52 @@ class SyncSilakesService
     }
 
     /**
+     * Tarik SELURUH nilai rujukan terstruktur SiLAKES (satu kali fetch penuh, TIDAK
+     * dipaginasi -- dataset kecil, ~143 baris) lalu truncate+reinsert reference_ranges_cache.
+     * Idempotent by design (bukan delta/upsert seperti syncPatients()/syncLabResults() --
+     * data ini statis dan kecil, refresh penuh tiap run jauh lebih sederhana daripada delta
+     * sync dan tetap murah, cuma 1 panggilan API per run).
+     */
+    public function syncReferenceRanges(): int
+    {
+        $body = $this->client->referenceRanges();
+        $rangesByParameterKey = $body['data']['ranges'] ?? [];
+
+        $now = Carbon::now();
+        $rows = [];
+
+        foreach ($rangesByParameterKey as $parameterKey => $bands) {
+            foreach ($bands as $band) {
+                $rows[] = [
+                    'parameter_key' => $parameterKey,
+                    'gender' => $band['gender'] ?? null,
+                    'age_min_years' => $band['age_min_years'] ?? null,
+                    'age_max_years' => $band['age_max_years'] ?? null,
+                    'age_min_days' => $band['age_min_days'] ?? null,
+                    'age_max_days' => $band['age_max_days'] ?? null,
+                    'value_min' => $band['value_min'] ?? null,
+                    'value_max' => $band['value_max'] ?? null,
+                    'min_inclusive' => $band['min_inclusive'] ?? true,
+                    'max_inclusive' => $band['max_inclusive'] ?? true,
+                    'category' => $band['category'],
+                    'category_label' => $band['category_label'],
+                    'severity_rank' => $band['severity_rank'] ?? 0,
+                    'synced_at' => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+        }
+
+        ReferenceRangeCache::query()->truncate();
+        foreach (array_chunk($rows, 200) as $chunk) {
+            ReferenceRangeCache::insert($chunk);
+        }
+
+        return count($rows);
+    }
+
+    /**
      * Dipanggil dari run() SETELAH syncPatients() -- lihat komentar run() untuk alasan urutan
      * ini wajib (pasien baru belum punya baris patients_cache saat syncLabResults() selesai).
      *
@@ -249,6 +303,7 @@ class SyncSilakesService
             ['external_patient_id' => $row['patient_id']],
             [
                 'no_reg' => $row['no_reg'] ?? null,
+                'no_bpjs' => $row['no_bpjs'] ?? null,
                 'nik_hash' => $row['nik_hash'],
                 'nik' => $row['nik'] ?? null,
                 'nama' => $row['name'],

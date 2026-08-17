@@ -225,7 +225,14 @@ class CareAssignmentServiceTest extends TestCase
 
         $this->assertSame('adhoc', $visit->visit_origin);
         $this->assertTrue($plan->fresh()->last_triggered_at->isToday());
-        $this->assertSame(1, $this->tkA->user->notifications()->count());
+
+        // 2 notifikasi: 'visit_assigned' dari assignTenagaKesehatan() di atas (fix gap admin->nakes
+        // tidak pernah push/fcm sebelumnya) + 'care_visit_adhoc' dari createAdhocVisit() ini sendiri.
+        // Tidak diasumsikan urutannya (created_at bisa identik dalam test yang cepat).
+        $types = $this->tkA->user->notifications()->get()->pluck('data.type')->all();
+        $this->assertCount(2, $types);
+        $this->assertContains('visit_assigned', $types);
+        $this->assertContains('care_visit_adhoc', $types);
     }
 
     public function test_create_adhoc_visit_ditolak_untuk_plan_kader(): void

@@ -131,6 +131,44 @@ Beda dari Endpoint 1-3 (sudah live, read-only), endpoint ini **satu-satunya peng
 
 **Tidak ada endpoint untuk cek status approval** — begitu staf approve, sync rutin PRODULI (`updated_at` delta) otomatis menangkap perubahan. Kalau ditolak, tidak ada perubahan; cukup untuk v1 (YAGNI).
 
+## Endpoint 5 — `GET /api/v1/integration/reference-ranges` (SUDAH LIVE)
+
+Ability sama dengan Endpoint 1-3 (`integration:read-lab-results`). **Tidak dipaginasi** — dataset kecil (~143 baris), satu kali fetch penuh mengembalikan SEMUA data sekaligus (bukan delta sync seperti `patients`/`lab-results`). Reuse controller method yang sama dipakai admin SPA SiLAKES (`PemeriksaanController::getReferenceRanges`).
+
+```json
+{
+  "status": "success",
+  "message": "...",
+  "data": {
+    "aliases": { "hdl cholesterol": "hdl", "cholesterol": "cholesterol_total", "...": "..." },
+    "tensi_alias": "tekanan darah",
+    "ranges": {
+      "gula_darah_puasa": [
+        {
+          "id": 1, "parameter_key": "gula_darah_puasa", "gender": null,
+          "age_min_years": null, "age_max_years": null,
+          "age_min_days": null, "age_max_days": null,
+          "value_min": null, "value_max": 130,
+          "min_inclusive": false, "max_inclusive": false,
+          "category": "normal", "category_label": "Normal",
+          "severity_rank": 0, "sort_order": 10
+        },
+        { "...": "baris berikutnya, dst per kategori" }
+      ],
+      "hdl": ["..."],
+      "creatinine": ["..."]
+    }
+  }
+}
+```
+
+**Penting:**
+
+- `ranges` dikelompokkan per `parameter_key` (bukan array datar) — 12 parameter_key SiLAKES total (13 kalau menghitung `tensi_sistolik`/`tensi_diastolik` sebagai dua baris terpisah untuk parameter komposit Tekanan Darah).
+- `value_min`/`value_max` nullable di kedua sisi (band terbuka ke satu arah, mis. `value_max: null` berarti tidak ada batas atas). `min_inclusive`/`max_inclusive` menentukan apakah batas itu `>=`/`<=` (true) atau `>`/`<` (false, strict) — WAJIB dihormati persis, salah satu sumber bug presisi yang pernah ditemukan & diperbaiki di SiLAKES sebelum endpoint ini dibuat.
+- `severity_rank` (0 = paling aman, naik sesuai keparahan) — dipakai PRODULI sebagai sumber "exceeded" (`severity_rank > 0`) untuk 5 dari 6 parameter `RiskClassificationService` (lihat `App\Services\Risk\SilakesReferenceRangeService`). **Creatinine sengaja dikecualikan** — lihat Dokumen 1 §3.1.
+- Data ini STATIS (standar medis, bukan operasional) — cukup sync ulang penuh (truncate+reinsert) tiap kali `SyncSilakesService::run()` jalan, tidak perlu delta/cursor seperti Endpoint 1-2.
+
 ## Yang harus dibangun di PRODULI (checklist untuk prompt SyncSilakesService)
 
 1. HTTP client service + helper generate `X-Signature`/`X-Timestamp`.
@@ -138,4 +176,4 @@ Beda dari Endpoint 1-3 (sudah live, read-only), endpoint ini **satu-satunya peng
 3. Local read-cache (`patients_cache`, `lab_results_cache`) agar PRODULI tetap jalan saat SiLAKES down.
 4. Idempotency saat simpan hasil sync (key: `patient_id`/`lab_result_id`, bukan insert baru terus).
 5. Proses rekonsiliasi `kel_desa`/`kecamatan` → `wilayah_mapping` → `desa_id`/`puskesmas_id`.
-6. Endpoint 1-3 **read-only mutlak** (GET saja). Endpoint 4 (di atas) adalah **satu-satunya** pengecualian tulis, dipanggil dari `VisitReportService` — jangan generalisasi jadi endpoint tulis lain.
+6. Endpoint 1-3 dan 5 **read-only mutlak** (GET saja). Endpoint 4 (di atas) adalah **satu-satunya** pengecualian tulis, dipanggil dari `VisitReportService` — jangan generalisasi jadi endpoint tulis lain.

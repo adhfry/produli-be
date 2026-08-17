@@ -53,8 +53,8 @@ class TestAccountSeeder extends Seeder
         // $adminPuskesmas = $this->makeUser('Admin Puskesmas Uji', 'admin.puskesmas.uji@example.test', $puskesmas->id);
         // $adminPuskesmas->assignRole('admin_puskesmas');
 
-        // $pjProlanis = $this->makeUser('PJ Prolanis Uji', 'pj.prolanis.uji@example.test', $puskesmas->id);
-        // $pjProlanis->assignRole('pj_prolanis');
+        $pjProlanis = $this->makeUser('PJ Prolanis Uji', 'pj.prolanis.uji@example.test', $puskesmas->id);
+        $pjProlanis->assignRole('pj_prolanis');
 
         // $kaderUser = $this->makeUser('Kader Uji', 'kader.uji@example.test', $puskesmas->id);
         // $kaderUser->assignRole('kader');

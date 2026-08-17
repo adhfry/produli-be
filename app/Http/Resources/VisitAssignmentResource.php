@@ -32,6 +32,8 @@ class VisitAssignmentResource extends JsonResource
             'kader' => $this->whenLoaded('kader', fn () => $this->kader ? [
                 'id' => $this->kader->id,
                 'name' => $this->kader->user?->name,
+                // no_hp (revisi Bu Kadis, halaman detail kunjungan) -- kontak petugas pelapor.
+                'no_hp' => $this->kader->no_hp,
             ] : null),
             // Petugas tenaga_kesehatan (revisi Bu Kadis, Fase 2/5) -- assignment.kader_id/
             // tenaga_kesehatan_id saling eksklusif (lihat visit_origin), null kalau assignment
@@ -39,6 +41,7 @@ class VisitAssignmentResource extends JsonResource
             'tenaga_kesehatan' => $this->whenLoaded('tenagaKesehatan', fn () => $this->tenagaKesehatan ? [
                 'id' => $this->tenagaKesehatan->id,
                 'name' => $this->tenagaKesehatan->user?->name,
+                'no_hp' => $this->tenagaKesehatan->no_hp,
             ] : null),
             'assigned_by' => $this->whenLoaded('assignedBy', fn () => $this->assignedBy ? [
                 'id' => $this->assignedBy->id,
