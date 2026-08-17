@@ -4,9 +4,14 @@ namespace App\Services\Visit;
 
 use App\Models\User;
 use App\Models\VisitReport;
+use App\Services\Notification\NotifiableTarget;
+use App\Services\Notification\NotificationPayload;
+use App\Services\Notification\NotifyService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Fase 3 (docs plan "cozy-mapping-breeze") -- halaman /dashboard/rujukan: daftar pasien yang
@@ -21,6 +26,9 @@ use Illuminate\Validation\ValidationException;
  */
 class RujukanService
 {
+    public function __construct(
+        private readonly NotifyService $notifyService,
+    ) {}
     /**
      * @return Builder<VisitReport>
      */
@@ -57,6 +65,59 @@ class RujukanService
 
         $visitReport->update(['rujukan_status' => $status]);
 
+        $this->notifyPelapor($visitReport, $status);
+
         return $visitReport;
+    }
+
+    /**
+     * Notif BALIK ke kader/nakes pelapor -- GAP nyata sebelum ini: VisitReportService::
+     * notifyPasienDirujuk() sudah menotif admin_puskesmas/pj_prolanis saat rujukan DIAJUKAN,
+     * tapi begitu mereka konfirmasi/batalkan, pelapor tidak pernah tahu tanpa cek manual
+     * (menggagalkan tujuan alur rujukan itu sendiri). Dikirim 3 kanal (push+fcm+email) --
+     * sama-sama butuh respon/kesadaran cepat seperti notifyPasienDirujuk(), bukan kanal push
+     * saja seperti notifikasi rutin.
+     */
+    private function notifyPelapor(VisitReport $visitReport, string $status): void
+    {
+        try {
+            $assignment = $visitReport->assignment;
+            $petugasUser = $assignment?->kader?->user ?? $assignment?->tenagaKesehatan?->user;
+
+            if ($petugasUser === null) {
+                return;
+            }
+
+            $patientName = $assignment->patient?->nama ?? 'pasien';
+            $dikonfirmasi = $status === 'dikonfirmasi';
+
+            $this->notifyService->notify(
+                NotifiableTarget::user($petugasUser),
+                new NotificationPayload(
+                    type: 'rujukan_dikonfirmasi',
+                    title: $dikonfirmasi ? 'Rujukan Dikonfirmasi' : 'Rujukan Dibatalkan',
+                    body: $dikonfirmasi
+                        ? "Rujukan pasien {$patientName} sudah dikonfirmasi puskesmas."
+                        : "Rujukan pasien {$patientName} dibatalkan puskesmas.",
+                    data: [
+                        'type' => 'rujukan_dikonfirmasi',
+                        'severity' => $dikonfirmasi ? 'info' : 'danger',
+                        'assignment_id' => $assignment->id,
+                        'visit_report_id' => $visitReport->id,
+                        'patient_id' => $assignment->patient_id,
+                        'patient_nama' => $patientName,
+                        'rujukan_status' => $status,
+                        'action_url' => "/app/kunjungan/{$assignment->id}",
+                        'action_label' => 'Lihat Kunjungan',
+                    ],
+                ),
+                ['push', 'fcm', 'email'],
+            );
+        } catch (Throwable $e) {
+            Log::warning('RujukanService: gagal mengirim notifikasi konfirmasi rujukan, status tetap tersimpan', [
+                'visit_report_id' => $visitReport->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

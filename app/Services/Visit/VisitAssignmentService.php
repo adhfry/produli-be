@@ -181,7 +181,10 @@ class VisitAssignmentService
                         'action_label' => 'Lihat Tugas',
                     ],
                 ),
-                ['push', 'fcm'],
+                // 3 kanal (bukan cuma push+fcm) -- kader/nakes yang sedang di lapangan mungkin
+                // tidak buka app tepat waktu, jadwalnya berubah mendadak dan perlu diketahui
+                // SEGERA (beda dari notifikasi rutin seperti penugasan baru terjadwal).
+                ['push', 'fcm', 'email'],
             );
         }
 

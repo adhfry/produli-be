@@ -240,7 +240,9 @@ class CareAssignmentService
                         'scheduled_date' => $scheduledDate,
                     ],
                 ),
-                ['push', 'fcm'],
+                // 3 kanal -- "mendesak" di judul bukan basa-basi, nakes perlu tahu SEGERA meski
+                // sedang tidak buka app (beda dari notifyVisitAssigned() di bawah yang rutin).
+                ['push', 'fcm', 'email'],
             );
         }
 
