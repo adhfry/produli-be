@@ -190,7 +190,7 @@ class VisitReportService
             SyncFieldUpdateToSilakesJob::dispatch($report->id)->afterCommit();
         }
 
-        $this->notifyReportSubmitted($assignment);
+        $this->notifyReportSubmitted($assignment, $report);
 
         if ($report->rujukan_status === 'menunggu_konfirmasi') {
             $this->notifyPasienDirujuk($assignment, $report);
@@ -226,8 +226,14 @@ class VisitReportService
      * NotifyService::deliverToUser() yang menelan kegagalan per-channel -- di sini satu tingkat
      * lebih luar, membungkus resolveUserIds() yang BISA throw (beda dari deliverToUser() yang
      * sudah aman sendiri).
+     *
+     * imageUrl (permintaan eksplisit user, foto bukti lapangan) diisi dari $report->photoUrl()
+     * -- presigned, graceful null kalau disk tidak mendukung/foto tidak ada, lihat docblock
+     * method itu. Ditaruh di NotificationPayload::$imageUrl yang SUDAH ada di kelasnya tapi
+     * belum pernah diisi caller mana pun -- FcmReminderChannel/FcmService yang meneruskannya ke
+     * FCM `notification.image` (lihat perubahan di kedua file itu).
      */
-    private function notifyReportSubmitted(VisitAssignment $assignment): void
+    private function notifyReportSubmitted(VisitAssignment $assignment, VisitReport $report): void
     {
         try {
             $petugasPuskesmasId = $assignment->kader?->puskesmas_id ?? $assignment->tenagaKesehatan?->puskesmas_id;
@@ -250,8 +256,9 @@ class VisitReportService
                         'assignment_id' => $assignment->id,
                         'patient_id' => $assignment->patient_id,
                         'action_url' => "/dashboard/kunjungan?assignment_id={$assignment->id}",
-                        'action_label' => 'Lihat Kunjungan',
+                        'action_label' => 'Lihat Laporan',
                     ],
+                    imageUrl: $report->photoUrl(),
                 ),
                 ['push', 'fcm'],
             );

@@ -25,6 +25,6 @@ class FcmReminderChannel implements ReminderChannel
 
     public function send(User $notifiable, NotificationPayload $payload): void
     {
-        $this->fcmService->sendToUser($notifiable, $payload->title, $payload->body, $payload->data);
+        $this->fcmService->sendToUser($notifiable, $payload->title, $payload->body, $payload->data, $payload->imageUrl);
     }
 }

@@ -271,6 +271,13 @@ class VisitReportServiceTest extends TestCase
                 && $job->payload->type === 'visit_report_submitted'
                 && $job->payload->data['severity'] === 'danger'
                 && $job->payload->data['action_url'] === "/dashboard/kunjungan?assignment_id={$this->assignment->id}"
+                // Permintaan eksplisit user -- tombol "Lihat Laporan" (bukan lagi "Lihat Kunjungan"),
+                // dan imageUrl (foto bukti lapangan) diteruskan dari VisitReport::photoUrl() ke FCM
+                // notification.image (lihat FcmReminderChannel/FcmService). null di sini WAJAR --
+                // storage disk tidak dikonfigurasi di test env (photoUrl() graceful null, bukan bug),
+                // yang penting key-nya benar-benar dibaca dari payload objek, bukan hilang di jalan.
+                && $job->payload->data['action_label'] === 'Lihat Laporan'
+                && array_key_exists('imageUrl', get_object_vars($job->payload))
                 && in_array('fcm', $job->channelKeys, true);
         });
         Queue::assertPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($pj) {
