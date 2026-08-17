@@ -6,12 +6,10 @@ use App\Jobs\SendVisitReminderJob;
 use App\Models\Reminder;
 use App\Models\VisitAssignment;
 use App\Models\VisitReport;
-use App\Notifications\VisitReportInvalidatedNotification;
 use App\Services\Notification\Channels\DatabaseReminderChannel;
 use App\Services\Notification\Channels\FcmReminderChannel;
 use App\Services\Notification\Channels\WhatsappReminderChannel;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Notification;
 use RuntimeException;
 
 /**
@@ -197,19 +195,42 @@ class NotificationService
     }
 
     /**
-     * Beri tahu kader kalau laporan kunjungannya dinyatakan TIDAK VALID oleh super_admin
-     * (docs/planning/02 §11), berisi validation_note supaya tahu alasannya dan bisa kunjungan
-     * ulang dengan benar. Dipanggil dari VisitReportReviewService::validateReport() SETELAH
-     * assignment terkait sudah dikembalikan ke status pending.
+     * Beri tahu petugas (kader ATAU tenaga_kesehatan -- assigneeUser(), BUKAN cuma kader seperti
+     * sebelumnya, karena assignment nakes tidak punya kader_id) kalau laporan kunjungannya
+     * dinyatakan TIDAK VALID oleh super_admin (docs/planning/02 §11), berisi validation_note
+     * supaya tahu alasannya dan bisa kunjungan ulang dengan benar. Dipanggil dari
+     * VisitReportReviewService::validateReport() SETELAH assignment terkait sudah dikembalikan
+     * ke status pending.
+     *
+     * 'push'+'fcm' (BUKAN cuma 'database' via VisitReportInvalidatedNotification seperti
+     * sebelumnya) -- petugas WAJIB benar-benar dapat push, bukan cuma nongol di bell icon kalau
+     * kebetulan dibuka. Data disimpan persis sama shape dgn VisitReportInvalidatedNotification
+     * lama supaya NotificationResource/formatNotification() frontend tidak perlu berubah.
      */
     public function notifyReportInvalidated(VisitReport $report): void
     {
-        $kader = $report->assignment?->kader;
+        $notifiable = $report->assignment?->assigneeUser();
 
-        if ($kader === null || $kader->user === null) {
+        if ($notifiable === null) {
             return;
         }
 
-        Notification::send($kader->user, new VisitReportInvalidatedNotification($report));
+        $payload = new NotificationPayload(
+            type: 'visit_report_invalidated',
+            title: 'Laporan Kunjungan Tidak Valid',
+            body: "Laporan untuk pasien {$report->assignment->patient->nama} dinyatakan tidak valid."
+                . ($report->validation_note ? " Catatan: {$report->validation_note}" : ''),
+            data: [
+                'type' => 'visit_report_invalidated',
+                'visit_report_id' => $report->id,
+                'assignment_id' => $report->assignment_id,
+                'patient_nama' => $report->assignment->patient->nama,
+                'validation_note' => $report->validation_note,
+            ],
+        );
+
+        foreach (['push', 'fcm'] as $channelKey) {
+            $this->channels[$channelKey]->send($notifiable, $payload);
+        }
     }
 }

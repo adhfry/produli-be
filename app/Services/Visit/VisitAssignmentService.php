@@ -9,6 +9,9 @@ use App\Models\RiskClassification;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Models\VisitAssignmentCompanion;
+use App\Services\Notification\NotifiableTarget;
+use App\Services\Notification\NotificationPayload;
+use App\Services\Notification\NotifyService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Mail;
@@ -32,6 +35,10 @@ use Illuminate\Validation\ValidationException;
  */
 class VisitAssignmentService
 {
+    public function __construct(private readonly NotifyService $notifyService)
+    {
+    }
+
     public function assign(
         PatientsCache $patient,
         Kader $kader,
@@ -197,6 +204,31 @@ class VisitAssignmentService
             if ($kader->user?->email && $kader->user->email_notifications_enabled) {
                 Mail::to($kader->user->email)->queue(new VisitAssignedMail($kader->user->name, $taskCount, $scheduledDate));
             }
+
+            // 'push'+'fcm' -- SEBELUMNYA cuma email (gated preferensi user, bisa dimatikan),
+            // jadi kader/nakes bisa sama sekali tidak sadar ada tugas baru sampai buka app
+            // sendiri. Push/FCM TIDAK digerbang email_notifications_enabled (preferensi itu
+            // khusus email), dan tetap dikirim walau kader->user null-check gagal di atas.
+            if ($kader->user !== null) {
+                $this->notifyService->notify(
+                    NotifiableTarget::user($kader->user),
+                    new NotificationPayload(
+                        type: 'visit_assigned',
+                        title: 'Tugas Kunjungan Baru',
+                        body: $taskCount > 1
+                            ? "{$taskCount} kunjungan baru dijadwalkan {$scheduledDate}."
+                            : "Kunjungan baru dijadwalkan {$scheduledDate}.",
+                        data: [
+                            'type' => 'visit_assigned',
+                            'task_count' => $taskCount,
+                            'scheduled_date' => $scheduledDate,
+                            'action_url' => '/app/tugas',
+                            'action_label' => 'Lihat Tugas',
+                        ],
+                    ),
+                    ['push', 'fcm'],
+                );
+            }
         }
     }
 
@@ -312,5 +344,84 @@ class VisitAssignmentService
         return $user->puskesmas_id !== null
             ? VisitAssignment::query()->where('puskesmas_id_snapshot', $user->puskesmas_id)
             : VisitAssignment::query()->whereRaw('1 = 0');
+    }
+
+    /**
+     * Monitoring kunjungan (revisi Bu Kadis, dashboard/kunjungan monitoring) -- summary status
+     * (termasuk 'overdue': scheduled_date SUDAH LEWAT tapi masih pending/in_progress, alias
+     * "tenggat lewat") + breakdown per desa (berapa kunjungan & siapa petugasnya). SAMA scope
+     * dengan scopedQuery() (kader/nakes: cuma assignment miliknya sendiri -- ringkasan 1 orang,
+     * tidak terlalu berguna tapi tidak salah; admin_puskesmas/pj_prolanis: puskesmas sendiri;
+     * super_admin: semua ATAU satu puskesmas kalau $puskesmasId diisi).
+     *
+     * @return array{summary: array{pending: int, in_progress: int, completed: int, cancelled: int, overdue: int}, per_desa: array<int, array{desa_id: int, desa_nama: string, total: int, pending: int, in_progress: int, completed: int, petugas: array<int, string>}>}
+     */
+    public function monitoringSummary(User $user, ?int $puskesmasId = null): array
+    {
+        $query = $this->scopedQuery($user);
+        if ($puskesmasId !== null && DataScope::isFullAccess($user)) {
+            $query->where('puskesmas_id_snapshot', $puskesmasId);
+        }
+
+        $statusCounts = (clone $query)
+            ->selectRaw('status, count(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $overdueCount = (clone $query)
+            ->whereIn('status', ['pending', 'in_progress'])
+            ->whereDate('scheduled_date', '<', now()->toDateString())
+            ->count();
+
+        $summary = [
+            'pending' => (int) ($statusCounts['pending'] ?? 0),
+            'in_progress' => (int) ($statusCounts['in_progress'] ?? 0),
+            'completed' => (int) ($statusCounts['completed'] ?? 0),
+            'cancelled' => (int) ($statusCounts['cancelled'] ?? 0),
+            'overdue' => $overdueCount,
+        ];
+
+        // whereNotNull desa_id -- SAMA prinsip DashboardService::risikoPerDesa (level desa butuh
+        // presisi lebih tinggi dari kecamatan_fallback), pasien yang desanya belum resolved tidak
+        // bisa dikelompokkan "desa mana" di breakdown ini (tetap terhitung di $summary di atas).
+        $rows = (clone $query)
+            ->join('patients_cache', 'patients_cache.id', '=', 'visit_assignments.patient_id')
+            ->join('desa', 'desa.id', '=', 'patients_cache.desa_id')
+            ->leftJoin('kader', 'kader.id', '=', 'visit_assignments.kader_id')
+            ->leftJoin('users as kader_user', 'kader_user.id', '=', 'kader.user_id')
+            ->leftJoin('tenaga_kesehatan', 'tenaga_kesehatan.id', '=', 'visit_assignments.tenaga_kesehatan_id')
+            ->leftJoin('users as tk_user', 'tk_user.id', '=', 'tenaga_kesehatan.user_id')
+            ->selectRaw('desa.id as desa_id, desa.nama as desa_nama, visit_assignments.status as status, COALESCE(kader_user.name, tk_user.name) as petugas_nama')
+            ->get();
+
+        $grouped = [];
+        foreach ($rows as $row) {
+            $desaId = (int) $row->desa_id;
+
+            if (! isset($grouped[$desaId])) {
+                $grouped[$desaId] = [
+                    'desa_id' => $desaId,
+                    'desa_nama' => $row->desa_nama,
+                    'total' => 0,
+                    'pending' => 0,
+                    'in_progress' => 0,
+                    'completed' => 0,
+                    'petugas' => [],
+                ];
+            }
+
+            $grouped[$desaId]['total']++;
+            if (isset($grouped[$desaId][$row->status])) {
+                $grouped[$desaId][$row->status]++;
+            }
+            if ($row->petugas_nama !== null && ! in_array($row->petugas_nama, $grouped[$desaId]['petugas'], true)) {
+                $grouped[$desaId]['petugas'][] = $row->petugas_nama;
+            }
+        }
+
+        return [
+            'summary' => $summary,
+            'per_desa' => array_values($grouped),
+        ];
     }
 }

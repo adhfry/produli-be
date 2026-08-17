@@ -28,6 +28,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
@@ -52,9 +53,8 @@ class PatientController extends Controller
     {
         $this->authorize('viewAny', PatientsCache::class);
 
-        $paginator = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request)
+        $paginator = $this->applySort($this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request), $request)
             ->with(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification'])
-            ->orderBy('nama')
             ->paginate($request->integer('per_page', 20));
 
         return ApiResponse::success([
@@ -90,6 +90,16 @@ class PatientController extends Controller
                     fn ($riskQuery) => $riskQuery->where('level', $request->string('risk_level'))
                 )
             )
+            // "Deteksi Dini Aktif" (revisi Bu Kadis) -- pasien Sedang yang berpotensi memburuk ke
+            // Berat (RiskClassificationService::evaluateEarlyDetection()), dashboard/pasien perlu
+            // filter cepat khusus kasus ini tanpa staf harus scroll manual cari ikon peringatan.
+            ->when(
+                $request->boolean('early_detection_only'),
+                fn ($q) => $q->whereHas(
+                    'latestRiskClassification',
+                    fn ($riskQuery) => $riskQuery->where('early_detection_flag', true)
+                )
+            )
             // BUKAN cuma where('kecamatan_id', ...) langsung ke patients_cache.kecamatan_id --
             // kolom itu NULL untuk ~19,6% pasien yang puskesmas_id-nya justru SUDAH resolved
             // (lihat migration add_kecamatan_id_to_patients_cache_table, dan komentar
@@ -116,7 +126,21 @@ class PatientController extends Controller
             // Revisi Bu Kadis (Fase 5) -- HANYA full-access (super_admin) yang boleh persempit
             // lewat param ini; admin_puskesmas/pj_prolanis SUDAH terkunci ke puskesmas sendiri
             // lewat scopedQuery() di atas, input mereka diam-diam diabaikan (bukan error 403 --
-            // pola sama seperti DashboardService::summaryFor()).
+            // pola sama seperti DashboardService::summaryFor()). Tetap AMAN secara data (scope
+            // tidak pernah lebar dari puskesmas sendiri), tapi silent-ignore ini dicatat ke log
+            // (temuan audit, docs/planning/15) supaya percobaan filter di luar wewenang tetap
+            // punya jejak, bukan hilang tanpa bekas saat diaudit nanti.
+            ->when(
+                $request->filled('puskesmas_id') && ! DataScope::isFullAccess($request->user()),
+                function ($q) use ($request) {
+                    Log::info('PatientController: puskesmas_id filter diabaikan, user bukan full-access', [
+                        'user_id' => $request->user()->id,
+                        'requested_puskesmas_id' => $request->integer('puskesmas_id'),
+                    ]);
+
+                    return $q;
+                }
+            )
             ->when(
                 $request->filled('puskesmas_id') && DataScope::isFullAccess($request->user()),
                 fn ($q) => $q->where('puskesmas_id', $request->integer('puskesmas_id'))
@@ -128,6 +152,43 @@ class PatientController extends Controller
                     $sub->where('nama', 'like', $term)->orWhere('no_reg', 'like', $term);
                 })
             );
+    }
+
+    /**
+     * Sort tabel dashboard/pasien (revisi Bu Kadis) -- header nama/tingkat risiko bisa diklik utk
+     * asc/desc. 'risk_level' BUKAN kolom langsung di patients_cache (ada di
+     * latestRiskClassification), jadi butuh leftJoin + CASE expression -- urutan prioritas SAMA
+     * PERSIS dashboard/pasien card ringkasan: berat(0) > sedang(1) > ringan(2) >
+     * tidak_berisiko(3) > belum dihitung(4). early_detection_flag jadi tie-breaker KEDUA (bukan
+     * filter, cuma pengurutan) supaya pasien Sedang yang berpotensi memburuk ke Berat naik ke
+     * atas dalam grup 'sedang'-nya sendiri, tanpa mengubah urutan level lain.
+     */
+    private function applySort(Builder $query, Request $request): Builder
+    {
+        $sortBy = $request->string('sort_by')->toString() ?: 'nama';
+        $direction = strtolower($request->string('sort_direction')->toString()) === 'desc' ? 'desc' : 'asc';
+
+        if ($sortBy === 'risk_level') {
+            return $query
+                ->leftJoin('risk_classifications as sort_rc', function ($join) {
+                    $join->on('sort_rc.patient_id', '=', 'patients_cache.id')
+                        ->where('sort_rc.is_latest', true);
+                })
+                ->select('patients_cache.*')
+                ->orderByRaw(
+                    "CASE sort_rc.level
+                        WHEN 'berat' THEN 0
+                        WHEN 'sedang' THEN 1
+                        WHEN 'ringan' THEN 2
+                        WHEN 'tidak_berisiko' THEN 3
+                        ELSE 4
+                    END {$direction}"
+                )
+                ->orderByRaw('CASE WHEN sort_rc.early_detection_flag = 1 THEN 0 ELSE 1 END')
+                ->orderBy('patients_cache.nama');
+        }
+
+        return $query->orderBy('patients_cache.nama', $direction);
     }
 
     /**

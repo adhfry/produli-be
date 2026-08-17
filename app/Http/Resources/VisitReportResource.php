@@ -6,9 +6,10 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
- * SENGAJA tidak menyertakan photo_path -- itu KEY internal di disk S3/MinIO (docs/planning/02
- * §5), bukan URL yang bisa langsung dibuka; butuh signed URL terpisah kalau nanti perlu
- * ditampilkan balik ke klien (di luar scope task ini).
+ * photo_path (key internal S3/MinIO) SENGAJA TIDAK diekspos apa adanya -- itu bukan URL yang
+ * bisa langsung dibuka. photo_url (VisitReport::photoUrl(), revisi Bu Kadis: halaman detail
+ * kunjungan) adalah signed URL sementara (15 menit) yang boleh dibuka langsung, null kalau
+ * belum ada foto atau disk driver tidak mendukung temporary URL.
  */
 class VisitReportResource extends JsonResource
 {
@@ -27,6 +28,7 @@ class VisitReportResource extends JsonResource
             'latitude' => $this->latitude !== null ? (float) $this->latitude : null,
             'longitude' => $this->longitude !== null ? (float) $this->longitude : null,
             'face_detected' => $this->face_detected,
+            'photo_url' => $this->photoUrl(),
             'sync_status' => $this->sync_status,
             // Pemeriksaan saat kunjungan (docs/planning/02 §3) -- SEMUA opsional, bukan
             // pemeriksaan lab formal (beda dari lab_results_cache/RiskClassificationService).

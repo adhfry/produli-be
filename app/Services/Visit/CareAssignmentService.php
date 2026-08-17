@@ -106,7 +106,9 @@ class CareAssignmentService
             $this->ensureKaderAvailableForJointVisit($kader, $patient);
         }
 
-        return DB::transaction(function () use ($patient, $tenagaKesehatan, $assignedBy, $scheduledDate, $kader) {
+        $visit = null;
+
+        $plan = DB::transaction(function () use ($patient, $tenagaKesehatan, $assignedBy, $scheduledDate, $kader, &$visit) {
             $plan = CareAssignment::create([
                 'patient_id' => $patient->id,
                 'worker_type' => 'tenaga_kesehatan',
@@ -135,6 +137,12 @@ class CareAssignmentService
 
             return $plan;
         });
+
+        // Di luar transaction (konsisten dgn VisitReportService::notifyReportSubmitted) --
+        // panggilan HTTP ke Firebase tidak boleh ikut menahan/terjebak rollback DB.
+        $this->notifyVisitAssigned($visit, $scheduledDate);
+
+        return $plan;
     }
 
     /**
@@ -191,7 +199,11 @@ class CareAssignmentService
      */
     public function generateDueVisit(CareAssignment $plan): VisitAssignment
     {
-        return $this->createVisit($plan, now()->toDateString(), 'cadence_generated');
+        $scheduledDate = now()->toDateString();
+        $visit = $this->createVisit($plan, $scheduledDate, 'cadence_generated');
+        $this->notifyVisitAssigned($visit, $scheduledDate);
+
+        return $visit;
     }
 
     /**
@@ -233,6 +245,39 @@ class CareAssignmentService
         }
 
         return $visit;
+    }
+
+    /**
+     * SEBELUMNYA: assignTenagaKesehatan()/generateDueVisit() sama sekali tidak menotif
+     * tenaga_kesehatan (beda dari createAdhocVisit() di atas yang sudah push+fcm) -- nakes bisa
+     * tidak sadar ada kunjungan berulang baru sampai buka app sendiri. Type 'visit_assigned' SAMA
+     * dengan VisitAssignmentService::notifyAssignedKaders() (sisi kader) supaya frontend cukup
+     * satu formatNotification()/notifIcon() case untuk keduanya.
+     */
+    private function notifyVisitAssigned(VisitAssignment $visit, string $scheduledDate): void
+    {
+        $assignee = $visit->assigneeUser();
+
+        if ($assignee === null) {
+            return;
+        }
+
+        $this->notifyService->notify(
+            NotifiableTarget::user($assignee),
+            new NotificationPayload(
+                type: 'visit_assigned',
+                title: 'Tugas Kunjungan Baru',
+                body: "Kunjungan baru dijadwalkan {$scheduledDate}.",
+                data: [
+                    'type' => 'visit_assigned',
+                    'task_count' => 1,
+                    'scheduled_date' => $scheduledDate,
+                    'action_url' => '/app/tugas',
+                    'action_label' => 'Lihat Tugas',
+                ],
+            ),
+            ['push', 'fcm'],
+        );
     }
 
     private function createVisit(CareAssignment $plan, string $scheduledDate, string $origin): VisitAssignment

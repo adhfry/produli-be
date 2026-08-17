@@ -172,6 +172,78 @@ class PatientControllerTest extends TestCase
         $this->assertSame('berat', $response->json('data.items.0.risk_level'));
     }
 
+    public function test_filter_early_detection_only(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $earlyDetection = $this->makePatient($this->puskesmasA, 1);
+        $sedangBiasa = $this->makePatient($this->puskesmasA, 2);
+        $beratBiasa = $this->makePatient($this->puskesmasA, 3);
+
+        RiskClassification::create(['patient_id' => $earlyDetection->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true, 'early_detection_flag' => true]);
+        RiskClassification::create(['patient_id' => $sedangBiasa->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true, 'early_detection_flag' => false]);
+        RiskClassification::create(['patient_id' => $beratBiasa->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients?early_detection_only=1');
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertEquals([$earlyDetection->id], $ids->all());
+    }
+
+    public function test_sort_by_risk_level_urutkan_berat_ke_ringan(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $ringan = $this->makePatient($this->puskesmasA, 1);
+        $berat = $this->makePatient($this->puskesmasA, 2);
+        $sedang = $this->makePatient($this->puskesmasA, 3);
+        $belumDihitung = $this->makePatient($this->puskesmasA, 4);
+
+        RiskClassification::create(['patient_id' => $ringan->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+        RiskClassification::create(['patient_id' => $berat->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+        RiskClassification::create(['patient_id' => $sedang->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients?sort_by=risk_level&sort_direction=asc');
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertEquals([$berat->id, $sedang->id, $ringan->id, $belumDihitung->id], $ids->all());
+    }
+
+    public function test_sort_by_risk_level_early_detection_naik_dalam_grup_sedang(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $sedangBiasa = $this->makePatient($this->puskesmasA, 1);
+        $sedangEarlyDetection = $this->makePatient($this->puskesmasA, 2);
+
+        RiskClassification::create(['patient_id' => $sedangBiasa->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true, 'early_detection_flag' => false]);
+        RiskClassification::create(['patient_id' => $sedangEarlyDetection->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true, 'early_detection_flag' => true]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients?sort_by=risk_level');
+
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertEquals([$sedangEarlyDetection->id, $sedangBiasa->id], $ids->all());
+    }
+
+    public function test_response_menyertakan_no_bpjs(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $this->makePatient($this->puskesmasA, 1, ['no_reg' => '1010125000001', 'no_bpjs' => '0001234567890']);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients');
+
+        $response->assertOk();
+        $this->assertSame('0001234567890', $response->json('data.items.0.no_bpjs'));
+    }
+
     /**
      * Regresi bug nyata: admin_puskesmas Pandian kehilangan 5 dari 6 pasien Risiko Berat saat
      * frontend mengirim kecamatan_id (lockKecamatanToOwnPuskesmas(), dashboard/pasien/index.vue)

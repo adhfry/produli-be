@@ -54,6 +54,40 @@ class VisitAssignmentController extends Controller
     }
 
     /**
+     * Monitoring kunjungan (revisi Bu Kadis -- summary strip dashboard/kunjungan/index.vue) --
+     * berapa belum/sedang-proses/selesai/tenggat-lewat, dan siapa mengunjungi desa mana.
+     * viewAny (BUKAN ability terpisah) -- sama gate dengan index(), cuma ringkasan dari data
+     * yang sama, bukan data baru yang butuh otorisasi berbeda.
+     */
+    public function monitoring(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', VisitAssignment::class);
+
+        $puskesmasId = $request->filled('puskesmas_id') ? $request->integer('puskesmas_id') : null;
+
+        return ApiResponse::success($this->service->monitoringSummary($request->user(), $puskesmasId));
+    }
+
+    /**
+     * Detail SATU kunjungan (revisi Bu Kadis -- halaman dashboard/kunjungan/[id].vue) -- eager
+     * load SAMA PERSIS index() (termasuk latestReport.attendees utk PMO/kunjungan berombongan)
+     * supaya shape VisitAssignmentResource konsisten antara list & detail, cuma beda granularitas
+     * akses (satu baris vs paginated). Policy::view() sudah scoped per role (kader/nakes: milik
+     * sendiri, admin_puskesmas/pj_prolanis: puskesmas sendiri, super_admin: semua).
+     */
+    public function show(VisitAssignment $visitAssignment): JsonResponse
+    {
+        $this->authorize('view', $visitAssignment);
+
+        $visitAssignment->load([
+            'patient', 'kader.user', 'tenagaKesehatan.user', 'assignedBy', 'puskesmasSnapshot', 'companions.kader.user',
+            'latestReport.pjReviewedBy', 'latestReport.validatedBy', 'latestReport.attendees.kader.user',
+        ]);
+
+        return ApiResponse::success(new VisitAssignmentResource($visitAssignment));
+    }
+
+    /**
      * PJ Prolanis (atau admin_puskesmas/super_admin) menugaskan kader ke pasien.
      */
     public function store(CreateVisitAssignmentRequest $request): JsonResponse

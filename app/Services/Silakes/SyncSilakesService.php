@@ -303,6 +303,7 @@ class SyncSilakesService
             ['external_patient_id' => $row['patient_id']],
             [
                 'no_reg' => $row['no_reg'] ?? null,
+                'no_bpjs' => $row['no_bpjs'] ?? null,
                 'nik_hash' => $row['nik_hash'],
                 'nik' => $row['nik'] ?? null,
                 'nama' => $row['name'],
