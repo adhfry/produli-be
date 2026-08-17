@@ -180,5 +180,8 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::delete('fcm-tokens', [FcmTokenController::class, 'destroy']);
 
     Route::get('announcements', [AnnouncementController::class, 'index']);
+    Route::get('announcements/unread', [AnnouncementController::class, 'unread']);
     Route::post('announcements', [AnnouncementController::class, 'store']);
+    Route::post('announcements/{announcement}/read', [AnnouncementController::class, 'markRead']);
+    Route::delete('announcements/{announcement}', [AnnouncementController::class, 'destroy']);
 });
