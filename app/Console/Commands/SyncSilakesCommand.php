@@ -10,17 +10,19 @@ use Throwable;
 
 /**
  * Scheduler dipanggil harian (routes/console.php), tapi command ini yang menegakkan
- * interval minimal 48 jam sejak run SUKSES terakhir — dicek lewat integration_sync_logs,
- * bukan cron dengan interval "tiap 2 hari" di field hari (patah di batas bulan).
+ * interval minimal 24 jam sejak run SUKSES terakhir — dicek lewat integration_sync_logs,
+ * bukan cron dengan interval "tiap N hari" di field hari (patah di batas bulan). 24 jam
+ * (bukan 48) -- keputusan eksplisit user supaya auto-sync selalu jalan otomatis 24 jam
+ * sejak sync terakhir.
  */
 class SyncSilakesCommand extends Command
 {
-    private const MIN_HOURS_BETWEEN_RUNS = 48;
+    private const MIN_HOURS_BETWEEN_RUNS = 24;
 
     protected $signature = 'produli:sync-silakes
-        {--force : Jalankan meski run sukses terakhir belum 48 jam lalu}';
+        {--force : Jalankan meski run sukses terakhir belum 24 jam lalu}';
 
-    protected $description = 'Sync pasien & hasil lab dari SiLAKES (throttle: minimal 48 jam sejak run sukses terakhir)';
+    protected $description = 'Sync pasien & hasil lab dari SiLAKES (throttle: minimal 24 jam sejak run sukses terakhir)';
 
     public function handle(SyncSilakesService $service): int
     {
