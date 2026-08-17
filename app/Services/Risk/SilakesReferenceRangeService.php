@@ -11,9 +11,20 @@ use Illuminate\Support\Collection;
  * Klasifikasi presisi umur+gender terhadap App\Models\ReferenceRangeCache (disinkron dari
  * SiLAKES via SyncSilakesService::syncReferenceRanges()) -- port PERSIS dari algoritma
  * App\Services\LabReferenceService::classify() di repo SiLAKES (ageMatches/valueMatches,
- * prioritas hari vs tahun untuk band neonatal). Dipakai RiskClassificationService sebagai
- * sumber "exceeded" presisi untuk 5 dari 6 parameter yang dipakainya (Gula Darah Puasa,
- * Cholesterol, Trigliserida, LDL, Urea) -- BUKAN Creatinine, lihat classify() docblock.
+ * prioritas hari vs tahun untuk band neonatal).
+ *
+ * NONAKTIF sejak keputusan eksplisit user (bukan dihapus -- lihat PARAMETER_MAP): standar
+ * resmi PRODULI (landing page "Pemeriksaan & Nilai Rujukan") memakai SATU ambang tunggal per
+ * parameter, tanpa tingkatan umur maupun gender -- selaras dengan sumber SiLAKES sendiri, yang
+ * untuk kelima parameter ini (Gula Darah Puasa, Cholesterol, Trigliserida, LDL, Urea) TIDAK
+ * PERNAH membedakan gender (kolom `gender` selalu null di ReferenceRangeSeeder repo SiLAKES),
+ * dan populasi PRODULI 100% Prolanis dewasa/lansia sehingga tier anak-anak (2-17 tahun) pada
+ * reference_ranges_cache tidak relevan -- lebih jauh, mencocokkan tanpa mempertimbangkan umur
+ * TAPI tetap membaca band multi-tier itu akan ambigu (band anak & dewasa nilainya tumpang
+ * tindih untuk parameter yang sama, lihat riwayat percakapan). PARAMETER_MAP sengaja dikosongkan
+ * (bukan kelas ini dihapus) supaya reference_ranges_cache & sinkronisasinya tetap ada kalau
+ * suatu saat dibutuhkan lagi, tapi RiskClassificationService::resolvePrecisionBand() otomatis
+ * selalu fallback ke RiskThreshold (ambang tunggal) untuk semua parameter, bukan cuma sebagian.
  *
  * INI SALINAN KE-3 dari algoritma classify() (setelah PHP SiLAKES & TypeScript SiLAKES) --
  * kalau SiLAKES mengubah STRUKTUR band (bukan cuma nilai cutoff, yang otomatis ter-refresh
@@ -24,22 +35,15 @@ class SilakesReferenceRangeService
 {
     /**
      * Peta nama parameter RiskClassificationService (kolom lab_results_cache.parameter,
-     * persis nama pemeriksaan SiLAKES) -> parameter_key SiLAKES. Creatinine SENGAJA tidak
-     * dipetakan -- SiLAKES cuma punya 3 tier binary (Rendah/Normal/Tinggi) per parameter,
-     * sementara RiskClassificationService butuh 2 tingkat keparahan terpisah (Sedang
-     * 1.7-1.9, Berat >=2.0) lewat is_direct_classifier. Memaksakan mapping ini akan
-     * menghilangkan pembedaan Sedang/Berat yang SiLAKES tidak punya presisi setara --
-     * Creatinine TETAP 100% di jalur RiskThreshold lama (keputusan eksplisit, bukan lupa).
+     * persis nama pemeriksaan SiLAKES) -> parameter_key SiLAKES. SENGAJA KOSONG (lihat docblock
+     * kelas) -- isMapped() jadi selalu false untuk parameter apa pun, sehingga
+     * RiskClassificationService::resolvePrecisionBand() selalu fallback ke RiskThreshold
+     * (ambang tunggal, tanpa umur/gender) untuk KESELURUHAN 6 parameter, termasuk Creatinine
+     * yang memang sudah dari awal tidak pernah dipetakan ke sini.
      *
      * @var array<string, string>
      */
-    public const PARAMETER_MAP = [
-        'Gula Darah Puasa' => 'gula_darah_puasa',
-        'Cholesterol' => 'cholesterol_total',
-        'Trigliserida' => 'trigliserida',
-        'LDL' => 'ldl',
-        'Urea' => 'urea',
-    ];
+    public const PARAMETER_MAP = [];
 
     /** @var array<string, Collection<int, ReferenceRangeCache>>|null */
     private ?array $cache = null;

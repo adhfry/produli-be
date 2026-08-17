@@ -24,11 +24,15 @@ use Illuminate\Support\Facades\Log;
  *   SEDANG_PARAMETERS harus LENGKAP tersedia DAN seluruhnya melebihi nilai rujukan sekaligus.
  *   SEBELUMNYA cukup "salah satu dari 4 parameter melebihi" (OR) — itu yang menyebabkan bug
  *   A. Jazili: Trigliserida 192 sendirian (Cholesterol/LDL normal, Gula Darah Puasa tidak
- *   diperiksa) salah dianggap Sedang. Tidak ada lagi tier "Ringan" hasil kombinasi parsial
- *   (mis. "cuma Gula Darah Puasa melebihi") — kombinasi yang tidak memenuhi AND penuh untuk
- *   Sedang maupun Berat dianggap BELUM cukup jadi perhatian sama sekali, jatuh ke
- *   'tidak_berisiko' (atau null kalau pasien memang belum pernah diklasifikasikan), bukan
- *   'ringan' — keputusan eksplisit user, bukan default yang ditebak.
+ *   diperiksa) salah dianggap Sedang.
+ * - Ringan (REVISI KETIGA, dikembalikan sesuai standar resmi landing page "Pemeriksaan & Nilai
+ *   Rujukan"): KHUSUS kalau Gula Darah Puasa TERSEDIA dan melebihi ambang, TAPI kombinasi
+ *   Sedang/Berat di atas tidak terpenuhi — BUKAN "parameter apa pun sendirian", cuma Gula Darah
+ *   Puasa yang punya tier Ringan berdiri sendiri (mis. Trigliserida 192 sendirian TETAP tidak
+ *   menghasilkan apa pun, bug A. Jazili di atas tidak kembali). Diperiksa PALING TERAKHIR
+ *   (setelah Sedang/Berat gagal), jadi kalau GDP kebetulan juga bagian dari kombinasi Sedang/
+ *   Berat yang lengkap, level yang lebih parah itu yang menang lewat determineLevel() ini
+ *   sendiri, bukan Ringan.
  *
  * REVISI Bu Kadis: Creatinine BUKAN lagi bagian BERAT_PARAMETERS/SEDANG_PARAMETERS (tidak
  * dobel-hitung) — dipindah jadi "direct classifier" (RiskThreshold.is_direct_classifier=true).
@@ -104,12 +108,12 @@ class RiskClassificationService
             $value = (float) $result->value;
             $exceeded = false;
 
-            // Presisi umur+gender dari SiLAKES (5 dari 6 parameter, BUKAN Creatinine -- lihat
-            // SilakesReferenceRangeService::PARAMETER_MAP) DICOBA DULU. null berarti tidak
-            // berlaku (parameter tidak dipetakan, gender/tgl_lahir pasien belum lengkap, atau
-            // reference_ranges_cache belum pernah sync/tidak punya band untuk kombinasi ini) --
-            // fallback ke RiskThreshold lama PERSIS seperti sebelum fitur ini ada, perilaku lama
-            // tidak berubah sama sekali untuk kasus itu.
+            // Presisi umur+gender dari SiLAKES DICOBA DULU, tapi SilakesReferenceRangeService::
+            // PARAMETER_MAP sengaja kosong sekarang (lihat docblock kelas itu) -- isMapped()
+            // selalu false, jadi ini SELALU null dan langsung fallback ke RiskThreshold (ambang
+            // tunggal, tanpa umur/gender) untuk KESELURUHAN 6 parameter. Pemanggilan tetap
+            // dipertahankan di sini (bukan dihapus) supaya jalur presisi bisa diaktifkan lagi
+            // sekadar dengan mengisi PARAMETER_MAP, tanpa perlu ubah RiskClassificationService.
             $precisionBand = $this->resolvePrecisionBand($result->parameter, $value, $patient);
 
             if ($precisionBand !== null) {
@@ -481,13 +485,21 @@ class RiskClassificationService
 
         // AND ketat, pola IDENTIK dengan Berat di atas (bukan lagi "salah satu dari
         // SEDANG_PARAMETERS melebihi" -- itu bug A. Jazili, lihat docblock kelas). Kombinasi
-        // parsial (mis. cuma Trigliserida, atau cuma Gula Darah Puasa) TIDAK cukup -- jatuh ke
-        // null di sini, ditangani classify() sebagai 'tidak_berisiko'/tetap null seperti biasa.
+        // parsial (mis. cuma Trigliserida sendirian) TIDAK cukup -- jatuh ke pengecekan Ringan
+        // di bawah (yang cuma peduli Gula Darah Puasa), lalu null/'tidak_berisiko' kalau itu pun
+        // tidak match.
         $sedangLengkap = array_diff(self::SEDANG_PARAMETERS, $availableParameters) === [];
         $sedangSemuaMelebihi = array_diff(self::SEDANG_PARAMETERS, $exceededParameters) === [];
 
         if ($sedangLengkap && $sedangSemuaMelebihi) {
             return 'sedang';
+        }
+
+        // Ringan (lihat docblock kelas, REVISI KETIGA) -- KHUSUS Gula Darah Puasa, bukan
+        // parameter kombinasi apa pun. Dicek PALING TERAKHIR (Berat/Sedang sudah gagal di atas),
+        // supaya tidak menang-menangan sendiri terhadap kombinasi yang lebih parah.
+        if (in_array('Gula Darah Puasa', $exceededParameters, true)) {
+            return 'ringan';
         }
 
         return null;
@@ -531,9 +543,10 @@ class RiskClassificationService
 
     /**
      * Coba klasifikasi presisi umur+gender via SilakesReferenceRangeService. null berarti
-     * TIDAK BERLAKU untuk kasus ini (parameter di luar PARAMETER_MAP -- termasuk Creatinine,
-     * data pasien belum lengkap, atau reference_ranges_cache belum sync/tidak punya band) --
-     * caller WAJIB fallback ke RiskThreshold lama untuk null, BUKAN menganggap "tidak exceeded".
+     * TIDAK BERLAKU untuk kasus ini -- PARAMETER_MAP kosong sekarang (lihat docblock kelas itu)
+     * berarti ini SELALU null untuk parameter apa pun, termasuk Creatinine yang memang sudah
+     * dari awal tidak pernah dipetakan -- caller WAJIB fallback ke RiskThreshold lama untuk
+     * null, BUKAN menganggap "tidak exceeded".
      *
      * operator/threshold_min/threshold_max DITURUNKAN dari band yang match (bukan disimpan
      * literal di reference_ranges_cache) supaya bentuknya PERSIS kompatibel dengan yang sudah
