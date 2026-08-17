@@ -99,6 +99,23 @@ class AuthTest extends TestCase
         $this->assertDatabaseCount('refresh_tokens', 0);
     }
 
+    public function test_login_ditolak_kalau_staf_dinonaktifkan(): void
+    {
+        // Pesan SPESIFIK (bukan generik "email atau password salah") -- password-nya sendiri
+        // benar, cuma status_aktif=false (StaffService::setActive()).
+        $user = User::factory()->create(['password' => Hash::make('password123'), 'status_aktif' => false]);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password123',
+            'device_id' => 'device-A',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertStringContainsString('dinonaktifkan', $response->json('errors.email.0'));
+        $this->assertDatabaseCount('refresh_tokens', 0);
+    }
+
     public function test_login_akun_google_only_tanpa_password_tidak_bisa_login_password(): void
     {
         $user = User::factory()->create(['password' => null, 'google_id' => 'google-1']);
@@ -187,6 +204,30 @@ class AuthTest extends TestCase
             ->postJson('/api/v1/auth/refresh');
 
         $response->assertStatus(401);
+    }
+
+    public function test_refresh_ditolak_kalau_staf_dinonaktifkan_setelah_login(): void
+    {
+        // Simulasi: staf login normal DULU (masih aktif), lalu BARU dinonaktifkan (mis. lewat
+        // StaffService::setActive() di request lain) -- refresh berikutnya harus tetap ditolak,
+        // bukan cuma login() yang menolak. Di sini update() langsung ke kolom, bukan lewat
+        // StaffService::setActive() (yang sudah revokeAllForUser() sendiri) -- justru supaya
+        // AuthTokenService::refresh() DIUJI SENDIRIAN sebagai lapis pertahanan kedua kalau ada
+        // refresh token yang lolos revoke massal itu (race condition/kasus lain).
+        $user = User::factory()->create(['password' => Hash::make('password123')]);
+        $login = $this->loginAs($user, 'device-A');
+        $rawRefreshToken = $this->extractCookieValue($login, self::REFRESH_COOKIE);
+
+        $user->update(['status_aktif' => false]);
+
+        $response = $this->withCredentials()->withUnencryptedCookies([self::REFRESH_COOKIE => $rawRefreshToken])
+            ->withHeaders(['X-Device-Id' => 'device-A'])
+            ->postJson('/api/v1/auth/refresh');
+
+        $response->assertStatus(401);
+
+        $record = RefreshToken::where('token_hash', hash('sha256', $rawRefreshToken))->first();
+        $this->assertNotNull($record->revoked_at);
     }
 
     public function test_logout_merevoke_access_token_dan_refresh_token(): void
@@ -302,6 +343,28 @@ class AuthTest extends TestCase
             'code' => $query['code'],
             'device_id' => 'device-google-1',
         ])->assertStatus(401);
+    }
+
+    public function test_google_exchange_ditolak_kalau_staf_dinonaktifkan(): void
+    {
+        // callback() sendiri TIDAK cek status_aktif (cuma tautkan google_id + terbitkan code) --
+        // exchangeGoogle() yang menolak, gerbang sama seperti login() email/password, supaya
+        // staf nonaktif tidak bisa bypass lewat jalur SSO.
+        $user = User::factory()->create(['email' => 'nonaktif@example.com', 'google_id' => null, 'status_aktif' => false]);
+        $this->mockGoogleUser(['id' => 'google-999', 'email' => 'nonaktif@example.com']);
+
+        $callback = $this->get('/auth/google/callback');
+        $callback->assertRedirect();
+        parse_str((string) parse_url($callback->headers->get('Location'), PHP_URL_QUERY), $query);
+        $this->assertArrayHasKey('code', $query);
+
+        $exchange = $this->postJson('/api/v1/auth/google/exchange', [
+            'code' => $query['code'],
+            'device_id' => 'device-google-nonaktif',
+        ]);
+
+        $exchange->assertStatus(422);
+        $this->assertDatabaseCount('refresh_tokens', 0);
     }
 
     public function test_google_callback_user_yang_sudah_pernah_login_google_sebelumnya_diproses_biasa(): void

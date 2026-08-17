@@ -5,6 +5,7 @@ namespace App\Services\Staff;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Services\Auth\AccountActivationService;
+use App\Services\Auth\AuthTokenService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
@@ -26,7 +27,10 @@ use Illuminate\Validation\ValidationException;
  */
 class StaffService
 {
-    public function __construct(private readonly AccountActivationService $accountActivationService) {}
+    public function __construct(
+        private readonly AccountActivationService $accountActivationService,
+        private readonly AuthTokenService $authTokenService,
+    ) {}
 
     /**
      * @param  array{name: string, email: string, no_hp: string, puskesmas_id?: ?int, role: string}  $data
@@ -178,6 +182,18 @@ class StaffService
         }
 
         $target->update(['status_aktif' => $active]);
+
+        // Nonaktifkan sekarang benar-benar mencabut akses (keputusan Kepala Dinas -- staf
+        // punya akses dashboard/data pasien lebih luas dari kader lapangan, beda dari
+        // KaderService::setActive() yang cuma menghentikan penugasan BARU) -- login() dan
+        // AuthTokenService::refresh() sama-sama menolak user dengan status_aktif=false, TAPI
+        // access token Sanctum yang SUDAH terbit (berlaku sampai config('sanctum.expiration')
+        // menit) tetap valid sampai request refresh berikutnya kalau tidak di-revoke di sini.
+        // Revoke semua refresh token supaya sesi yang sedang berjalan mati secepatnya, bukan
+        // menunggu access token itu kedaluwarsa sendiri.
+        if (! $active) {
+            $this->authTokenService->revokeAllForUser($target->id);
+        }
 
         return $target->fresh();
     }

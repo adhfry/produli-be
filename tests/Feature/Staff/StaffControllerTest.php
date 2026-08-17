@@ -8,6 +8,7 @@ use App\Models\Kabupaten;
 use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
+use App\Models\RefreshToken;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use Database\Seeders\RolesSeeder;
@@ -449,6 +450,26 @@ class StaffControllerTest extends TestCase
 
         $this->patchJson("/api/v1/staff/{$admin->id}/status", ['status_aktif' => true])->assertOk();
         $this->assertTrue($admin->fresh()->status_aktif);
+    }
+
+    public function test_nonaktifkan_staf_langsung_revoke_semua_refresh_token_aktifnya(): void
+    {
+        // Keputusan Kepala Dinas: staf nonaktif tidak boleh login lagi (AuthController::login()/
+        // AuthTokenService::refresh()) -- tapi sesi yang SUDAH berjalan sebelum dinonaktifkan
+        // juga harus mati SEKARANG, bukan menunggu refresh token itu kedaluwarsa sendiri
+        // (30 hari). StaffService::setActive() harus langsung revokeAllForUser().
+        $superAdmin = $this->makeSuperAdmin();
+        $admin = $this->makeAdminPuskesmas();
+
+        RefreshToken::create([
+            'user_id' => $admin->id, 'token_hash' => hash('sha256', 'raw-token-aktif'),
+            'device_id' => 'device-A', 'expires_at' => now()->addDays(30),
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+        $this->patchJson("/api/v1/staff/{$admin->id}/status", ['status_aktif' => false])->assertOk();
+
+        $this->assertDatabaseMissing('refresh_tokens', ['user_id' => $admin->id, 'revoked_at' => null]);
     }
 
     public function test_nonaktifkan_staf_tidak_menghapus_riwayat_assigned_by(): void
