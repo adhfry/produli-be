@@ -22,7 +22,12 @@ return [
     // WAJIB origin spesifik (bukan '*') -- browser menolak kombinasi wildcard origin dengan
     // supports_credentials=true (dibutuhkan untuk cookie refresh token, docs/planning/02 §6).
     // FRONTEND_URL sudah ada di .env, tinggal dipastikan isinya benar per environment.
-    'allowed_origins' => [env('FRONTEND_URL', 'http://localhost:3000')],
+    // TUNNEL_FRONTEND_URL opsional -- dipakai sesi uji coba HP lewat SSH tunnel ke VPS (temuan
+    // lapangan kamera/GPS), null di luar sesi itu jadi tidak menambah origin apapun.
+    'allowed_origins' => array_filter([
+        env('FRONTEND_URL', 'http://localhost:3000'),
+        env('TUNNEL_FRONTEND_URL'),
+    ]),
 
     'allowed_origins_patterns' => [],
 

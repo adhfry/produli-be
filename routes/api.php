@@ -168,6 +168,14 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::post('visit-reports', [VisitReportController::class, 'store']);
     Route::patch('visit-reports/{visitReport}/accept', [VisitReportController::class, 'accept']);
     Route::patch('validasi-laporan/{visitReport}', [VisitReportController::class, 'validateReport']);
+    // "Batalkan Validasi" -- kembalikan laporan yang sudah divalidasi ke status 'pending'
+    // (temuan lapangan, revisi Bu Kadis).
+    Route::patch('validasi-laporan/{visitReport}/batalkan', [VisitReportController::class, 'revertValidation']);
+    // Validasi massal -- pilih beberapa laporan pending sekaligus lewat checkbox di dashboard
+    // (temuan lapangan, UX super_admin). SEBELUM 'validasi-laporan/{visitReport}' TIDAK perlu
+    // (prefix path beda total, 'bulk' bukan angka jadi tidak pernah tertangkap route-model-
+    // binding {visitReport} juga) -- tetap taruh di atas untuk keterbacaan urutan saja.
+    Route::patch('validasi-laporan-bulk', [VisitReportController::class, 'validateBulk']);
 
     Route::get('rujukan', [RujukanController::class, 'index']);
     Route::patch('rujukan/{visitReport}/konfirmasi', [RujukanController::class, 'konfirmasi']);
