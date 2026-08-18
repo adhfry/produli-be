@@ -14,6 +14,7 @@ class RiskClassification extends Model
         'level',
         'criteria_snapshot',
         'computed_at',
+        'assessment_date',
         'is_latest',
         'early_detection_flag',
         'early_detection_reason',
@@ -24,6 +25,7 @@ class RiskClassification extends Model
         return [
             'criteria_snapshot' => 'array',
             'computed_at' => 'datetime',
+            'assessment_date' => 'date',
             'is_latest' => 'boolean',
             'early_detection_flag' => 'boolean',
             'early_detection_reason' => 'array',

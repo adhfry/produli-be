@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\ListPatientsRequest;
+use App\Http\Requests\Patient\OverridePuskesmasRequest;
 use App\Http\Requests\Patient\ProposePatientUpdateRequest;
 use App\Http\Requests\Patient\SearchPatientByNikRequest;
 use App\Http\Resources\LabResultResource;
@@ -24,6 +25,7 @@ use App\Support\ApiResponse;
 use App\Support\DataScope;
 use App\Support\NikHasher;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -321,7 +323,7 @@ class PatientController extends Controller
         $this->authorize('view', $patient);
 
         $history = $patient->riskClassifications()
-            ->orderByDesc('computed_at')
+            ->orderByRaw('COALESCE(assessment_date, computed_at) DESC')
             ->orderByDesc('id')
             ->limit(100)
             ->get();
@@ -461,6 +463,49 @@ class PatientController extends Controller
         }
 
         return ApiResponse::success(null, 'Usulan perubahan data pasien berhasil diajukan ke SiLAKES untuk ditinjau.');
+    }
+
+    /**
+     * Klaim manual pasien ke puskesmas TERTENTU, menimpa hasil resolusi otomatis WilayahResolver
+     * (revisi Bu Kadis -- kasus "kunjungan khusus di luar wilayah desa/kecamatan pasien", mis.
+     * Puskesmas Gapura punya pasien yang desa geografisnya resolve ke Kota Sumenep padahal
+     * pengelola sesungguhnya Gapura). Otorisasi BUKAN PatientsCachePolicy::update biasa (itu
+     * scoped ke puskesmas pasien SAAT INI -- puskesmas yang justru mau di-KOREKSI tidak akan
+     * pernah lolos scope itu untuk klaim pasien MASUK ke puskesmasnya) -- di sini scoped ke
+     * puskesmas TUJUAN (payload): super_admin bebas pilih puskesmas mana pun, admin_puskesmas/
+     * pj_prolanis HANYA boleh klaim ke puskesmas mereka SENDIRI.
+     *
+     * Sekali di-set 'manual', SyncSilakesService/produli:reresolve-wilayah/produli:reconcile-
+     * wilayah tidak akan pernah menimpanya lagi (lihat guard di ketiga tempat itu) -- kalau perlu
+     * dikembalikan ke resolusi otomatis, jalankan produli:reresolve-wilayah setelah mengosongkan
+     * puskesmas_resolution_method pasien ini secara manual (belum ada endpoint "batalkan override"
+     * terpisah, sengaja -- kasus ini jarang terjadi & butuh keputusan sadar, bukan tombol sekali klik).
+     */
+    public function overridePuskesmas(OverridePuskesmasRequest $request, PatientsCache $patient): JsonResponse
+    {
+        $user = $request->user();
+        $targetPuskesmasId = $request->integer('puskesmas_id');
+
+        $isAllowed = DataScope::isFullAccess($user)
+            || ($user->hasAnyRole(['admin_puskesmas', 'pj_prolanis']) && $user->puskesmas_id === $targetPuskesmasId);
+
+        if (! $isAllowed) {
+            throw new AuthorizationException('Anda hanya bisa mengklaim pasien ke puskesmas Anda sendiri.');
+        }
+
+        $patient->update([
+            'puskesmas_id' => $targetPuskesmasId,
+            'puskesmas_resolution_method' => 'manual',
+        ]);
+
+        Log::info('PatientController::overridePuskesmas -- puskesmas pasien diklaim manual', [
+            'patient_id' => $patient->id,
+            'puskesmas_id' => $targetPuskesmasId,
+            'reason' => $request->string('reason')->toString() ?: null,
+            'by_user_id' => $user->id,
+        ]);
+
+        return ApiResponse::success(new PatientResource($patient->fresh()), 'Puskesmas pasien berhasil diklaim manual.');
     }
 
     /**

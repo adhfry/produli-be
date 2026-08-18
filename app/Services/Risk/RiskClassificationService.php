@@ -166,6 +166,14 @@ class RiskClassificationService
             }
         }
 
+        // Tanggal pemeriksaan medis yang memicu klasifikasi ini (bukan kapan sistem menghitung
+        // ulang) -- dipakai untuk urutan "Riwayat & Tren Kondisi" di frontend supaya sesuai
+        // kronologi hasil lab asli, bukan kapan job sync/reclassify kebetulan berjalan.
+        $assessmentDate = $latestResultPerParameter
+            ->pluck('tanggal_periksa')
+            ->filter()
+            ->max();
+
         $comboLevel = $this->determineLevel($availableParameters, $exceededParameters);
         $matchedLevel = $this->mostSevere([$comboLevel, ...$directClassifierLevels]);
 
@@ -213,7 +221,7 @@ class RiskClassificationService
             return null;
         }
 
-        return DB::transaction(function () use ($patient, $matchedLevel, $criteria, $earlyDetectionFlag, $earlyDetectionReason) {
+        return DB::transaction(function () use ($patient, $matchedLevel, $criteria, $earlyDetectionFlag, $earlyDetectionReason, $assessmentDate) {
             RiskClassification::where('patient_id', $patient->id)
                 ->where('is_latest', true)
                 ->update(['is_latest' => false]);
@@ -223,6 +231,7 @@ class RiskClassificationService
                 'level' => $matchedLevel,
                 'criteria_snapshot' => $criteria,
                 'computed_at' => now(),
+                'assessment_date' => $assessmentDate,
                 'is_latest' => true,
                 'early_detection_flag' => $earlyDetectionFlag,
                 'early_detection_reason' => $earlyDetectionReason,
@@ -406,7 +415,7 @@ class RiskClassificationService
         // mengembalikan 2 baris. Ambil 2 baris TERBARU apa adanya (computed_at, id sebagai
         // tiebreak karena presisi datetime SQLite cuma per detik).
         $history = RiskClassification::where('patient_id', $patient->id)
-            ->orderByDesc('computed_at')
+            ->orderByRaw('COALESCE(assessment_date, computed_at) DESC')
             ->orderByDesc('id')
             ->limit(2)
             ->get();
