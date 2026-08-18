@@ -149,7 +149,9 @@ class PatientController extends Controller
                 $request->filled('search'),
                 fn ($q) => $q->where(function ($sub) use ($request) {
                     $term = '%'.addcslashes($request->string('search')->trim()->toString(), '%_\\').'%';
-                    $sub->where('nama', 'like', $term)->orWhere('no_reg', 'like', $term);
+                    $sub->where('nama', 'like', $term)
+                        ->orWhere('no_reg', 'like', $term)
+                        ->orWhere('no_bpjs', 'like', $term);
                 })
             );
     }
