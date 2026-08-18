@@ -275,9 +275,17 @@ class VisitReportService
      * yang notifikasi biasa) -- dipicu HANYA kalau kader/nakes memilih 'dirujuk_puskesmas' di
      * antara tindakan. Dikirim 3 kanal sekaligus (push+fcm+email) karena ini butuh RESPON CEPAT
      * (pasien akan datang ke puskesmas, admin/PJ perlu tahu & konfirmasi) -- beda dari laporan
-     * kunjungan biasa yang cukup 2 kanal. Halaman /dashboard/rujukan (Fase 3, belum dibangun di
-     * perubahan ini) yang akan memicu alarm sfx saat polling menemukan baris baru -- notifikasi
-     * ini sendiri TIDAK memicu alarm, cuma penyalur data.
+     * kunjungan biasa yang cukup 2 kanal.
+     *
+     * Alarm sfx (temuan lapangan, revisi Bu Kadis): SEBELUMNYA cuma dipicu polling 15dtk di
+     * /dashboard/rujukan -- kelewatan total kalau admin_puskesmas/pj_prolanis tidak sedang
+     * standby PERSIS di halaman itu. Sekarang `type: 'pasien_dirujuk'` di payload ini yang
+     * jadi pemicu utama alarm langsung dari FCM foreground handler (useFcm.ts, TIDAK PEDULI
+     * halaman mana pun sedang dibuka) begitu app terbuka -- polling di halaman rujukan tetap
+     * jalan sebagai jaring pengaman kalau push gagal/izin belum diberikan. Target
+     * rolesInPuskesmas(['admin_puskesmas','pj_prolanis'], ...) di bawah SUDAH otomatis
+     * mengecualikan super_admin (bukan bagian query-nya sama sekali) -- sesuai keputusan
+     * eksplisit rujukan bukan ranah tanggap super_admin.
      *
      * Target puskesmas & try/catch mengikuti prinsip PERSIS sama seperti notifyReportSubmitted()
      * di atas -- lihat docblock method itu.

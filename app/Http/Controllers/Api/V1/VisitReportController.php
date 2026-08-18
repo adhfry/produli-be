@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\DTO\VisitValidationContext;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Visit\SubmitVisitReportRequest;
+use App\Http\Requests\Visit\ValidateVisitReportBulkRequest;
 use App\Http\Requests\Visit\ValidateVisitReportRequest;
 use App\Http\Resources\VisitReportResource;
 use App\Models\VisitAssignment;
@@ -106,5 +107,42 @@ class VisitReportController extends Controller
         $report->load('attendees.kader.user');
 
         return ApiResponse::success(new VisitReportResource($report), 'Validasi laporan kunjungan berhasil disimpan');
+    }
+
+    /**
+     * Validasi massal (temuan lapangan, UX super_admin: pilih beberapa laporan lewat checkbox,
+     * satu keputusan untuk semuanya sekaligus).
+     */
+    public function validateBulk(ValidateVisitReportBulkRequest $request): JsonResponse
+    {
+        $this->authorize('validateReport', VisitReport::class);
+
+        $reports = $this->reviewService->validateBulk(
+            $request->input('report_ids'),
+            $request->user(),
+            $request->boolean('is_valid'),
+            $request->input('note'),
+        );
+
+        foreach ($reports as $report) {
+            $report->load('attendees.kader.user');
+        }
+
+        return ApiResponse::success(VisitReportResource::collection($reports), count($reports).' laporan kunjungan berhasil divalidasi');
+    }
+
+    /**
+     * "Batalkan Validasi" (temuan lapangan) -- kembalikan laporan yang SUDAH divalidasi ke
+     * status 'pending', dipakai super_admin kalau salah pencet/keliru keputusan. Gerbang akses
+     * SAMA PERSIS dengan validateReport() (VisitReportPolicy::validateReport, super_admin saja).
+     */
+    public function revertValidation(VisitReport $visitReport): JsonResponse
+    {
+        $this->authorize('validateReport', VisitReport::class);
+
+        $report = $this->reviewService->revertValidation($visitReport, request()->user());
+        $report->load('attendees.kader.user');
+
+        return ApiResponse::success(new VisitReportResource($report), 'Validasi laporan kunjungan dibatalkan');
     }
 }
