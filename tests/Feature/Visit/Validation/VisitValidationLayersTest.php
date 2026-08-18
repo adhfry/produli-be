@@ -92,6 +92,43 @@ class VisitValidationLayersTest extends TestCase
         $this->assertFalse($result->passed);
     }
 
+    /**
+     * Threshold OFFLINE jauh lebih longgar (default 48 jam) daripada online (default 30 menit) --
+     * draft yang disimpan lalu baru disinkron berjam-jam kemudian bukan indikasi lokasi
+     * basi/dipalsukan, itu cara kerja mode offline yang disengaja.
+     */
+    public function test_gps_active_check_pass_untuk_submission_offline_walau_titik_gps_berjam_jam_lalu(): void
+    {
+        $result = app(GpsActiveCheck::class)->validate($this->makeContext([
+            'gpsCapturedAt' => now()->subHours(10),
+            'isOffline' => true,
+        ]));
+
+        $this->assertTrue($result->passed);
+    }
+
+    public function test_gps_active_check_gagal_untuk_submission_offline_kalau_melebihi_threshold_offline(): void
+    {
+        $result = app(GpsActiveCheck::class)->validate($this->makeContext([
+            'gpsCapturedAt' => now()->subDays(3),
+            'isOffline' => true,
+        ]));
+
+        $this->assertFalse($result->passed);
+    }
+
+    public function test_gps_active_check_pass_untuk_submission_online_dalam_threshold_baru_30_menit(): void
+    {
+        // Revisi: 300 -> 1800 detik (laporan lapangan "Titik GPS Sudah Terlalu Lama") --
+        // mengakomodasi waktu wajar mengisi form pemeriksaan klinis setelah foto diambil.
+        $result = app(GpsActiveCheck::class)->validate($this->makeContext([
+            'gpsCapturedAt' => now()->subMinutes(20),
+            'isOffline' => false,
+        ]));
+
+        $this->assertTrue($result->passed);
+    }
+
     // --- Layer 2: GeofenceCheck ---
 
     public function test_geofence_check_pass_dalam_radius(): void

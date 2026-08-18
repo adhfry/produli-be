@@ -42,7 +42,12 @@ class GpsActiveCheck implements VisitValidationLayer
         }
 
         if ($context->gpsCapturedAt !== null) {
-            $maxAge = (int) config('produli.validation.gps.max_age_seconds');
+            // Submission OFFLINE (draft disimpan lalu baru disinkron belakangan, bisa jam-jaman
+            // kemudian) pakai threshold jauh lebih longgar -- itu cara kerja mode offline yang
+            // disengaja, bukan indikasi lokasi basi/dipalsukan seperti submission online.
+            $maxAge = (int) config($context->isOffline
+                ? 'produli.validation.gps.max_age_seconds_offline'
+                : 'produli.validation.gps.max_age_seconds');
             // abs() wajib: diffInSeconds() Carbon 3 signed (negatif kalau argumennya di masa lalu),
             // bukan selalu absolut seperti di Carbon 2.
             $ageSeconds = abs(Carbon::now()->diffInSeconds($context->gpsCapturedAt));

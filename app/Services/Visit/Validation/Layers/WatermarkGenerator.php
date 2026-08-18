@@ -39,13 +39,21 @@ class WatermarkGenerator implements VisitValidationLayer
         $text = sprintf(
             "%s\n%s\nLat %.6f, Lng %.6f",
             $context->submitterName !== '' ? $context->submitterName : 'Kader',
-            now()->format('d-m-Y H:i:s'),
+            // gpsCapturedAt (momen FOTO diambil, lihat GpsActiveCheck) -- BUKAN now() (momen
+            // SERVER memproses request, bisa jauh lebih telat untuk submission offline yang baru
+            // disinkron belakangan; watermark yang mencantumkan waktu proses server jadi
+            // menyesatkan sebagai "waktu kunjungan"). Fallback now() cuma kalau field itu null.
+            ($context->gpsCapturedAt ?? now())->format('d-m-Y H:i:s'),
             $context->latitude,
             $context->longitude,
         );
 
         $padding = 12;
-        $fontSize = 14;
+        // Proporsional terhadap lebar foto (bukan fixed 14px) -- foto beresolusi tinggi (kamera
+        // HP modern, ~1920px+) bikin teks 14px fixed terlihat sangat kecil/nyaris tidak terbaca
+        // (laporan lapangan nyata). round(width/40) menghasilkan skala wajar lintas resolusi,
+        // dengan lantai 14px supaya foto beresolusi rendah tidak dapat font mikroskopis.
+        $fontSize = max(14, (int) round($image->width() / 40));
         $lineCount = substr_count($text, "\n") + 1;
         $boxHeight = ($fontSize + 6) * $lineCount + ($padding * 2);
         $boxWidth = $image->width();
