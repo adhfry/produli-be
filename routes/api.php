@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\AnnouncementController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\CareAssignmentController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\DesaController;
 use App\Http\Controllers\Api\V1\FcmTokenController;
 use App\Http\Controllers\Api\V1\KaderController;
 use App\Http\Controllers\Api\V1\KecamatanController;
@@ -94,6 +95,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // Usulan koreksi data pasien dari STAF (docs/planning §17 "Ajukan Update Data") -- paralel
     // dari usulan kader lewat POST /visit-reports (itu terikat satu laporan kunjungan).
     Route::patch('patients/{patient}/propose-update', [PatientController::class, 'proposeUpdate']);
+    // Klaim manual puskesmas pasien (revisi Bu Kadis, kasus "kunjungan khusus di luar wilayah") --
+    // gerbang akses scoped ke puskesmas TUJUAN, dicek manual di controller (bukan Policy standar).
+    Route::patch('patients/{patient}/override-puskesmas', [PatientController::class, 'overridePuskesmas']);
     // Riwayat usulan (baca live dari SiLAKES, gerbang akses sama dengan propose-update di atas).
     Route::get('patients/{patient}/update-history', [PatientController::class, 'updateHistory']);
     // Riwayat klasifikasi risiko & kunjungan (revisi Bu Kadis, Fase 5) -- "Dasar Klasifikasi",
@@ -114,6 +118,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // bergantung ke kecamatan_raw teks bebas (docs: WilayahResolver). Data administratif
     // tetap, bukan data pasien -- semua role login boleh lihat, tanpa scope.
     Route::get('kecamatan', [KecamatanController::class, 'index']);
+    // Typeahead "Kel/Desa" di form usulan pembaruan data pasien (propose-update & visit-reports)
+    // -- nilai kanonik supaya WilayahResolver tidak perlu fuzzy-match teks bebas.
+    Route::get('desa', [DesaController::class, 'index']);
 
     // Tombol "Sinkronisasi SiLAKES" di sidebar -- super_admin saja (gerbang di controller,
     // route ini cuma butuh login+onboarding seperti endpoint lain di grup ini).

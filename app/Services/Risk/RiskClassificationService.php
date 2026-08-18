@@ -6,8 +6,10 @@ use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Models\RiskClassification;
 use App\Models\RiskThreshold;
+use App\Services\Performance\RiskTransitionScorer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Hitung level risiko dari lab_results_cache x risk_thresholds, simpan snapshot versioned.
@@ -62,6 +64,7 @@ class RiskClassificationService
 
     public function __construct(
         private readonly SilakesReferenceRangeService $silakesReferenceRangeService,
+        private readonly RiskTransitionScorer $transitionScorer,
     ) {}
 
     /**
@@ -166,6 +169,14 @@ class RiskClassificationService
             }
         }
 
+        // Tanggal pemeriksaan medis yang memicu klasifikasi ini (bukan kapan sistem menghitung
+        // ulang) -- dipakai untuk urutan "Riwayat & Tren Kondisi" di frontend supaya sesuai
+        // kronologi hasil lab asli, bukan kapan job sync/reclassify kebetulan berjalan.
+        $assessmentDate = $latestResultPerParameter
+            ->pluck('tanggal_periksa')
+            ->filter()
+            ->max();
+
         $comboLevel = $this->determineLevel($availableParameters, $exceededParameters);
         $matchedLevel = $this->mostSevere([$comboLevel, ...$directClassifierLevels]);
 
@@ -213,20 +224,38 @@ class RiskClassificationService
             return null;
         }
 
-        return DB::transaction(function () use ($patient, $matchedLevel, $criteria, $earlyDetectionFlag, $earlyDetectionReason) {
+        return DB::transaction(function () use ($patient, $matchedLevel, $criteria, $earlyDetectionFlag, $earlyDetectionReason, $assessmentDate, $current) {
             RiskClassification::where('patient_id', $patient->id)
                 ->where('is_latest', true)
                 ->update(['is_latest' => false]);
 
-            return RiskClassification::create([
+            $newClassification = RiskClassification::create([
                 'patient_id' => $patient->id,
                 'level' => $matchedLevel,
                 'criteria_snapshot' => $criteria,
                 'computed_at' => now(),
+                'assessment_date' => $assessmentDate,
                 'is_latest' => true,
                 'early_detection_flag' => $earlyDetectionFlag,
                 'early_detection_reason' => $earlyDetectionReason,
             ]);
+
+            // Skoring kinerja puskesmas (Top 5) -- $current di sini adalah baris is_latest LAMA
+            // (SEBELUM baris baru di atas), jadi persis "previous" yang dibutuhkan scorer.
+            // Dibungkus try/catch SENGAJA -- scoring adalah fitur PENDUKUNG (leaderboard), bug di
+            // dalamnya TIDAK BOLEH menggagalkan/rollback penulisan klasifikasi risiko yang jadi
+            // jalur kritis (dipakai geofencing/assignment/dashboard utama).
+            try {
+                $this->transitionScorer->score($patient, $current, $newClassification);
+            } catch (Throwable $e) {
+                Log::error('RiskClassificationService: gagal menghitung skor transisi risiko', [
+                    'patient_id' => $patient->id,
+                    'risk_classification_id' => $newClassification->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            return $newClassification;
         });
     }
 
@@ -406,7 +435,7 @@ class RiskClassificationService
         // mengembalikan 2 baris. Ambil 2 baris TERBARU apa adanya (computed_at, id sebagai
         // tiebreak karena presisi datetime SQLite cuma per detik).
         $history = RiskClassification::where('patient_id', $patient->id)
-            ->orderByDesc('computed_at')
+            ->orderByRaw('COALESCE(assessment_date, computed_at) DESC')
             ->orderByDesc('id')
             ->limit(2)
             ->get();

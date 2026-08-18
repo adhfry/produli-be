@@ -30,7 +30,12 @@ class ReresolveWilayahCommand extends Command
                 $total++;
 
                 $resolution = $resolver->resolve($patient->kel_desa_raw, $patient->kecamatan_raw);
-                $puskesmas = $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $patient->external_patient_id);
+
+                // Override manual TIDAK PERNAH ditimpa reresolve otomatis -- lihat catatan sama
+                // di SyncSilakesService::upsertPatient().
+                $puskesmas = $patient->puskesmas_resolution_method === 'manual'
+                    ? ['puskesmas_id' => $patient->puskesmas_id, 'method' => 'manual', 'pengirim_raw' => $patient->pengirim_raw]
+                    : $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $patient->external_patient_id);
 
                 $patient->forceFill([
                     'desa_id' => $resolution->desaId,

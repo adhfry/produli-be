@@ -303,7 +303,18 @@ class SyncSilakesService
     private function upsertPatient(array $row): void
     {
         $resolution = $this->wilayahResolver->resolve($row['kel_desa'] ?? null, $row['kecamatan'] ?? null);
-        $puskesmas = $this->wilayahResolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $row['patient_id']);
+
+        // Override manual (revisi Bu Kadis, kasus "kunjungan khusus di luar wilayah" -- mis.
+        // Puskesmas Gapura punya pasien yang desa geografisnya resolve ke Kota Sumenep, tapi
+        // pengirim aslinya Gapura) SENGAJA tidak pernah ditimpa sync otomatis berikutnya --
+        // staf yang sudah menetapkan puskesmas_resolution_method='manual' via
+        // PATCH /patients/{id}/override-puskesmas lebih tahu daripada resolusi otomatis.
+        $existing = PatientsCache::where('external_patient_id', $row['patient_id'])->first();
+        $isManualOverride = $existing?->puskesmas_resolution_method === 'manual';
+
+        $puskesmas = $isManualOverride
+            ? ['puskesmas_id' => $existing->puskesmas_id, 'method' => 'manual', 'pengirim_raw' => $existing->pengirim_raw]
+            : $this->wilayahResolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $row['patient_id']);
 
         PatientsCache::updateOrCreate(
             ['external_patient_id' => $row['patient_id']],

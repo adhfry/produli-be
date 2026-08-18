@@ -66,8 +66,17 @@ return [
         'gps' => [
             // Akurasi GPS device (radius kemungkinan error) maksimum yang masih diterima.
             'max_accuracy_meters' => (int) env('PRODULI_GPS_MAX_ACCURACY_METERS', 100),
-            // Titik GPS tidak boleh lebih tua dari ini saat submit (indikasi lokasi basi/dipalsukan).
-            'max_age_seconds' => (int) env('PRODULI_GPS_MAX_AGE_SECONDS', 300),
+            // Titik GPS tidak boleh lebih tua dari ini saat submit ONLINE (indikasi lokasi basi/
+            // dipalsukan). Dinaikkan dari 300 -> 1800 detik (revisi Bu Kadis, laporan lapangan
+            // nyata "Titik GPS Sudah Terlalu Lama") -- frontend sekarang mengikat gpsCapturedAt
+            // ke momen FOTO diambil (bukan momen halaman dibuka), tapi kader tetap wajar butuh
+            // beberapa menit mengisi form pemeriksaan klinis lengkap SETELAH foto sebelum submit.
+            'max_age_seconds' => (int) env('PRODULI_GPS_MAX_AGE_SECONDS', 1800),
+            // Threshold TERPISAH & jauh lebih longgar untuk submission OFFLINE (isOffline=true di
+            // VisitValidationContext) -- kader/nakes yang menyimpan draft lalu baru online
+            // berjam-jam kemudian bukan indikasi kebohongan lokasi, itu memang cara kerja mode
+            // offline yang disengaja. Default 48 jam.
+            'max_age_seconds_offline' => (int) env('PRODULI_GPS_MAX_AGE_SECONDS_OFFLINE', 172800),
         ],
 
         'geofence' => [

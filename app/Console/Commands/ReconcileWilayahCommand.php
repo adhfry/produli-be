@@ -34,6 +34,12 @@ class ReconcileWilayahCommand extends Command
             foreach ($patients as $patient) {
                 $total++;
 
+                if ($patient->puskesmas_resolution_method === 'manual') {
+                    // Override manual TIDAK PERNAH ditimpa reconcile otomatis -- lihat catatan
+                    // sama di SyncSilakesService::upsertPatient().
+                    continue;
+                }
+
                 $resolution = $resolver->resolve($patient->kel_desa_raw, $patient->kecamatan_raw);
                 $puskesmas = $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId);
 

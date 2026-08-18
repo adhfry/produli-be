@@ -12,6 +12,7 @@ use App\Models\VisitAssignment;
 use App\Services\Visit\CareAssignmentService;
 use App\Services\Visit\VisitAssignmentService;
 use App\Support\ApiResponse;
+use App\Support\DataScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -25,10 +26,25 @@ class VisitAssignmentController extends Controller
     /**
      * List assignment (docs/planning/02 §7) -- kader murni: tugasnya sendiri saja,
      * admin_puskesmas/pj_prolanis: semua di puskesmasnya, super_admin: semua.
+     *
+     * Revisi (paginasi server-side dashboard/kunjungan) -- SEBELUMNYA frontend tarik SEMUA
+     * baris (fetchAllPages, per_page=100 diulang sampai habis) lalu filter status/puskesmas/
+     * search di JS, blok "Pagination" di UI cuma dekorasi (tidak fungsional). Filter tambahan di
+     * sini supaya frontend bisa benar-benar paginate: search (nama pasien/kader/nakes), status
+     * (termasuk 2 status TURUNAN yang tidak tersimpan sebagai kolom -- 'terlambat'/'diulang',
+     * lihat dashboard/kunjungan/index.vue displayStatus()), puskesmas_id (super_admin only,
+     * sama pola PatientController::applyFilters()).
      */
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', VisitAssignment::class);
+
+        $request->validate([
+            'search' => ['nullable', 'string', 'max:150'],
+            'status' => ['nullable', 'string', 'in:pending,in_progress,completed,cancelled,terlambat,diulang'],
+            'puskesmas_id' => ['nullable', 'integer'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
 
         $paginator = $this->service->scopedQuery($request->user())
             ->with([
@@ -36,8 +52,41 @@ class VisitAssignmentController extends Controller
                 'latestReport.pjReviewedBy', 'latestReport.validatedBy', 'latestReport.attendees.kader.user',
             ])
             ->when(
+                $request->filled('puskesmas_id') && DataScope::isFullAccess($request->user()),
+                fn ($query) => $query->where('puskesmas_id_snapshot', $request->integer('puskesmas_id'))
+            )
+            ->when(
+                $request->filled('search'),
+                function ($query) use ($request) {
+                    $term = '%'.addcslashes($request->string('search')->trim()->toString(), '%_\\').'%';
+                    $query->where(function ($sub) use ($term) {
+                        $sub->whereHas('patient', fn ($p) => $p->where('nama', 'like', $term))
+                            ->orWhereHas('kader.user', fn ($u) => $u->where('name', 'like', $term))
+                            ->orWhereHas('tenagaKesehatan.user', fn ($u) => $u->where('name', 'like', $term));
+                    });
+                }
+            )
+            ->when(
                 $request->filled('status'),
-                fn ($query) => $query->where('status', $request->string('status'))
+                function ($query) use ($request) {
+                    $status = $request->string('status')->toString();
+
+                    // 'terlambat'/'diulang' BUKAN kolom status tersimpan -- turunan dari
+                    // status='pending' + scheduled_date lewat / latestReport ditolak (sama
+                    // persis logic isOverdue()/isRepeat() di dashboard/kunjungan/index.vue,
+                    // WAJIB tetap identik supaya jumlah hasil filter tidak pernah beda antara
+                    // frontend lama & backend baru).
+                    if ($status === 'terlambat') {
+                        $query->where('status', 'pending')
+                            ->whereDate('scheduled_date', '<', now()->toDateString())
+                            ->whereDoesntHave('latestReport', fn ($r) => $r->where('validation_status', 'invalid'));
+                    } elseif ($status === 'diulang') {
+                        $query->where('status', 'pending')
+                            ->whereHas('latestReport', fn ($r) => $r->where('validation_status', 'invalid'));
+                    } else {
+                        $query->where('status', $status);
+                    }
+                }
             )
             ->orderBy('scheduled_date')
             ->paginate($request->integer('per_page', 20));

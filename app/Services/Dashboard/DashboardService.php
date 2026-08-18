@@ -11,6 +11,7 @@ use App\Models\RiskClassification;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Services\Patient\PatientQueryService;
+use App\Services\Performance\PuskesmasPerformanceScoringService;
 use App\Services\Visit\VisitAssignmentService;
 use App\Support\DataScope;
 use Carbon\Carbon;
@@ -45,14 +46,12 @@ class DashboardService
     // yang justru intinya melacak pasien yang membaik ke tier ini.
     private const RISK_LEVELS = ['tidak_berisiko', 'ringan', 'sedang', 'berat'];
 
-    /** Urutan keparahan sama persis dengan RiskClassificationService::SEVERITY_ORDER. */
-    private const SEVERITY_ORDER = ['tidak_berisiko', 'ringan', 'sedang', 'berat'];
-
     private const VISIT_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
 
     public function __construct(
         private readonly PatientQueryService $patientQuery,
         private readonly VisitAssignmentService $visitAssignmentService,
+        private readonly PuskesmasPerformanceScoringService $puskesmasPerformanceScoring,
     ) {}
 
     public function summaryFor(
@@ -148,7 +147,7 @@ class DashboardService
             risikoPerKecamatanSeKabupaten: $this->risikoPerKecamatan(PatientsCache::query(), $asOf),
             risikoPerDesa: $this->risikoPerDesa($scopedPatients, $asOf),
             risikoPerPuskesmas: $this->risikoPerPuskesmas(PatientsCache::query(), $asOf),
-            puskesmasPerformance: $this->puskesmasPerformance(PatientsCache::query(), $dateFrom, $dateTo),
+            puskesmasPerformance: $this->puskesmasPerformanceScoring->topPerforming($dateFrom, $dateTo),
             kecamatanContext: $this->kecamatanContext($viewedPuskesmasId),
         );
     }
@@ -476,101 +475,7 @@ class DashboardService
         })->values()->all();
     }
 
-    /**
-     * Indikator kinerja puskesmas (revisi Bu Kadis, Fase 4) -- jumlah pasien yang levelnya
-     * MEMBAIK (turun keparahan, lihat SEVERITY_ORDER) antar 2 baris klasifikasi berurutan,
-     * dikelompokkan per puskesmas TEMPAT PASIEN TERDAFTAR SAAT INI (patients_cache.puskesmas_id)
-     * -- bukan puskesmas historis, sama seperti konvensi risikoPerKecamatan/risikoPerDesa yang
-     * juga selalu memakai lokasi TERKINI pasien walau datanya sendiri riwayat.
-     *
-     * "Membaik" dihitung per PASANGAN baris berurutan dalam satu riwayat pasien (bukan cuma
-     * level-awal vs level-sekarang) -- pasien yang naik-turun berkali-kali tetap tercatat semua
-     * episode perbaikannya, bukan cuma bersih/kotor di ujung. Filter periode ($dateFrom/$dateTo,
-     * parameter yang sama dengan dashboard lainnya) diterapkan ke computed_at baris BARU (yang
-     * membaik) -- "kapan perbaikan itu tercatat", bukan kapan kondisi sebelumnya diukur.
-     *
-     * Dihitung di PHP (bukan window function SQL) -- konsisten dengan pola
-     * RiskClassificationService::detectWorseningTrend() yang juga menganalisis riwayat
-     * berurutan di PHP, dan skala data lokal (ribuan pasien) masih wajar untuk pendekatan ini.
-     *
-     * @param  Builder<PatientsCache>  $scopedPatients
-     * @return array<int, array{puskesmas_id: int, puskesmas_nama: string, total_membaik: int, breakdown: array<string, int>}>
-     */
-    private function puskesmasPerformance(Builder $scopedPatients, ?Carbon $dateFrom, ?Carbon $dateTo): array
-    {
-        $periodFrom = $dateFrom?->copy()->startOfDay();
-        $periodTo = $dateTo?->copy()->endOfDay();
-
-        // Pasien belum ter-resolve ke puskesmas mana pun (puskesmas_id null) TIDAK BISA
-        // dikaitkan ke indikator siapa pun -- dikeluarkan dari awal, bukan cuma di-skip belakangan.
-        $puskesmasByPatient = (clone $scopedPatients)->whereNotNull('puskesmas_id')->pluck('puskesmas_id', 'id');
-
-        if ($puskesmasByPatient->isEmpty()) {
-            return [];
-        }
-
-        $history = RiskClassification::query()
-            ->whereIn('patient_id', $puskesmasByPatient->keys())
-            ->orderBy('patient_id')
-            ->orderBy('computed_at')
-            ->orderBy('id')
-            ->get(['patient_id', 'level', 'computed_at']);
-
-        $grouped = [];
-
-        foreach ($history->groupBy('patient_id') as $patientId => $rows) {
-            $rows = $rows->values();
-            $puskesmasId = $puskesmasByPatient->get($patientId);
-
-            for ($i = 1; $i < $rows->count(); $i++) {
-                $prevLevel = $rows[$i - 1]->level;
-                $nextRow = $rows[$i];
-                $nextLevel = $nextRow->level;
-
-                $prevRank = array_search($prevLevel, self::SEVERITY_ORDER, true);
-                $nextRank = array_search($nextLevel, self::SEVERITY_ORDER, true);
-
-                if ($prevRank === false || $nextRank === false || $nextRank >= $prevRank) {
-                    continue;
-                }
-
-                if ($periodFrom !== null && $nextRow->computed_at->lt($periodFrom)) {
-                    continue;
-                }
-
-                if ($periodTo !== null && $nextRow->computed_at->gt($periodTo)) {
-                    continue;
-                }
-
-                if (! isset($grouped[$puskesmasId])) {
-                    $grouped[$puskesmasId] = ['total_membaik' => 0, 'breakdown' => []];
-                }
-
-                $transisi = "{$prevLevel}_ke_{$nextLevel}";
-                $grouped[$puskesmasId]['total_membaik']++;
-                $grouped[$puskesmasId]['breakdown'][$transisi] = ($grouped[$puskesmasId]['breakdown'][$transisi] ?? 0) + 1;
-            }
-        }
-
-        if ($grouped === []) {
-            return [];
-        }
-
-        $puskesmasNames = Puskesmas::query()->whereIn('id', array_keys($grouped))->pluck('nama', 'id');
-
-        $result = [];
-
-        foreach ($grouped as $puskesmasId => $data) {
-            $result[] = [
-                'puskesmas_id' => $puskesmasId,
-                'puskesmas_nama' => $puskesmasNames->get($puskesmasId, '-'),
-                'total_membaik' => $data['total_membaik'],
-                'breakdown' => $data['breakdown'],
-            ];
-        }
-
-        usort($result, fn ($a, $b) => $b['total_membaik'] <=> $a['total_membaik']);
-
-        return $result;
-    }
+    // puskesmasPerformance() lama (transisi level mentah, tanpa syarat kunjungan tervalidasi)
+    // digantikan PuskesmasPerformanceScoringService::topPerforming() -- lihat pemanggilan di
+    // summaryFor() dan App\Services\Performance\RiskTransitionScorer untuk algoritma barunya.
 }

@@ -9,8 +9,11 @@ use App\Models\Kecamatan;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
 use App\Models\RiskClassification;
+use App\Models\RiskTransitionScore;
 use App\Models\User;
 use App\Models\VisitAssignment;
+use App\Models\VisitReport;
+use App\Services\Performance\RiskTransitionScorer;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
@@ -570,101 +573,197 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(0, $kosong['berat']);
     }
 
-    // ---- Fase 4 (revisi Bu Kadis): puskesmas_performance ----
+    // ---- Sistem scoring kinerja puskesmas (Top 5) -- puskesmas_performance ----
+    // Algoritma perhitungan poin/eligibilitas sendiri diuji tuntas di
+    // Tests\Feature\Risk\RiskTransitionScorerTest -- test di sini fokus ke agregasi &
+    // scoping level dashboard (memakai RiskTransitionScorer::score() apa adanya, bukan mock).
 
-    public function test_puskesmas_performance_menghitung_pasien_yang_membaik_dikelompokkan_per_puskesmas(): void
-    {
-        $admin = $this->makeUser('super_admin');
+    /**
+     * Bikin 1 transisi risk_classifications + skornya (lewat RiskTransitionScorer asli, bukan
+     * langsung insert RiskTransitionScore -- supaya test ini tetap representatif kalau formula
+     * poin berubah). $visitCreatedAt diisi utk membuat laporan kunjungan TERVALIDASI di antara
+     * kedua assessment (bikin transisi ini eligible); null = tidak ada kunjungan sama sekali
+     * (transisi tetap tercatat tapi eligible=false).
+     */
+    private function makeScoredTransition(
+        PatientsCache $patient,
+        Puskesmas $puskesmas,
+        string $previousLevel,
+        string $currentLevel,
+        $previousAt,
+        $currentAt,
+        $visitCreatedAt = null,
+        string $visitValidationStatus = 'valid',
+    ): void {
+        $previous = RiskClassification::create(['patient_id' => $patient->id, 'level' => $previousLevel, 'criteria_snapshot' => [], 'computed_at' => $previousAt, 'is_latest' => false]);
+        $current = RiskClassification::create(['patient_id' => $patient->id, 'level' => $currentLevel, 'criteria_snapshot' => [], 'computed_at' => $currentAt, 'is_latest' => true]);
 
-        // Pasien A: berat -> sedang (membaik 1 tingkat) di Puskesmas A.
-        $pasienA = $this->makePatient($this->puskesmasA, 1);
-        RiskClassification::create(['patient_id' => $pasienA->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(10), 'is_latest' => false]);
-        RiskClassification::create(['patient_id' => $pasienA->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(2), 'is_latest' => true]);
+        if ($visitCreatedAt !== null) {
+            $assignment = VisitAssignment::create([
+                'patient_id' => $patient->id, 'kader_id' => $this->makeKader($puskesmas)->id,
+                'scheduled_date' => $visitCreatedAt->toDateString(), 'status' => 'completed', 'priority' => 'sedang',
+                'puskesmas_id_snapshot' => $puskesmas->id,
+            ]);
+            $report = VisitReport::create([
+                'assignment_id' => $assignment->id,
+                'gps_lat' => -7.0, 'gps_lng' => 113.0,
+                'photo_path' => 'test-photo.jpg',
+                'kondisi' => 'Baik',
+                'validation_status' => $visitValidationStatus,
+            ]);
+            $report->forceFill(['created_at' => $visitCreatedAt])->save();
+        }
 
-        // Pasien B: sedang -> berat (MEMBURUK, tidak boleh terhitung) di Puskesmas A.
-        $pasienB = $this->makePatient($this->puskesmasA, 2);
-        RiskClassification::create(['patient_id' => $pasienB->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(10), 'is_latest' => false]);
-        RiskClassification::create(['patient_id' => $pasienB->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(2), 'is_latest' => true]);
-
-        // Pasien C: ringan -> tidak_berisiko (membaik total) di Puskesmas B.
-        $pasienC = $this->makePatient($this->puskesmasB, 3);
-        RiskClassification::create(['patient_id' => $pasienC->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(10), 'is_latest' => false]);
-        RiskClassification::create(['patient_id' => $pasienC->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(2), 'is_latest' => true]);
-
-        Sanctum::actingAs($admin);
-
-        $response = $this->getJson('/api/v1/dashboard/summary');
-
-        $response->assertOk();
-        $performance = collect($response->json('data.puskesmas_performance'))->keyBy('puskesmas_id');
-        $this->assertCount(2, $performance);
-
-        $puskesmasA = $performance[$this->puskesmasA->id];
-        $this->assertSame('Puskesmas A', $puskesmasA['puskesmas_nama']);
-        $this->assertSame(1, $puskesmasA['total_membaik']);
-        $this->assertSame(1, $puskesmasA['breakdown']['berat_ke_sedang']);
-        $this->assertArrayNotHasKey('sedang_ke_berat', $puskesmasA['breakdown']);
-
-        $puskesmasB = $performance[$this->puskesmasB->id];
-        $this->assertSame(1, $puskesmasB['total_membaik']);
-        $this->assertSame(1, $puskesmasB['breakdown']['ringan_ke_tidak_berisiko']);
+        app(RiskTransitionScorer::class)->score($patient, $previous, $current);
     }
 
-    public function test_puskesmas_performance_admin_puskesmas_tetap_lihat_leaderboard_se_kabupaten(): void
+    public function test_puskesmas_performance_transisi_membaik_dengan_kunjungan_tervalidasi_masuk_leaderboard(): void
     {
-        // Revisi Bu Kadis: "Top 5 Puskesmas Kinerja Terbaik" adalah leaderboard SE-KABUPATEN,
-        // sama untuk semua role -- BUKAN dipersonalisasi ke puskesmas sendiri seperti metrik
-        // dashboard lain (total_patients dkk). admin_puskesmas/pj_prolanis sebelumnya cuma
-        // melihat baris puskesmasnya sendiri di sini (bug -- leaderboard jadi tidak berguna
-        // sebagai pembanding), sekarang harus tetap melihat puskesmas lain juga.
-        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $admin = $this->makeUser('super_admin');
+        $pasien = $this->makePatient($this->puskesmasA, 1);
 
-        $pasienA = $this->makePatient($this->puskesmasA, 1);
-        RiskClassification::create(['patient_id' => $pasienA->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(10), 'is_latest' => false]);
-        RiskClassification::create(['patient_id' => $pasienA->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(2), 'is_latest' => true]);
-
-        $pasienB = $this->makePatient($this->puskesmasB, 2);
-        RiskClassification::create(['patient_id' => $pasienB->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(10), 'is_latest' => false]);
-        RiskClassification::create(['patient_id' => $pasienB->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(2), 'is_latest' => true]);
+        // Berat (hari -10) -> Sedang (hari -2), dengan kunjungan tervalidasi di hari -5 --
+        // eligible, poin = (3-2)*10 = +10.
+        $this->makeScoredTransition(
+            $pasien, $this->puskesmasA,
+            'berat', 'sedang', now()->subDays(10), now()->subDays(2), now()->subDays(5),
+        );
 
         Sanctum::actingAs($admin);
-
         $response = $this->getJson('/api/v1/dashboard/summary');
 
         $response->assertOk();
         $performance = collect($response->json('data.puskesmas_performance'));
-        $this->assertCount(2, $performance);
-        $puskesmasIds = $performance->pluck('puskesmas_id')->all();
+        $this->assertCount(1, $performance);
+
+        $row = $performance->first();
+        $this->assertSame(1, $row['rank']);
+        $this->assertSame($this->puskesmasA->id, $row['puskesmas_id']);
+        $this->assertSame('Puskesmas A', $row['puskesmas_nama']);
+        $this->assertSame(1, $row['eligible_patients']);
+        $this->assertSame(1, $row['improved_patients']);
+        $this->assertSame(1, $row['validated_visits']);
+        $this->assertSame(10, $row['total_improvement_points']);
+        $this->assertEquals(100.0, $row['improvement_rate']);
+        $this->assertGreaterThan(0, $row['final_score']);
+    }
+
+    public function test_puskesmas_performance_transisi_tanpa_kunjungan_tervalidasi_tidak_masuk_leaderboard(): void
+    {
+        // Spesifikasi scoring: kunjungan pending TIDAK dianggap bukti intervensi -- transisi
+        // tetap tercatat di risk_transition_scores (audit trail) tapi eligible=false, TIDAK
+        // masuk agregasi kinerja puskesmas sama sekali.
+        $admin = $this->makeUser('super_admin');
+        $pasien = $this->makePatient($this->puskesmasA, 1);
+
+        $this->makeScoredTransition(
+            $pasien, $this->puskesmasA,
+            'berat', 'sedang', now()->subDays(10), now()->subDays(2), now()->subDays(5),
+            visitValidationStatus: 'pending',
+        );
+
+        Sanctum::actingAs($admin);
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $this->assertSame([], $response->json('data.puskesmas_performance'));
+    }
+
+    public function test_puskesmas_performance_transisi_memburuk_tidak_dihitung_sebagai_improved(): void
+    {
+        $admin = $this->makeUser('super_admin');
+        $pasien = $this->makePatient($this->puskesmasA, 1);
+
+        // Sedang -> Berat (MEMBURUK), tetap eligible (ada kunjungan tervalidasi) tapi
+        // final_point negatif -- tidak boleh dihitung sebagai improved_patients.
+        $this->makeScoredTransition(
+            $pasien, $this->puskesmasA,
+            'sedang', 'berat', now()->subDays(10), now()->subDays(2), now()->subDays(5),
+        );
+
+        Sanctum::actingAs($admin);
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $performance = collect($response->json('data.puskesmas_performance'));
+        $this->assertCount(1, $performance);
+        $row = $performance->first();
+        $this->assertSame(1, $row['eligible_patients']);
+        $this->assertSame(0, $row['improved_patients']);
+        $this->assertSame(-10, $row['total_improvement_points']);
+        $this->assertEquals(0.0, $row['improvement_rate']);
+    }
+
+    public function test_puskesmas_performance_terkendali_ke_terkendali_dihitung_retensi(): void
+    {
+        // Terkendali->Terkendali = +2 (bukan 0) & masuk numerator stability_rate.
+        $admin = $this->makeUser('super_admin');
+        $pasien = $this->makePatient($this->puskesmasA, 1);
+
+        $this->makeScoredTransition(
+            $pasien, $this->puskesmasA,
+            'tidak_berisiko', 'tidak_berisiko', now()->subDays(10), now()->subDays(2), now()->subDays(5),
+        );
+
+        Sanctum::actingAs($admin);
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $row = collect($response->json('data.puskesmas_performance'))->first();
+        $this->assertSame(2, $row['total_improvement_points']);
+        $this->assertEquals(100.0, $row['stability_rate']);
+    }
+
+    public function test_puskesmas_performance_unscoped_untuk_semua_role(): void
+    {
+        // Leaderboard SE-KABUPATEN, sama untuk semua role (konsisten dengan perilaku lama) --
+        // admin_puskesmas TETAP melihat puskesmas lain di sini, bukan cuma puskesmasnya sendiri.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        $pasienA = $this->makePatient($this->puskesmasA, 1);
+        $this->makeScoredTransition($pasienA, $this->puskesmasA, 'berat', 'sedang', now()->subDays(10), now()->subDays(2), now()->subDays(5));
+
+        $pasienB = $this->makePatient($this->puskesmasB, 2);
+        $this->makeScoredTransition($pasienB, $this->puskesmasB, 'ringan', 'tidak_berisiko', now()->subDays(10), now()->subDays(2), now()->subDays(5));
+
+        Sanctum::actingAs($admin);
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $puskesmasIds = collect($response->json('data.puskesmas_performance'))->pluck('puskesmas_id')->all();
         $this->assertContains($this->puskesmasA->id, $puskesmasIds);
         $this->assertContains($this->puskesmasB->id, $puskesmasIds);
     }
 
-    public function test_puskesmas_performance_difilter_computed_at_baris_baru_dalam_periode(): void
+    public function test_puskesmas_performance_difilter_calculated_at_dalam_periode(): void
     {
         $admin = $this->makeUser('super_admin');
-
         $pasien = $this->makePatient($this->puskesmasA, 1);
-        RiskClassification::create(['patient_id' => $pasien->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(20), 'is_latest' => false]);
-        // Perbaikan tercatat 20 hari lalu -- DI LUAR periode filter di bawah (7 hari terakhir).
-        RiskClassification::create(['patient_id' => $pasien->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now()->subDays(19), 'is_latest' => true]);
+
+        $this->makeScoredTransition($pasien, $this->puskesmasA, 'berat', 'sedang', now()->subDays(30), now()->subDays(20), now()->subDays(25));
+        // calculated_at (kapan skor DIHITUNG oleh RiskTransitionScorer, BUKAN kapan assessment
+        // medisnya terjadi) selalu "now()" saat score() dipanggil di atas -- paksa mundur secara
+        // eksplisit di sini supaya benar-benar menguji filter date_from/date_to, bukan kebetulan
+        // lolos karena test itu sendiri baru saja jalan.
+        RiskTransitionScore::query()->update(['calculated_at' => now()->subDays(20)]);
 
         Sanctum::actingAs($admin);
-
         $response = $this->getJson('/api/v1/dashboard/summary?date_from='.now()->subDays(7)->toDateString().'&date_to='.now()->toDateString());
 
         $response->assertOk();
-        $this->assertCount(0, $response->json('data.puskesmas_performance'));
+        $this->assertSame([], $response->json('data.puskesmas_performance'));
     }
 
-    public function test_puskesmas_performance_kosong_kalau_tidak_ada_yang_membaik(): void
+    public function test_puskesmas_performance_kosong_kalau_belum_ada_transisi_sama_sekali(): void
     {
         $admin = $this->makeUser('super_admin');
 
+        // Assessment PERTAMA pasien (tidak ada pembanding) -- tidak menghasilkan baris skor
+        // sama sekali, bukan "membaik".
         $pasien = $this->makePatient($this->puskesmasA, 1);
         RiskClassification::create(['patient_id' => $pasien->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
 
         Sanctum::actingAs($admin);
-
         $response = $this->getJson('/api/v1/dashboard/summary');
 
         $response->assertOk();

@@ -109,6 +109,7 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         $user = $request->user();
+        $user->loadMissing('puskesmas');
 
         return ApiResponse::success([
             'user' => $user,
@@ -303,6 +304,7 @@ class AuthController extends Controller
     public function uploadAvatar(UploadAvatarRequest $request): JsonResponse
     {
         $user = $this->profile->updateAvatar($request->user(), $request->file('avatar'));
+        $user->loadMissing('puskesmas');
 
         return ApiResponse::success(['user' => $user], 'Foto profil berhasil diperbarui.');
     }
@@ -315,6 +317,7 @@ class AuthController extends Controller
     public function updateProfile(UpdateProfileRequest $request): JsonResponse
     {
         $user = $this->profile->updatePreferences($request->user(), $request->validated());
+        $user->loadMissing('puskesmas');
 
         return ApiResponse::success(['user' => $user], 'Profil berhasil diperbarui.');
     }
@@ -341,12 +344,15 @@ class AuthController extends Controller
         }
 
         $user = $this->profile->completeOnboarding($user);
+        $user->loadMissing('puskesmas');
 
         return ApiResponse::success(['user' => $user], 'Onboarding berhasil diselesaikan.');
     }
 
     private function tokenResponse(TokenPair $pair, ?User $user, string $message): JsonResponse
     {
+        $user?->loadMissing('puskesmas');
+
         return ApiResponse::success([
             'access_token' => $pair->accessToken,
             'token_type' => 'Bearer',

@@ -23,6 +23,7 @@ class RiskClassificationResource extends JsonResource
             'level' => $this->level,
             'criteria_snapshot' => $this->criteria_snapshot,
             'computed_at' => $this->computed_at?->toIso8601String(),
+            'assessment_date' => $this->assessment_date?->toDateString(),
             'is_latest' => $this->is_latest,
             'early_detection_flag' => (bool) $this->early_detection_flag,
             'early_detection_reason' => $this->early_detection_reason,

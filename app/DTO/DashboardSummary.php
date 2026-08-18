@@ -18,7 +18,7 @@ final class DashboardSummary
      * @param  array<int, array{kecamatan_id: int, kecamatan_nama: string, kecamatan_kode: ?string, ringan: int, sedang: int, berat: int}>  $risikoPerKecamatanSeKabupaten  UNSCOPED (leaderboard "Top 5 Kecamatan" -- SENGAJA, lihat komentar summaryFor())
      * @param  array<int, array{desa_id: int, desa_nama: string, desa_kode: ?string, ringan: int, sedang: int, berat: int}>  $risikoPerDesa
      * @param  array<int, array{puskesmas_id: int, puskesmas_nama: string, latitude: ?float, longitude: ?float, tidak_berisiko: int, ringan: int, sedang: int, berat: int}>  $risikoPerPuskesmas  UNSCOPED, SEMUA puskesmas (lihat DashboardService::risikoPerPuskesmas())
-     * @param  array<int, array{puskesmas_id: int, puskesmas_nama: string, total_membaik: int, breakdown: array<string, int>}>  $puskesmasPerformance
+     * @param  array<int, array{rank: int, puskesmas_id: int, puskesmas_nama: string, final_score: float, improvement_rate: float, risk_reduction_score: float, stability_rate: float, eligible_patients: int, improved_patients: int, validated_visits: int, total_improvement_points: int}>  $puskesmasPerformance  lihat App\Services\Performance\PuskesmasPerformanceScoringService
      * @param  array{puskesmas_nama: string, kecamatan_nama: string, kecamatan_puskesmas_count: int}|null  $kecamatanContext  Caption peta -- null kalau puskesmas tidak diketahui atau kecamatannya cuma py 1 puskesmas (lihat DashboardService::kecamatanContext())
      */
     public function __construct(

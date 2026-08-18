@@ -293,8 +293,12 @@ class VisitAssignmentService
             return;
         }
 
+        // 'manual' (revisi Bu Kadis) = staf sudah sadar mengklaim pasien ini secara eksplisit
+        // lewat PATCH /patients/{id}/override-puskesmas -- lebih meyakinkan daripada resolusi
+        // otomatis manapun, jadi ikut dianggap "cukup jelas" untuk ditugaskan.
         $wilayahCukupJelas = $patient->wilayah_status === 'resolved'
-            || $patient->puskesmas_resolution_method === 'kecamatan_fallback';
+            || $patient->puskesmas_resolution_method === 'kecamatan_fallback'
+            || $patient->puskesmas_resolution_method === 'manual';
 
         if (! $wilayahCukupJelas) {
             throw ValidationException::withMessages([

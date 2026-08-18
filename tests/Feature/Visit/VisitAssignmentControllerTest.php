@@ -581,6 +581,171 @@ class VisitAssignmentControllerTest extends TestCase
         $this->assertEquals([$pending->id], $ids->all());
     }
 
+    /**
+     * Revisi paginasi server-side (dashboard/kunjungan/index.vue) -- search cocok ke nama
+     * PASIEN atau KADER atau TENAGA_KESEHATAN sekaligus (OR), bukan cuma satu.
+     */
+    public function test_filter_search_cocok_nama_pasien_kader_atau_nakes(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        $patientBudi = $this->makePatient($this->puskesmasA, 1, ['nama' => 'Budi Santoso']);
+        $patientLain = $this->makePatient($this->puskesmasA, 2, ['nama' => 'Wati Wulandari']);
+
+        $kaderUserSiti = User::factory()->create(['puskesmas_id' => $this->puskesmasA->id, 'name' => 'Siti Nurhaliza']);
+        $kaderUserSiti->assignRole('kader');
+        $kaderSiti = Kader::create(['user_id' => $kaderUserSiti->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true]);
+
+        $matchByPatient = VisitAssignment::create([
+            'patient_id' => $patientBudi->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        $matchByKader = VisitAssignment::create([
+            'patient_id' => $patientLain->id, 'kader_id' => $kaderSiti->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $byPatient = $this->getJson('/api/v1/visit-assignments?search=Budi');
+        $byPatient->assertOk();
+        $this->assertEquals([$matchByPatient->id], collect($byPatient->json('data.items'))->pluck('id')->all());
+
+        $byKader = $this->getJson('/api/v1/visit-assignments?search=Nurhaliza');
+        $byKader->assertOk();
+        $this->assertEquals([$matchByKader->id], collect($byKader->json('data.items'))->pluck('id')->all());
+    }
+
+    public function test_filter_puskesmas_id_hanya_berlaku_untuk_super_admin(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patientA = $this->makePatient($this->puskesmasA, 1);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+
+        $kaderUserB = User::factory()->create(['puskesmas_id' => $this->puskesmasB->id]);
+        $kaderUserB->assignRole('kader');
+        $kaderB = Kader::create(['user_id' => $kaderUserB->id, 'puskesmas_id' => $this->puskesmasB->id, 'status_aktif' => true]);
+
+        $assignmentA = VisitAssignment::create([
+            'patient_id' => $patientA->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitAssignment::create([
+            'patient_id' => $patientB->id, 'kader_id' => $kaderB->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasB->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson("/api/v1/visit-assignments?puskesmas_id={$this->puskesmasA->id}");
+
+        $response->assertOk();
+        $this->assertEquals([$assignmentA->id], collect($response->json('data.items'))->pluck('id')->all());
+    }
+
+    public function test_filter_puskesmas_id_diabaikan_untuk_admin_puskesmas(): void
+    {
+        // admin_puskesmas SUDAH terkunci ke puskesmasnya sendiri (scopedQuery) -- puskesmas_id
+        // yang dikirim tidak boleh mengubah/mempersempit apa pun di luar itu (bukan celah
+        // keamanan, tapi juga bukan filter yang berarti untuk role ini -- sama pola PatientController).
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientA = $this->makePatient($this->puskesmasA, 1);
+
+        $assignmentA = VisitAssignment::create([
+            'patient_id' => $patientA->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/visit-assignments?puskesmas_id={$this->puskesmasB->id}");
+
+        $response->assertOk();
+        $this->assertEquals([$assignmentA->id], collect($response->json('data.items'))->pluck('id')->all());
+    }
+
+    /**
+     * 'terlambat'/'diulang' BUKAN kolom status tersimpan -- turunan dari status='pending' +
+     * scheduled_date lewat / latestReport ditolak. Logic HARUS identik dgn isOverdue()/
+     * isRepeat() di dashboard/kunjungan/index.vue supaya filter frontend & backend tidak pernah
+     * berbeda jumlah hasil.
+     */
+    public function test_filter_status_terlambat(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientTerlambat = $this->makePatient($this->puskesmasA, 1);
+        $patientBelumJatuhTempo = $this->makePatient($this->puskesmasA, 2);
+        $patientDiulang = $this->makePatient($this->puskesmasA, 3);
+
+        $terlambat = VisitAssignment::create([
+            'patient_id' => $patientTerlambat->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->subDays(3)->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitAssignment::create([
+            'patient_id' => $patientBelumJatuhTempo->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->addDay()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        // Tanggal lewat TAPI sudah 'diulang' (latestReport invalid) -- HARUS TIDAK ikut
+        // 'terlambat' (dua kategori itu saling eksklusif di frontend, isOverdue() eksplisit
+        // return false kalau isRepeat() true).
+        $diulangJugaLewatTanggal = VisitAssignment::create([
+            'patient_id' => $patientDiulang->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->subDays(3)->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitReport::create([
+            'assignment_id' => $diulangJugaLewatTanggal->id,
+            'gps_lat' => -7.0123, 'gps_lng' => 113.8456,
+            'photo_path' => 'dummy.jpg', 'kondisi' => 'Kondisi baik',
+            'validation_status' => 'invalid',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/visit-assignments?status=terlambat');
+
+        $response->assertOk();
+        $this->assertEquals([$terlambat->id], collect($response->json('data.items'))->pluck('id')->all());
+    }
+
+    public function test_filter_status_diulang(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientDiulang = $this->makePatient($this->puskesmasA, 1);
+        $patientBiasa = $this->makePatient($this->puskesmasA, 2);
+
+        $diulang = VisitAssignment::create([
+            'patient_id' => $patientDiulang->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitReport::create([
+            'assignment_id' => $diulang->id,
+            'gps_lat' => -7.0123, 'gps_lng' => 113.8456,
+            'photo_path' => 'dummy.jpg', 'kondisi' => 'Kondisi baik',
+            'validation_status' => 'invalid',
+        ]);
+        VisitAssignment::create([
+            'patient_id' => $patientBiasa->id, 'kader_id' => $this->kaderA->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/visit-assignments?status=diulang');
+
+        $response->assertOk();
+        $this->assertEquals([$diulang->id], collect($response->json('data.items'))->pluck('id')->all());
+    }
+
     public function test_tenaga_kesehatan_hanya_melihat_assignment_miliknya_sendiri(): void
     {
         $tenagaKesehatanA = $this->makeTenagaKesehatan($this->puskesmasA);
