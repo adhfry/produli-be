@@ -31,7 +31,22 @@ class DesaController extends Controller
                 fn ($q) => $q->where('nama', 'like', '%'.addcslashes($request->string('search')->trim()->toString(), '%_\\').'%')
             )
             ->orderBy('nama')
-            ->get(['id', 'kecamatan_id', 'nama', 'kode_kemendagri']);
+            // latitude/longitude (centroid desa) -- dipakai useMapTileDownload.ts (frontend)
+            // untuk menghitung bounding box unduhan peta offline saat kader memilih desa secara
+            // manual (kasus wilayah pasien ambigu, docs/planning/10 §5).
+            ->get(['id', 'kecamatan_id', 'nama', 'kode_kemendagri', 'latitude', 'longitude'])
+            // Cast eksplisit ke float -- kolom decimal:7 di model SELALU ter-serialize sebagai
+            // STRING di JSON (perilaku baku cast Eloquent 'decimal'), padahal frontend memakainya
+            // untuk aritmatika bbox langsung (lat +/- radius). Tanpa ini "-6.90" + 0.025 di JS
+            // jadi concatenation string ("-6.900.025"), bukan penjumlahan -- bbox rusak diam-diam.
+            ->map(fn (Desa $d) => [
+                'id' => $d->id,
+                'kecamatan_id' => $d->kecamatan_id,
+                'nama' => $d->nama,
+                'kode_kemendagri' => $d->kode_kemendagri,
+                'latitude' => $d->latitude !== null ? (float) $d->latitude : null,
+                'longitude' => $d->longitude !== null ? (float) $d->longitude : null,
+            ]);
 
         return ApiResponse::success($desa);
     }

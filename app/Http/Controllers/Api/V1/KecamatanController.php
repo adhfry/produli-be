@@ -18,7 +18,21 @@ class KecamatanController extends Controller
 {
     public function index(): JsonResponse
     {
-        $kecamatan = Kecamatan::orderBy('nama')->get(['id', 'nama', 'kode_kemendagri']);
+        // latitude/longitude (centroid kecamatan) -- dipakai useMapTileDownload.ts (frontend)
+        // untuk menghitung bounding box unduhan peta offline saat kader memilih kecamatan secara
+        // manual (kasus wilayah pasien ambigu, docs/planning/10 §5).
+        $kecamatan = Kecamatan::orderBy('nama')
+            ->get(['id', 'nama', 'kode_kemendagri', 'latitude', 'longitude'])
+            // Cast eksplisit ke float -- lihat catatan sama di DesaController::index() (kolom
+            // decimal:7 SELALU ter-serialize sebagai string, merusak aritmatika bbox di frontend
+            // kalau dibiarkan).
+            ->map(fn (Kecamatan $k) => [
+                'id' => $k->id,
+                'nama' => $k->nama,
+                'kode_kemendagri' => $k->kode_kemendagri,
+                'latitude' => $k->latitude !== null ? (float) $k->latitude : null,
+                'longitude' => $k->longitude !== null ? (float) $k->longitude : null,
+            ]);
 
         return ApiResponse::success($kecamatan);
     }

@@ -48,7 +48,10 @@ class VisitAssignmentController extends Controller
 
         $paginator = $this->service->scopedQuery($request->user())
             ->with([
-                'patient', 'kader.user', 'tenagaKesehatan.user', 'assignedBy', 'puskesmasSnapshot', 'companions.kader.user',
+                // 'patient.desa'/'patient.kecamatan' (bukan cuma 'patient') -- dibutuhkan
+                // VisitAssignmentResource untuk menandai pasien yang wilayahnya ambigu (desa_id
+                // null) di fitur unduh peta offline (useMapTileDownload.ts, docs/planning/10 §5).
+                'patient.desa', 'patient.kecamatan', 'kader.user', 'tenagaKesehatan.user', 'assignedBy', 'puskesmasSnapshot', 'companions.kader.user',
                 'latestReport.pjReviewedBy', 'latestReport.validatedBy', 'latestReport.attendees.kader.user',
             ])
             ->when(
