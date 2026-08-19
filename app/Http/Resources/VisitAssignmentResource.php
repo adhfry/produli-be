@@ -28,6 +28,20 @@ class VisitAssignmentResource extends JsonResource
                 'latitude' => $this->patient->latitude !== null ? (float) $this->patient->latitude : null,
                 'longitude' => $this->patient->longitude !== null ? (float) $this->patient->longitude : null,
                 'geo_status' => $this->patient->geo_status,
+                // Wilayah administratif (docs/planning/10 §5, fitur unduh peta offline) -- desa_id
+                // null WALAU kecamatan_id terisi itu kasus umum (~19,6% pasien, lihat migration
+                // add_kecamatan_id_to_patients_cache_table & WilayahMapping) -- frontend pakai ini
+                // utk deteksi "wilayah ambigu" & tawarkan kader pilih desa/kecamatan manual,
+                // BUKAN langsung jatuh ke unduhan seluruh Kabupaten Sumenep.
+                'desa_id' => $this->patient->desa_id,
+                'desa_nama' => $this->patient->desa?->nama,
+                'desa_latitude' => $this->patient->desa?->latitude !== null ? (float) $this->patient->desa->latitude : null,
+                'desa_longitude' => $this->patient->desa?->longitude !== null ? (float) $this->patient->desa->longitude : null,
+                'kecamatan_id' => $this->patient->kecamatan_id,
+                'kecamatan_nama' => $this->patient->kecamatan?->nama,
+                'kecamatan_latitude' => $this->patient->kecamatan?->latitude !== null ? (float) $this->patient->kecamatan->latitude : null,
+                'kecamatan_longitude' => $this->patient->kecamatan?->longitude !== null ? (float) $this->patient->kecamatan->longitude : null,
+                'wilayah_status' => $this->patient->wilayah_status,
             ]),
             'kader' => $this->whenLoaded('kader', fn () => $this->kader ? [
                 'id' => $this->kader->id,
