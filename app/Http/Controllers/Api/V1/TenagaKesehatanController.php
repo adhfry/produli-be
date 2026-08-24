@@ -197,7 +197,7 @@ class TenagaKesehatanController extends Controller
                 try {
                     $body = $client->getPembaruanLapanganHistory($externalPatientId);
 
-                    return [$externalPatientId => collect($body['data'] ?? [])->groupBy('kopipu_visit_id')];
+                    return [$externalPatientId => collect($body['data'] ?? [])->groupBy('produli_visit_id')];
                 } catch (Throwable $e) {
                     report($e);
 

@@ -245,7 +245,7 @@ class SilakesApiClient
 
     /**
      * GET /api/v1/integration/patients/{patient_id}/pembaruan-lapangan — riwayat usulan yang
-     * PERNAH DIKIRIM PRODULI (sumber kopipu_kunjungan/kopipu_dashboard) untuk 1 pasien, termasuk
+     * PERNAH DIKIRIM PRODULI (sumber produli_kunjungan/produli_dashboard) untuk 1 pasien, termasuk
      * status pending_review/approved/rejected. Endpoint BACA (pakai token baca yang sama seperti
      * patients()/labResults(), BUKAN write token) -- revisi dari keputusan awal "PRODULI tidak
      * perlu polling status" (docs/planning/01 §9), sekarang dibutuhkan supaya staf bisa lihat

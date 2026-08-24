@@ -82,7 +82,7 @@ Aturan wajib:
 
 Implementasi ringkas di sisi SiLAKES:
 
-- Buat 1 user khusus `service-account-kopipu`, generate token dengan ability `integration:read-lab-results`.
+- Buat 1 user khusus `service-account-produli`, generate token dengan ability `integration:read-lab-results`.
 - Middleware: `EnsureTokenAbility` + `throttle:60,1`.
 - Setiap request PRODULI menyertakan header `X-Signature = HMAC-SHA256(body + timestamp, shared_secret)`; SiLAKES verifikasi sebelum memproses.
 - Token disimpan sebagai env var di PRODULI (`SILAKES_API_TOKEN`), rotasi berkala (mis. tiap 90 hari).
@@ -158,9 +158,9 @@ Request body (semua optional kecuali identifier pasien di URL):
     "phone": "...",
     "pekerjaan": "...",
     "status_perkawinan": "...",
-    "sumber": "kopipu_kunjungan",
-    "kopipu_visit_id": 789,
-    "kopipu_kader_nama": "Bu Siti"
+    "sumber": "produli_kunjungan",
+    "produli_visit_id": 789,
+    "produli_kader_nama": "Bu Siti"
 }
 ```
 
@@ -179,7 +179,7 @@ Request body (semua optional kecuali identifier pasien di URL):
 **Dua lapis terpisah, karena SiLAKES pakai Vue 3 sebagai frontend (bukan Blade):**
 
 - **Backend (Laravel):** endpoint API — `GET` daftar usulan `pending_review`, `POST` approve, `POST` reject (dengan catatan opsional) — format response standar SiLAKES seperti biasa.
-- **Frontend (Vue 3):** komponen/halaman baru yang mengonsumsi endpoint di atas — daftar usulan, **nilai lama vs nilai usulan** berdampingan per field, sumber (`kopipu_kunjungan`, nama kader, tanggal kunjungan), tombol **Setujui**/**Tolak**. Ikuti konvensi Vue yang **sudah ada** di project ini (struktur routing, state management, komponen admin lain yang mirip) — jangan buat pola baru.
+- **Frontend (Vue 3):** komponen/halaman baru yang mengonsumsi endpoint di atas — daftar usulan, **nilai lama vs nilai usulan** berdampingan per field, sumber (`produli_kunjungan`, nama kader, tanggal kunjungan), tombol **Setujui**/**Tolak**. Ikuti konvensi Vue yang **sudah ada** di project ini (struktur routing, state management, komponen admin lain yang mirip) — jangan buat pola baru.
 
 Approve/reject tercatat siapa & kapan (`reviewed_by`, `reviewed_at`).
 
@@ -192,7 +192,7 @@ Approve/reject tercatat siapa & kapan (`reviewed_by`, `reviewed_at`).
 
 ### Tabel baru yang dibutuhkan di SiLAKES (disatukan — 1 tabel, bukan 2)
 
-`patient_field_updates`: `id`, `patient_id`, `kategori` (`geo`/`kontak`/`identitas` — untuk pelaporan saja, tidak mengubah alur), `field_name` (nullable untuk geo), `old_value`, `new_value` (JSON untuk geo: `{"latitude":...,"longitude":...}`), `sumber` (`kopipu_kunjungan`), `kopipu_visit_id`, `kopipu_kader_nama`, `status` (`pending_review`/`approved`/`rejected`), `reviewed_by`, `reviewed_at`, `catatan_reviewer`, `created_at`.
+`patient_field_updates`: `id`, `patient_id`, `kategori` (`geo`/`kontak`/`identitas` — untuk pelaporan saja, tidak mengubah alur), `field_name` (nullable untuk geo), `old_value`, `new_value` (JSON untuk geo: `{"latitude":...,"longitude":...}`), `sumber` (`produli_kunjungan`), `produli_visit_id`, `produli_kader_nama`, `status` (`pending_review`/`approved`/`rejected`), `reviewed_by`, `reviewed_at`, `catatan_reviewer`, `created_at`.
 
 **Penting:** field alamat hasil approve **tidak boleh menimpa** alamat KTP resmi — simpan sebagai data terpisah ("alamat domisili terverifikasi"), karena alamat KTP dan domisili aktual sering berbeda di lapangan (hal normal di Indonesia).
 
