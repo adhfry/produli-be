@@ -53,16 +53,16 @@ class SyncPatientFieldUpdateToSilakesJob implements ShouldQueue
 
         $payload = [
             ...$this->fields,
-            'sumber' => 'kopipu_dashboard',
+            'sumber' => 'produli_dashboard',
             // SiLAKES (IntegrationController::submitFieldUpdate) HANYA membaca
-            // 'kopipu_kader_nama' dari request -- pakai key yang sama di sini (bukan
-            // 'kopipu_diajukan_oleh') supaya nama pengaju SUNGGUHAN tersimpan, bukan
+            // 'produli_kader_nama' dari request -- pakai key yang sama di sini (bukan
+            // 'produli_diajukan_oleh') supaya nama pengaju SUNGGUHAN tersimpan, bukan
             // dibuang diam-diam karena field tidak dikenali. Nama kolomnya di SiLAKES
             // sejarahnya untuk kader, tapi sekarang dipakai bersama utk pengaju staf
             // dashboard juga -- lihat SUMBER_META di PatientFieldUpdates Vue (SiLAKES)
             // yang membedakan sumber kunjungan vs dashboard lewat kolom 'sumber', bukan
             // dari nama kolom pengaju.
-            'kopipu_kader_nama' => $this->proposedByName,
+            'produli_kader_nama' => $this->proposedByName,
         ];
 
         try {

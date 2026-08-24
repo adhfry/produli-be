@@ -92,8 +92,8 @@ class SyncFieldUpdateToSilakesJobTest extends TestCase
             $body = json_decode($request->body(), true);
 
             return str_contains($request->url(), '/api/v1/integration/patients/960001/pembaruan-lapangan')
-                && $body['kopipu_visit_id'] === $this->report->id
-                && $body['kopipu_kader_nama'] === 'Bu Siti'
+                && $body['produli_visit_id'] === $this->report->id
+                && $body['produli_kader_nama'] === 'Bu Siti'
                 && (float) $body['latitude'] === -7.0200
                 && (float) $body['longitude'] === 113.8500;
         });
@@ -129,9 +129,9 @@ class SyncFieldUpdateToSilakesJobTest extends TestCase
                 && $body['no_bpjs'] === '0001122334455'
                 && $body['jenis_prolanis'] === 'DM'
                 && $body['jenis_perokok'] === 'tidak_merokok'
-                // Field tetap (sumber/kopipu_visit_id/kopipu_kader_nama) tidak boleh tertimpa.
-                && $body['sumber'] === 'kopipu_kunjungan'
-                && $body['kopipu_visit_id'] === $this->report->id;
+                // Field tetap (sumber/produli_visit_id/produli_kader_nama) tidak boleh tertimpa.
+                && $body['sumber'] === 'produli_kunjungan'
+                && $body['produli_visit_id'] === $this->report->id;
         });
     }
 

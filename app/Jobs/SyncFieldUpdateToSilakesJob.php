@@ -52,9 +52,9 @@ class SyncFieldUpdateToSilakesJob implements ShouldQueue
             // kunjungan -- disimpan mentah di visit_reports.patient_field_updates, di-relay apa
             // adanya di sini (SiLAKES yang menentukan field mana yang dikenali/divalidasi).
             ...($report->patient_field_updates ?? []),
-            'sumber' => 'kopipu_kunjungan',
-            'kopipu_visit_id' => $report->id,
-            'kopipu_kader_nama' => $kader?->user?->name,
+            'sumber' => 'produli_kunjungan',
+            'produli_visit_id' => $report->id,
+            'produli_kader_nama' => $kader?->user?->name,
         ], fn ($value) => $value !== null);
 
         try {

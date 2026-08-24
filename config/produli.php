@@ -19,10 +19,10 @@ return [
         'write_token' => env('SILAKES_WRITE_API_TOKEN'),
         'signature_secret' => env('PRODULI_INTEGRATION_SECRET'),
         'signature_tolerance_seconds' => 300,
-        // Secret HMAC yang SAMA dengan services.kopipu.nik_hash_secret di SiLAKES
-        // (api-administrasi-labkesda) -- KOPIPU TIDAK PERNAH menyimpan NIK asli (patients_cache
+        // Secret HMAC yang SAMA dengan services.produli.nik_hash_secret di SiLAKES
+        // (api-administrasi-labkesda) -- PRODULI TIDAK PERNAH menyimpan NIK asli (patients_cache
         // cuma punya nik_hash, SiLAKES sudah hash sebelum kirim, docs/planning/04). Kunci yang
-        // sama ini cuma memungkinkan KOPIPU meng-hash input pencarian lalu membandingkan
+        // sama ini cuma memungkinkan PRODULI meng-hash input pencarian lalu membandingkan
         // hash-vs-hash (exact match) -- TIDAK PERNAH bisa dipakai membalik hash jadi NIK asli.
         'nik_hash_secret' => env('PRODULI_NIK_HASH_SECRET'),
 

@@ -36,7 +36,7 @@ class SilakesApiClientTest extends TestCase
             '*' => Http::response(['status' => 'success', 'message' => 'ok', 'data' => null], 200),
         ]);
 
-        $payload = ['latitude' => -7.0123456, 'longitude' => 113.8456789, 'kopipu_visit_id' => 42];
+        $payload = ['latitude' => -7.0123456, 'longitude' => 113.8456789, 'produli_visit_id' => 42];
 
         $this->makeClient()->postPembaruanLapangan(999, $payload);
 
