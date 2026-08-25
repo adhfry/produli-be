@@ -10,6 +10,7 @@ use App\Models\VisitReportAttendee;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
+use App\Services\Wilayah\WilayahResolver;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -38,6 +39,7 @@ class VisitReportService
     public function __construct(
         private readonly VisitValidationService $validationService,
         private readonly NotifyService $notifyService,
+        private readonly WilayahResolver $wilayahResolver,
     ) {}
 
     /**
@@ -123,6 +125,35 @@ class VisitReportService
 
                 $patient = $assignment->patient;
 
+                // Resolusi desa/kecamatan dari titik GPS kader SUNGGUHAN (permintaan user) --
+                // HANYA kalau kader benar-benar mengonfirmasi lokasi (bukan asal titik GPS
+                // perangkat, harus dipastikan kader BERDIRI di rumah pasien, sama syarat dengan
+                // update geo di bawah). $resolvedDesa null kalau titik ini tidak masuk polygon
+                // desa mana pun yang sudah diimpor (lihat WilayahResolver::resolveByCoordinates())
+                // -- diam-diam dilewati, BUKAN error (geo tetap tersimpan seperti biasa).
+                $resolvedFieldUpdates = $patientFieldUpdates;
+                $resolvedDesa = $confirmedPatientLocation
+                    ? $this->wilayahResolver->resolveByCoordinates((float) $context->latitude, (float) $context->longitude)
+                    : null;
+
+                // Cuma proses lanjut kalau hasilnya BEDA dari yang sudah tersimpan -- pasien yang
+                // desanya sudah benar tidak perlu diusulkan ulang ke SiLAKES tiap kunjungan
+                // (noise), dan tidak perlu overwrite lokal yang sudah sama.
+                $isNewDesaInfo = $resolvedDesa !== null && $resolvedDesa->id !== $patient->desa_id;
+
+                if ($isNewDesaInfo) {
+                    // Usulan koreksi ke SiLAKES (docs/planning/01 §9) lewat jalur yang SUDAH ADA
+                    // (patient_field_updates -> SyncFieldUpdateToSilakesJob) -- SiLAKES sendiri
+                    // yang menentukan status pending_review, sama seperti usulan kontak/alamat
+                    // lain yang digali kader manual. TIDAK menimpa key yang kader SENDIRI sudah
+                    // isi manual di form (kel_desa/kecamatan dari GPS cuma pelengkap, bukan lebih
+                    // otoritatif dari input eksplisit kader saat itu juga).
+                    $resolvedFieldUpdates += [
+                        'kel_desa' => $resolvedDesa->nama,
+                        'kecamatan' => $resolvedDesa->kecamatan?->nama,
+                    ];
+                }
+
                 $report = VisitReport::create([
                     'assignment_id' => $assignment->id,
                     'client_submission_id' => $context->clientSubmissionId,
@@ -138,7 +169,7 @@ class VisitReportService
                     'latitude' => $confirmedPatientLocation ? $context->latitude : null,
                     'longitude' => $confirmedPatientLocation ? $context->longitude : null,
                     'sync_status' => 'pending',
-                    'patient_field_updates' => $patientFieldUpdates !== [] ? $patientFieldUpdates : null,
+                    'patient_field_updates' => $resolvedFieldUpdates !== [] ? $resolvedFieldUpdates : null,
                     ...$pemeriksaan,
                     // Otomatis menunggu konfirmasi admin_puskesmas/pj_prolanis begitu kader/nakes
                     // memilih 'dirujuk_puskesmas' di antara tindakan (bisa lebih dari satu
@@ -159,6 +190,20 @@ class VisitReportService
                         'longitude' => $context->longitude,
                         'geo_verified_by' => $assignment->kader?->user_id ?? $assignment->tenagaKesehatan?->user_id,
                         'geo_verified_at' => now(),
+                        // Salinan LOKAL PRODULI diperbarui SEKARANG (bukan menunggu SiLAKES
+                        // menyetujui usulan pending_review di atas & round-trip lewat sync
+                        // berikutnya) -- kader benar-benar berdiri di titik ini, PRODULI sendiri
+                        // yang menentukan wilayah_status/puskesmas_id lokal, tidak perlu menunggu
+                        // approval SiLAKES cuma utk memperbaiki agregat/peta internal sendiri.
+                        // Resolusi puskesmas_id TIDAK ikut ditimpa di sini -- kalau staf sudah
+                        // menetapkan override manual (SyncSilakesService::upsertPatient()),
+                        // itu tetap dihormati; kalau belum, sync SiLAKES berikutnya yang akan
+                        // menurunkan puskesmas dari desa baru ini seperti alur normal.
+                        ...($isNewDesaInfo ? [
+                            'desa_id' => $resolvedDesa->id,
+                            'kecamatan_id' => $resolvedDesa->kecamatan_id,
+                            'wilayah_status' => 'resolved',
+                        ] : []),
                     ]);
                 }
 

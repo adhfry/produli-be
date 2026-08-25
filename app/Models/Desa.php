@@ -17,6 +17,7 @@ class Desa extends Model
         'nama',
         'latitude',
         'longitude',
+        'boundary',
     ];
 
     protected function casts(): array
@@ -24,6 +25,9 @@ class Desa extends Model
         return [
             'latitude' => 'decimal:7',
             'longitude' => 'decimal:7',
+            // Array koordinat [lng,lat] GeoJSON Polygon (bisa multi-ring, lihat
+            // WilayahResolver::resolveByCoordinates()) -- diisi produli:import-desa-boundaries.
+            'boundary' => 'array',
         ];
     }
 

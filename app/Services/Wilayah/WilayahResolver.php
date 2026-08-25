@@ -52,6 +52,86 @@ class WilayahResolver
 
     private ?Collection $puskesmasCache = null;
 
+    private ?Collection $desaBoundaryCache = null;
+
+    /**
+     * Resolusi desa dari titik GPS SUNGGUHAN (permintaan user: kader/nakes membawa koordinat
+     * kunjungan ke rumah pasien -> otomatis resolve, TIDAK bergantung teks kel_desa/kecamatan
+     * dari SiLAKES sama sekali -- ~93% pasien produksi wilayah_status='unknown' karena SiLAKES
+     * memang tidak pernah kirim teks itu, bukan soal resolve() di atas kurang pintar). Ray-
+     * casting standar terhadap boundary polygon desa (produli:import-desa-boundaries), BUKAN
+     * "desa terdekat" dari titik pusat (latitude/longitude di tabel desa) -- nearest-centroid
+     * gampang salah di dekat batas desa yang tidak beraturan, sedangkan kader benar-benar
+     * BERDIRI di lokasi pasien saat titik ini diambil (VisitReportService::submit(),
+     * confirmedPatientLocation=true), jadi layak dites terhadap batas administratif sungguhan.
+     * null kalau tidak ada polygon manapun yang memuat titik ini (di luar 334 desa yang sudah
+     * diimpor, atau titik GPS meleset jauh).
+     */
+    public function resolveByCoordinates(float $latitude, float $longitude): ?Desa
+    {
+        foreach ($this->desaWithBoundary() as $desa) {
+            if ($this->pointInDesaBoundary($latitude, $longitude, $desa->boundary)) {
+                return $desa;
+            }
+        }
+
+        return null;
+    }
+
+    private function desaWithBoundary(): Collection
+    {
+        return $this->desaBoundaryCache ??= Desa::whereNotNull('boundary')
+            ->with('kecamatan:id,nama')
+            ->get(['id', 'kecamatan_id', 'puskesmas_id', 'kode_kemendagri', 'nama', 'boundary']);
+    }
+
+    /**
+     * @param  array<int, array<int, array<int, array{0: float, 1: float}>>>  $polygons  Bentuk
+     *         seragam hasil produli:import-desa-boundaries -- array of polygons, tiap polygon
+     *         array of rings, tiap ring array titik [lng, lat] (urutan GeoJSON).
+     */
+    private function pointInDesaBoundary(float $lat, float $lng, array $polygons): bool
+    {
+        foreach ($polygons as $polygon) {
+            $outerRing = $polygon[0] ?? null; // ring pertama = outer boundary, lubang diabaikan
+
+            if ($outerRing !== null && $this->pointInRing($lat, $lng, $outerRing)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Ray-casting standar (Jordan curve theorem) -- $ring = array titik [lng, lat] GeoJSON.
+     * SENGAJA bukan library eksternal -- algoritma ini pendek/stabil, tidak butuh dependency
+     * baru cuma utk operasi geometri satu jenis ini.
+     *
+     * @param  array<int, array{0: float, 1: float}>  $ring
+     */
+    private function pointInRing(float $lat, float $lng, array $ring): bool
+    {
+        $inside = false;
+        $count = count($ring);
+
+        for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
+            $xi = $ring[$i][0];
+            $yi = $ring[$i][1];
+            $xj = $ring[$j][0];
+            $yj = $ring[$j][1];
+
+            $intersects = (($yi > $lat) !== ($yj > $lat))
+                && ($lng < ($xj - $xi) * ($lat - $yi) / ($yj - $yi) + $xi);
+
+            if ($intersects) {
+                $inside = ! $inside;
+            }
+        }
+
+        return $inside;
+    }
+
     public function resolve(?string $kelDesaRaw, ?string $kecamatanRaw): WilayahResolution
     {
         $kelDesaRaw = $this->applyEncodingFixup($kelDesaRaw);
