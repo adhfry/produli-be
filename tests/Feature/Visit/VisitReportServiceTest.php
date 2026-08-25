@@ -163,6 +163,92 @@ class VisitReportServiceTest extends TestCase
         Queue::assertPushed(SyncFieldUpdateToSilakesJob::class, fn ($job) => $job->visitReportId === $report->id);
     }
 
+    // ---- Permintaan user: kader/nakes bawa koordinat kunjungan -> otomatis resolve desa/
+    // kecamatan pasien + diusulkan ke SiLAKES lewat jalur patient_field_updates yang SUDAH ADA
+    // (bukan mekanisme baru), TANPA menunggu round-trip approval SiLAKES utk salinan lokal. ----
+
+    public function test_submit_dengan_konfirmasi_lokasi_di_dalam_boundary_desa_meresolve_wilayah_pasien(): void
+    {
+        Queue::fake();
+
+        $kecamatan = \App\Models\Kecamatan::create([
+            'kabupaten_id' => $this->patient->puskesmas->kabupaten_id,
+            'kode_kemendagri' => 'K-UJI', 'nama' => 'Kecamatan Uji',
+        ]);
+        $desa = \App\Models\Desa::create([
+            'kecamatan_id' => $kecamatan->id, 'kode_kemendagri' => 'D-UJI', 'nama' => 'Desa Uji',
+            // Kotak kecil di sekitar titik GPS kunjungan (-7.0200, 113.8500) -- ring [lng, lat].
+            'boundary' => [[[
+                [113.84, -7.03], [113.86, -7.03], [113.86, -7.01], [113.84, -7.01], [113.84, -7.03],
+            ]]],
+        ]);
+
+        $report = $this->service->submit(
+            $this->assignment,
+            $this->makeContext(['latitude' => -7.0200, 'longitude' => 113.8500, 'expectedLatitude' => -7.0123, 'expectedLongitude' => 113.8456, 'geoStatus' => 'approximate']),
+            'Kondisi stabil.',
+            confirmedPatientLocation: true,
+        );
+
+        $patient = $this->patient->fresh();
+        $this->assertSame($desa->id, $patient->desa_id);
+        $this->assertSame($kecamatan->id, $patient->kecamatan_id);
+        $this->assertSame('resolved', $patient->wilayah_status);
+
+        $this->assertSame('Desa Uji', $report->patient_field_updates['kel_desa']);
+        $this->assertSame('Kecamatan Uji', $report->patient_field_updates['kecamatan']);
+
+        Queue::assertPushed(SyncFieldUpdateToSilakesJob::class, fn ($job) => $job->visitReportId === $report->id);
+    }
+
+    public function test_submit_konfirmasi_lokasi_di_luar_semua_boundary_tidak_mengubah_wilayah_pasien(): void
+    {
+        Queue::fake();
+
+        // TIDAK ada desa dengan boundary yang memuat titik GPS ini sama sekali.
+        $reportBefore = $this->patient->wilayah_status;
+
+        $report = $this->service->submit(
+            $this->assignment,
+            $this->makeContext(['latitude' => -7.0200, 'longitude' => 113.8500, 'expectedLatitude' => -7.0200, 'expectedLongitude' => 113.8500]),
+            'Kondisi stabil.',
+            confirmedPatientLocation: true,
+        );
+
+        $patient = $this->patient->fresh();
+        $this->assertSame($reportBefore, $patient->wilayah_status);
+        $this->assertNull($patient->desa_id);
+        $this->assertNull($report->patient_field_updates);
+    }
+
+    public function test_submit_konfirmasi_lokasi_tidak_mengulang_usulan_kalau_desa_sudah_sama(): void
+    {
+        Queue::fake();
+
+        $kecamatan = \App\Models\Kecamatan::create([
+            'kabupaten_id' => $this->patient->puskesmas->kabupaten_id,
+            'kode_kemendagri' => 'K-UJI', 'nama' => 'Kecamatan Uji',
+        ]);
+        $desa = \App\Models\Desa::create([
+            'kecamatan_id' => $kecamatan->id, 'kode_kemendagri' => 'D-UJI', 'nama' => 'Desa Uji',
+            'boundary' => [[[
+                [113.84, -7.03], [113.86, -7.03], [113.86, -7.01], [113.84, -7.01], [113.84, -7.03],
+            ]]],
+        ]);
+        // Pasien SUDAH resolved ke desa yang SAMA sebelumnya (mis. kunjungan sebelumnya) --
+        // usulan ke SiLAKES tidak perlu diulang tiap kunjungan (noise pending_review berulang).
+        $this->patient->update(['desa_id' => $desa->id, 'kecamatan_id' => $kecamatan->id, 'wilayah_status' => 'resolved']);
+
+        $report = $this->service->submit(
+            $this->assignment,
+            $this->makeContext(['latitude' => -7.0200, 'longitude' => 113.8500, 'expectedLatitude' => -7.0200, 'expectedLongitude' => 113.8500]),
+            'Kondisi stabil.',
+            confirmedPatientLocation: true,
+        );
+
+        $this->assertNull($report->patient_field_updates);
+    }
+
     public function test_submit_dengan_usulan_data_pasien_tersimpan_dan_dispatch_job_meski_tanpa_konfirmasi_lokasi(): void
     {
         Queue::fake();

@@ -317,4 +317,65 @@ class WilayahResolverTest extends TestCase
         $this->assertSame('unresolvable', $puskesmas['method']);
         $this->assertNull($puskesmas['puskesmas_id']);
     }
+
+    // ---- resolveByCoordinates() -- resolusi desa dari titik GPS kunjungan kader (permintaan
+    // user: "kader bawa koordinat kunjungan -> otomatis resolve desa/kecamatan pasien"), TIDAK
+    // bergantung teks kel_desa/kecamatan sama sekali. Polygon SENGAJA persegi sederhana
+    // (lng/lat bulat) supaya titik dalam/luar/di-kecamatan-lain mudah dihitung manual, bukan
+    // koordinat Sumenep asli -- geometrinya sendiri sudah diverifikasi cocok (334 fitur, ray-
+    // casting standar) lewat produli:import-desa-boundaries terhadap GeoJSON sungguhan. ----
+
+    private function makeSquareDesa(Kecamatan $kecamatan, string $kode, string $nama, float $minLng, float $minLat, float $maxLng, float $maxLat): Desa
+    {
+        return Desa::create([
+            'kecamatan_id' => $kecamatan->id,
+            'kode_kemendagri' => $kode,
+            'nama' => $nama,
+            'boundary' => [[[
+                [$minLng, $minLat],
+                [$maxLng, $minLat],
+                [$maxLng, $maxLat],
+                [$minLng, $maxLat],
+                [$minLng, $minLat],
+            ]]],
+        ]);
+    }
+
+    public function test_resolve_by_coordinates_menemukan_desa_yang_memuat_titik(): void
+    {
+        $desa = $this->makeSquareDesa($this->kotaSumenep, 'D-KOTAK-1', 'Kotak Satu', 0.0, 0.0, 1.0, 1.0);
+
+        $result = $this->resolver->resolveByCoordinates(0.5, 0.5);
+
+        $this->assertNotNull($result);
+        $this->assertSame($desa->id, $result->id);
+        $this->assertSame($this->kotaSumenep->id, $result->kecamatan_id);
+    }
+
+    public function test_resolve_by_coordinates_null_kalau_titik_di_luar_semua_polygon(): void
+    {
+        $this->makeSquareDesa($this->kotaSumenep, 'D-KOTAK-1', 'Kotak Satu', 0.0, 0.0, 1.0, 1.0);
+
+        $result = $this->resolver->resolveByCoordinates(5.0, 5.0);
+
+        $this->assertNull($result);
+    }
+
+    public function test_resolve_by_coordinates_membedakan_2_desa_bertetangga(): void
+    {
+        $satu = $this->makeSquareDesa($this->kotaSumenep, 'D-KOTAK-1', 'Kotak Satu', 0.0, 0.0, 1.0, 1.0);
+        $dua = $this->makeSquareDesa($this->talango, 'D-KOTAK-2', 'Kotak Dua', 1.0, 0.0, 2.0, 1.0);
+
+        $this->assertSame($satu->id, $this->resolver->resolveByCoordinates(0.5, 0.5)->id);
+        $this->assertSame($dua->id, $this->resolver->resolveByCoordinates(0.5, 1.5)->id);
+    }
+
+    public function test_resolve_by_coordinates_mengabaikan_desa_tanpa_boundary(): void
+    {
+        // Desa 'Kolor' dari setUp() tidak punya boundary sama sekali (belum diimpor) --
+        // harus dilewati, bukan bikin error.
+        $result = $this->resolver->resolveByCoordinates(0.5, 0.5);
+
+        $this->assertNull($result);
+    }
 }
