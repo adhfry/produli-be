@@ -431,12 +431,18 @@ class VisitAssignmentService
             'overdue' => $overdueCount,
         ];
 
-        // whereNotNull desa_id -- SAMA prinsip DashboardService::risikoPerDesa (level desa butuh
-        // presisi lebih tinggi dari kecamatan_fallback), pasien yang desanya belum resolved tidak
-        // bisa dikelompokkan "desa mana" di breakdown ini (tetap terhitung di $summary di atas).
+        // BUG NYATA (laporan user: "Selesai" di $summary = 11, tapi tabel per-desa cuma 3 baris
+        // yang jumlahnya tidak sampai 11 -- sangat membingungkan, terlihat seperti data hilang).
+        // Sebelumnya JOIN 'desa' (INNER) diam-diam MEMBUANG baris yang patients_cache.desa_id
+        // null/belum resolved dari tabel ini -- summary di atas TIDAK pakai join itu (hitung
+        // SEMUA assignment tanpa syarat wilayah), jadi 2 sumber angka yang seharusnya konsisten
+        // (total kunjungan) malah beda tanpa penjelasan apa pun ke user. Sekarang LEFT JOIN +
+        // dikelompokkan eksplisit ke bucket "Desa Tidak Dikenali" (id sentinel 0, tidak akan
+        // pernah bentrok dgn PK 'desa' asli yang auto_increment mulai dari 1) supaya SEMUA
+        // kunjungan dalam scope ini ikut tampil & totalnya balik konsisten dgn $summary.
         $rows = (clone $query)
             ->join('patients_cache', 'patients_cache.id', '=', 'visit_assignments.patient_id')
-            ->join('desa', 'desa.id', '=', 'patients_cache.desa_id')
+            ->leftJoin('desa', 'desa.id', '=', 'patients_cache.desa_id')
             ->leftJoin('kader', 'kader.id', '=', 'visit_assignments.kader_id')
             ->leftJoin('users as kader_user', 'kader_user.id', '=', 'kader.user_id')
             ->leftJoin('tenaga_kesehatan', 'tenaga_kesehatan.id', '=', 'visit_assignments.tenaga_kesehatan_id')
@@ -446,12 +452,13 @@ class VisitAssignmentService
 
         $grouped = [];
         foreach ($rows as $row) {
-            $desaId = (int) $row->desa_id;
+            $desaId = $row->desa_id !== null ? (int) $row->desa_id : 0;
+            $desaNama = $row->desa_id !== null ? $row->desa_nama : 'Desa Tidak Dikenali';
 
             if (! isset($grouped[$desaId])) {
                 $grouped[$desaId] = [
                     'desa_id' => $desaId,
-                    'desa_nama' => $row->desa_nama,
+                    'desa_nama' => $desaNama,
                     'total' => 0,
                     'pending' => 0,
                     'in_progress' => 0,
