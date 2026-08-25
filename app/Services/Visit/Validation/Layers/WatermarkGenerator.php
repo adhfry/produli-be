@@ -22,9 +22,20 @@ class WatermarkGenerator implements VisitValidationLayer
         return 'watermark';
     }
 
+    /**
+     * NONAKTIF (laporan bug: foto yang tersimpan di server "kering" -- tidak ada logo, peta
+     * mini, atau kartu lokasi seperti yang terlihat kader di auto-download/kartu review).
+     * Watermark ini HANYA teks polos (nama+waktu+koordinat di kotak hitam transparan) --
+     * jauh lebih sederhana dari komposit yang sudah dibangun client-side (badge logo asli,
+     * thumbnail peta MapLibre live, alamat lengkap, cuaca, dll, lihat buildWatermarkComposite()
+     * di app/pages/app/kunjungan/[id].vue). Foto yang disubmit SEKARANG sudah membawa komposit
+     * client itu langsung (bukan lagi frame mentah) -- layer ini akan double-watermark kalau
+     * tetap aktif, sekaligus tidak pernah bisa menyamai kekayaan komposit client (thumbnail peta
+     * live cuma ada di browser saat momen jepretan, mustahil direkonstruksi ulang di server).
+     */
     public function isEnabled(): bool
     {
-        return true;
+        return false;
     }
 
     public function validate(VisitValidationContext $context): VisitValidationResult
