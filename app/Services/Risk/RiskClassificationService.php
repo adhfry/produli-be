@@ -44,9 +44,33 @@ use Throwable;
  * direct-classifier manapun yang match (urutan keparahan lihat SEVERITY_ORDER).
  *
  * REVISI Bu Kadis juga menambah tier 'tidak_berisiko': kalau tidak ada satu pun jalur di atas
- * yang match (levelnya null) TAPI pasien punya baris is_latest sebelumnya (pernah divonis
- * sesuatu), berarti pasien sudah membaik total — ditulis baris baru level 'tidak_berisiko'
- * (bukan dibiarkan diam-diam tetap di level lama selamanya).
+ * yang match (levelnya null), pasien dicatat 'tidak_berisiko' — BAIK itu evaluasi PERTAMA
+ * kalinya (sebelumnya diam-diam TIDAK ditulis apa pun, lihat REVISI KEEMPAT di bawah) MAUPUN
+ * pasien yang sebelumnya berisiko lalu membaik total (bukan dibiarkan diam-diam tetap di level
+ * lama selamanya).
+ *
+ * REVISI KEEMPAT (audit "852 pasien hilang", temuan: total_patients_prolanis 5.320 vs
+ * total_patients 4.468 vs patients_per_risk_level.tidak_berisiko cuma 3.791 -- tiga angka yang
+ * seharusnya konsisten tapi tidak) — SEBELUMNYA classify() SENGAJA return null TANPA menulis
+ * baris apa pun untuk pasien yang levelnya null DAN belum pernah punya klasifikasi sebelumnya
+ * ("belum relevan sama sekali"). Efek sampingnya: pasien eligible (lolos gerbang
+ * SyncSilakesService::isEligible(), punya lab_results_cache) yang SEJAK AWAL tidak pernah
+ * sekali pun punya parameter melebihi ambang jadi TIDAK PERNAH punya baris risk_classifications
+ * SAMA SEKALI -- bukan tercatat "tidak_berisiko", tapi benar-benar tidak tercatat. Ini bikin
+ * total_patients (pasien yang PUNYA baris efektif) selalu lebih kecil dari total_patients_
+ * prolanis (semua baris patients_cache), dan pasien-pasien itu HILANG dari setiap agregat yang
+ * JOIN dari risk_classifications (risikoPerKecamatan/risikoPerDesa/risikoPerPuskesmas, filter
+ * ?risk_level=tidak_berisiko di /patients, export PDF) -- dashboard/index.vue sempat menambal
+ * ini TAPI cuma di SATU kartu ringkasan ("Pasien Tidak Berisiko" = selisih total_patients_
+ * prolanis-total_patients + risk.tidak_berisiko), sementara link kartu itu sendiri
+ * (?risk_level=tidak_berisiko) tetap menunjukkan angka yang lebih kecil karena query-nya
+ * whereHas('latestRiskClassification', ...) -- tambalan itu jadi sekadar kosmetik satu tempat,
+ * bukan fix di akarnya. Sekarang SETIAP pasien eligible SELALU dapat baris klasifikasi minimal
+ * 'tidak_berisiko' begitu pertama kali dievaluasi -- total_patients otomatis = total_patients_
+ * prolanis selamanya, tambalan di dashboard/index.vue jadi tidak perlu lagi (dihapus terpisah),
+ * dan semua agregat turunan otomatis konsisten tanpa perlu ditambal satu-satu lagi. Backfill
+ * data historis (852 pasien lama yang belum sempat dapat baris) lewat `php artisan
+ * produli:reclassify-risk` sekali setelah deploy fix ini.
  *
  * Nama parameter di BERAT_PARAMETERS/SEDANG_PARAMETERS HARUS persis sama dengan kolom
  * lab_results_cache.parameter dari SiLAKES asli (dikonfirmasi dari data sync nyata) — bukan
@@ -72,11 +96,12 @@ class RiskClassificationService
      * Tidak melempar exception untuk nilai non-numerik — parameter itu di-skip + di-log
      * (docs/planning/01 §Catatan Implementasi Wajib), tidak menggagalkan proses sync.
      *
-     * Return null (tidak menulis baris baru) HANYA kalau tidak ada level yang match DAN
-     * pasien memang belum pernah punya klasifikasi sebelumnya (belum relevan sama sekali).
-     * Kalau pasien PERNAH punya klasifikasi (is_latest=true) tapi sekarang tidak ada
-     * parameter yang melebihi rujukan sama sekali, itu artinya pasien membaik total —
-     * ditulis baris baru level 'tidak_berisiko', bukan dibiarkan diam di level lama.
+     * Kalau tidak ada satu pun level yang match, pasien dicatat 'tidak_berisiko' -- SELALU,
+     * baik ini evaluasi pertama kalinya (pasien eligible tapi belum pernah punya parameter
+     * melebihi ambang sama sekali) maupun pasien yang sebelumnya berisiko lalu membaik total
+     * (lihat REVISI KEEMPAT di docblock kelas). Return null HANYA sebagai guard idempotensi --
+     * level+kriteria+early_detection_flag baru PERSIS SAMA dengan baris is_latest yang sudah
+     * tersimpan, jadi tidak ada yang perlu ditulis ulang.
      */
     public function classify(PatientsCache $patient): ?RiskClassification
     {
@@ -181,14 +206,6 @@ class RiskClassificationService
         $matchedLevel = $this->mostSevere([$comboLevel, ...$directClassifierLevels]);
 
         if ($matchedLevel === null) {
-            $pernahDiklasifikasi = RiskClassification::where('patient_id', $patient->id)
-                ->where('is_latest', true)
-                ->exists();
-
-            if (! $pernahDiklasifikasi) {
-                return null;
-            }
-
             $matchedLevel = 'tidak_berisiko';
         }
 

@@ -99,7 +99,8 @@ class RiskClassificationPrecisionTest extends TestCase
 
         $result = $this->service->classify($patient->fresh());
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertSame('tidak_berisiko', $result->level);
     }
 
     public function test_kombinasi_sedang_pakai_risk_threshold_untuk_seluruh_parameter(): void

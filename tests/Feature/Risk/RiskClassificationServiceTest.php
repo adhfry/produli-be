@@ -27,7 +27,8 @@ use Tests\TestCase;
  * kombinasi di atas, jadi "direct classifier" bertingkat (1.7-1.9=Sedang, >=2.0=Berat) yang
  * bisa menentukan level SENDIRIAN, independen dari kombinasi 4/5-parameter. Level akhir =
  * paling parah antara jalur kombinasi dan jalur direct-classifier. Tier 'tidak_berisiko'
- * ditulis saat pasien yang PERNAH diklasifikasi membaik/tidak lagi memenuhi kriteria apa pun.
+ * ditulis begitu tidak ada kriteria yang match -- baik evaluasi PERTAMA kalinya (REVISI
+ * KEEMPAT, audit "852 pasien hilang") maupun pasien yang PERNAH diklasifikasi lalu membaik.
  *
  * Nama parameter di sini HARUS persis sama dengan kolom lab_results_cache.parameter dari
  * SiLAKES asli -- "GDP" (singkatan medis umum) TIDAK PERNAH muncul di data nyata, cuma
@@ -153,8 +154,9 @@ class RiskClassificationServiceTest extends TestCase
         // Regresi persis laporan bug: pasien A. Jazili, Trigliserida 192 (ambang >140) SATU-
         // SATUNYA yang melebihi -- Cholesterol/LDL normal, Gula Darah Puasa TIDAK PERNAH
         // diperiksa sama sekali (bukan "tersedia tapi normal"). Sebelum perbaikan ini, satu
-        // parameter saja cukup untuk salah naik ke Sedang -- sekarang harus TIDAK menghasilkan
-        // klasifikasi apa pun (pasien belum pernah diklasifikasi sebelumnya di tes ini).
+        // parameter saja cukup untuk salah naik ke Sedang -- sekarang harus TIDAK naik ke
+        // Sedang, cuma 'tidak_berisiko' (REVISI KEEMPAT: evaluasi pertama tanpa kriteria yang
+        // match tetap ditulis, bukan lagi dibiarkan tanpa baris sama sekali).
         $this->addLabResult(500001, 'Cholesterol', '181', '2026-05-08');
         $this->addLabResult(500002, 'LDL', '75', '2026-05-08');
         $this->addLabResult(500003, 'Trigliserida', '192', '2026-05-08');
@@ -163,8 +165,9 @@ class RiskClassificationServiceTest extends TestCase
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertNull($result);
-        $this->assertSame(0, RiskClassification::where('patient_id', $this->patient->id)->count());
+        $this->assertNotNull($result);
+        $this->assertSame('tidak_berisiko', $result->level);
+        $this->assertSame(1, RiskClassification::where('patient_id', $this->patient->id)->count());
     }
 
     public function test_creatinine_1_8_sendirian_menghasilkan_sedang_lewat_direct_classifier(): void
@@ -195,7 +198,8 @@ class RiskClassificationServiceTest extends TestCase
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertSame('tidak_berisiko', $result->level);
     }
 
     public function test_creatinine_berat_menang_walau_kombinasi_lain_cuma_sedang(): void
@@ -214,13 +218,14 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertSame('berat', $result->level);
     }
 
-    public function test_gula_darah_puasa_normal_gagalkan_kriteria_sedang_maupun_berat_tetap_null(): void
+    public function test_gula_darah_puasa_normal_gagalkan_kriteria_sedang_maupun_berat_jadi_tidak_berisiko(): void
     {
         // Gula Darah Puasa sengaja dibiarkan normal -- 4 dari 5 parameter kombinasi Berat
         // melebihi (Cholesterol/Trigliserida/LDL/Urea), tapi karena Gula Darah Puasa TERSEDIA
         // dan TIDAK melebihi, ini gagal AND penuh untuk Berat MAUPUN Sedang (SEDANG_PARAMETERS
         // juga mewajibkan Gula Darah Puasa ikut melebihi sejak revisi AND ketat) -- bukan lagi
-        // otomatis jatuh ke Sedang seperti perilaku lama (OR).
+        // otomatis jatuh ke Sedang seperti perilaku lama (OR), dan sejak REVISI KEEMPAT tidak
+        // lagi dibiarkan tanpa baris sama sekali -- 'tidak_berisiko'.
         $this->addFullPanel([
             'Cholesterol' => '300',
             'Trigliserida' => '200',
@@ -230,7 +235,8 @@ class RiskClassificationServiceTest extends TestCase
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertNull($result);
+        $this->assertNotNull($result);
+        $this->assertSame('tidak_berisiko', $result->level);
     }
 
     public function test_hanya_gula_darah_puasa_tersedia_dan_melebihi_menghasilkan_ringan(): void
@@ -387,17 +393,22 @@ class RiskClassificationServiceTest extends TestCase
         $this->assertSame(2, RiskClassification::where('patient_id', $this->patient->id)->count());
     }
 
-    public function test_belum_pernah_diklasifikasi_dan_tidak_ada_yang_match_tetap_null(): void
+    public function test_belum_pernah_diklasifikasi_dan_tidak_ada_yang_match_menulis_tidak_berisiko(): void
     {
-        // Pasien belum PERNAH punya baris risk_classifications sama sekali -- kalau tidak ada
-        // parameter yang melebihi rujukan, tetap tidak menulis apa-apa (bukan tidak_berisiko),
-        // supaya tidak bikin noise untuk pasien yang memang belum pernah relevan.
+        // REVISI KEEMPAT (audit "852 pasien hilang") -- pasien belum PERNAH punya baris
+        // risk_classifications sama sekali, tidak ada parameter yang melebihi rujukan: SEKARANG
+        // tetap ditulis 'tidak_berisiko' (bukan lagi dibiarkan tanpa baris sama sekali), supaya
+        // total_patients (pasien yang punya baris efektif) selalu = total_patients_prolanis
+        // (semua baris patients_cache), dan pasien ini tidak hilang dari agregat mana pun yang
+        // JOIN dari risk_classifications (peta per kecamatan/desa/puskesmas, filter
+        // ?risk_level=tidak_berisiko, export PDF).
         $this->addLabResult(500001, 'Gula Darah Puasa', '80', '2026-07-20');
 
         $result = $this->service->classify($this->patient->fresh());
 
-        $this->assertNull($result);
-        $this->assertSame(0, RiskClassification::where('patient_id', $this->patient->id)->count());
+        $this->assertNotNull($result);
+        $this->assertSame('tidak_berisiko', $result->level);
+        $this->assertSame(1, RiskClassification::where('patient_id', $this->patient->id)->count());
     }
 
     public function test_membaik_dari_pernah_diklasifikasi_menjadi_tidak_ada_yang_match_menulis_tidak_berisiko(): void
