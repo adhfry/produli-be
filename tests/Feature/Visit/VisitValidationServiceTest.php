@@ -109,8 +109,24 @@ class VisitValidationServiceTest extends TestCase
 
         $this->assertTrue($summary->passed);
         $this->assertArrayHasKey('distance_meters', $summary->metadata); // dari GeofenceCheck
-        $this->assertArrayHasKey('watermarked_photo_path', $summary->metadata); // dari WatermarkGenerator
-        $this->assertFileExists($summary->metadata['watermarked_photo_path']);
+    }
+
+    /**
+     * REGRESI (laporan bug: foto tersimpan di server "kering", tanpa logo/peta/lokasi) --
+     * WatermarkGenerator (Layer 4) sekarang NONAKTIF permanen (foto yang disubmit sudah
+     * membawa komposit watermark client-side, lihat buildWatermarkComposite() di frontend),
+     * jadi HARUS tercatat skipped, BUKAN menghasilkan watermarked_photo_path lagi -- kalau
+     * layer ini diam-diam aktif lagi di masa depan, foto akan double-watermark.
+     */
+    public function test_watermark_generator_skipped_tidak_lagi_hasilkan_watermarked_photo_path(): void
+    {
+        $summary = app(VisitValidationService::class)->validate($this->makeContext());
+
+        $this->assertTrue($summary->passed);
+        $this->assertArrayNotHasKey('watermarked_photo_path', $summary->metadata);
+        $this->assertTrue($summary->results[3]->skipped);
+        $this->assertSame('watermark', $summary->results[3]->layer);
+        $this->assertTrue($summary->results[3]->passed);
     }
 
     public function test_face_detection_diaktifkan_ikut_menentukan_hasil_akhir(): void
