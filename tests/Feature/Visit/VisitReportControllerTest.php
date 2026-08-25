@@ -163,8 +163,10 @@ class VisitReportControllerTest extends TestCase
         $this->assertSame(['diberi_obat'], $response->json('data.tindakan'));
     }
 
-    public function test_kader_bisa_pilih_lebih_dari_satu_tindakan_sekaligus(): void
+    public function test_kader_tidak_bisa_pilih_lebih_dari_satu_tindakan_sekaligus(): void
     {
+        // REVISI (permintaan user) -- tindakan dibalik lagi jadi radio EKSKLUSIF, sebelumnya
+        // sempat multi-select (Fase 2). max:1 di SubmitVisitReportRequest menegakkan ini.
         Sanctum::actingAs($this->kader->user);
 
         $response = $this->post('/api/v1/visit-reports', $this->validPayload([
@@ -172,12 +174,44 @@ class VisitReportControllerTest extends TestCase
             'cara_rujukan' => 'diantar_keluarga',
         ]), ['Accept' => 'application/json']);
 
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('tindakan');
+        $this->assertSame(0, VisitReport::count());
+    }
+
+    public function test_kader_bisa_isi_detail_obat_saat_diberi_obat(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['diberi_obat'],
+            'obat_detail' => [
+                ['nama' => 'Paracetamol', 'dosis' => '500mg', 'frekuensi' => '3x sehari'],
+                ['nama' => 'Amlodipine', 'dosis' => '10mg', 'frekuensi' => '1x sehari'],
+            ],
+        ]), ['Accept' => 'application/json']);
+
         $response->assertCreated();
         $report = VisitReport::first();
-        $this->assertSame(['diberi_obat', 'dirujuk_puskesmas'], $report->tindakan);
-        $this->assertSame('diantar_keluarga', $report->cara_rujukan);
-        $this->assertSame('menunggu_konfirmasi', $report->rujukan_status);
-        $this->assertSame('menunggu_konfirmasi', $response->json('data.rujukan_status'));
+        $this->assertSame(['diberi_obat'], $report->tindakan);
+        $this->assertCount(2, $report->obat_detail);
+        $this->assertSame('Paracetamol', $report->obat_detail[0]['nama']);
+        $this->assertSame('500mg', $report->obat_detail[0]['dosis']);
+        $this->assertSame('3x sehari', $report->obat_detail[0]['frekuensi']);
+        $this->assertSame('Amlodipine', $report->obat_detail[1]['nama']);
+    }
+
+    public function test_obat_detail_wajib_ada_nama_kalau_baris_dikirim(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['diberi_obat'],
+            'obat_detail' => [['dosis' => '500mg']],
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('obat_detail.0.nama');
     }
 
     public function test_cara_rujukan_wajib_kalau_tindakan_mencakup_dirujuk_puskesmas(): void

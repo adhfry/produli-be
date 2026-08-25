@@ -68,15 +68,24 @@ class SubmitVisitReportRequest extends FormRequest
             'systolic' => ['nullable', 'integer', 'min:0'],
             'diastolic' => ['nullable', 'integer', 'min:0'],
             'keluhan' => ['nullable', 'string'],
-            // Bisa lebih dari satu tindakan sekaligus (mis. diberi obat SEKALIGUS dirujuk) --
-            // sebelumnya enum tunggal, sekarang array (docs plan Fase 2).
-            'tindakan' => ['nullable', 'array'],
+            // REVISI (kembali eksklusif, permintaan user "harus pilih salah satu") -- wire
+            // format tetap array (max 1 elemen) supaya kompatibel dgn draft lama yg sempat
+            // dibuat semasa Fase 2 (multi-tindakan) tanpa perlu migrasi data historis.
+            'tindakan' => ['nullable', 'array', 'max:1'],
             'tindakan.*' => ['string', 'in:diberi_obat,dirujuk_puskesmas,tidak_ada'],
             // Wajib diisi HANYA kalau 'dirujuk_puskesmas' ada di antara tindakan yang dipilih.
             'cara_rujukan' => [
                 Rule::requiredIf(fn () => in_array('dirujuk_puskesmas', (array) $this->input('tindakan', []), true)),
                 'nullable', 'string', 'in:datang_sendiri,dijemput_ambulan,diantar_keluarga,diantar_nakes_kader',
             ],
+            // Detail obat (permintaan user) -- relevan HANYA kalau tindakan=['diberi_obat'],
+            // bisa >1 obat. Diisi siapa pun yang submit laporan ini (kader ATAU nakes) -- sama
+            // seperti tindakan sendiri, tidak digerbang role. dosis/frekuensi opsional (kader
+            // kadang cuma sempat catat nama obatnya saja).
+            'obat_detail' => ['nullable', 'array'],
+            'obat_detail.*.nama' => ['required', 'string', 'max:255'],
+            'obat_detail.*.dosis' => ['nullable', 'string', 'max:100'],
+            'obat_detail.*.frekuensi' => ['nullable', 'string', 'max:100'],
 
             // PMO mingguan kader (revisi Bu Kadis) -- opsional, sama seperti field pemeriksaan
             // klinis di atas.
@@ -134,7 +143,7 @@ class SubmitVisitReportRequest extends FormRequest
     {
         return Arr::only($this->validated(), [
             'gda', 'gdp', 'gd2jpp', 'uric_acid', 'cholesterol',
-            'systolic', 'diastolic', 'keluhan', 'tindakan', 'cara_rujukan',
+            'systolic', 'diastolic', 'keluhan', 'tindakan', 'obat_detail', 'cara_rujukan',
             'kepatuhan_obat', 'sisa_obat',
         ]);
     }

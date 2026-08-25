@@ -91,6 +91,21 @@ class VisitAssignmentController extends Controller
                     }
                 }
             )
+            // Permintaan user -- KHUSUS super_admin/admin_puskesmas/pj_prolanis (role yang benar-
+            // benar meninjau laporan masuk lewat /dashboard/kunjungan), kunjungan yang laporannya
+            // BARU MASUK didahulukan (perlu ditinjau duluan), bukan diurutkan tenggat seperti
+            // /app/tugas kader (yang sudah re-sort sendiri di frontend, jadi urutan default di
+            // sini tidak berpengaruh ke kader). Subquery MAX(created_at) per assignment -- 1 baris
+            // bisa punya >1 laporan (alur ulang setelah invalid, lihat latestReport() di atas).
+            // MySQL taruh NULL (belum ada laporan) di posisi TERAKHIR untuk ORDER BY ... DESC
+            // secara alami, jadi assignment yang belum ada laporan otomatis tidak mendahului yang
+            // sudah ada laporan baru.
+            ->when(
+                $request->user()?->hasAnyRole(['super_admin', 'admin_puskesmas', 'pj_prolanis']),
+                fn ($query) => $query->orderByRaw(
+                    '(select max(vr.created_at) from visit_reports vr where vr.assignment_id = visit_assignments.id) desc'
+                ),
+            )
             ->orderBy('scheduled_date')
             ->paginate($request->integer('per_page', 20));
 
