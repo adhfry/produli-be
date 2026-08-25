@@ -441,7 +441,7 @@ class VisitReportServiceTest extends TestCase
             $this->assignment,
             $this->makeContext(),
             'Kondisi stabil.',
-            pemeriksaan: ['tindakan' => ['diberi_obat', 'dirujuk_puskesmas'], 'cara_rujukan' => 'dijemput_ambulan'],
+            pemeriksaan: ['tindakan' => ['dirujuk_puskesmas'], 'cara_rujukan' => 'dijemput_ambulan'],
         );
 
         $this->assertSame('menunggu_konfirmasi', $report->fresh()->rujukan_status);
