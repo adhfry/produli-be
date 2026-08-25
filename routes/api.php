@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\KecamatanController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PatientController;
 use App\Http\Controllers\Api\V1\PuskesmasController;
+use App\Http\Controllers\Api\V1\RealtimeController;
 use App\Http\Controllers\Api\V1\RujukanController;
 use App\Http\Controllers\Api\V1\SilakesSyncController;
 use App\Http\Controllers\Api\V1\StaffController;
@@ -193,6 +194,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
 
     Route::post('fcm-tokens', [FcmTokenController::class, 'store']);
     Route::delete('fcm-tokens', [FcmTokenController::class, 'destroy']);
+
+    // Token socket produli-wss (docs plan realtime) -- lihat RealtimeController.
+    Route::get('ws-token', [RealtimeController::class, 'token']);
 
     Route::get('announcements', [AnnouncementController::class, 'index']);
     Route::get('announcements/unread', [AnnouncementController::class, 'unread']);

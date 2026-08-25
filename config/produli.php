@@ -225,6 +225,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Realtime (produli-wss, Phoenix Channels -- repo & domain terpisah dari
+    | wss.silakes karena channel di sana tidak ada autentikasi sama sekali)
+    |--------------------------------------------------------------------------
+    |
+    | Dua secret TERPISAH, WAJIB sama persis dengan PRODULI_WSS_TOKEN_SECRET/
+    | PRODULI_WSS_BROADCAST_SECRET di .env produli-wss (server yang sama). Lihat
+    | App\Services\Realtime\WebsocketTokenService (penerbit token) & RealtimeBroadcastService
+    | (pemanggil POST /internal/broadcast).
+    |
+    */
+    'realtime' => [
+        'base_url' => env('PRODULI_WSS_BASE_URL'),
+        'token_secret' => env('WSS_TOKEN_SECRET'),
+        'broadcast_secret' => env('WSS_BROADCAST_SECRET'),
+        // Umur token socket -- pendek sengaja (bukan setara access token biasa), frontend
+        // minta token baru tiap kali socket reconnect (lihat useRealtime.ts), bukan sekali
+        // ambil dipakai berjam-jam.
+        'token_ttl_seconds' => (int) env('PRODULI_WSS_TOKEN_TTL_SECONDS', 3600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Geocoding (PuskesmasGeocodingService, cari-otomatis koordinat puskesmas)
     |--------------------------------------------------------------------------
     |
