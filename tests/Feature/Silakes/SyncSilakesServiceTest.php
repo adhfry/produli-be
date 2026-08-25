@@ -116,10 +116,12 @@ class SyncSilakesServiceTest extends TestCase
         $this->assertSame(2, $result['patients_synced']);
         $this->assertSame(2, $result['lab_results_synced']);
         // Fixture ini cuma punya Gula Darah Puasa (bukan 4/5 kombinasi lengkap untuk Sedang/
-        // Berat) -- tapi Gula Darah Puasa sendirian sekarang menghasilkan tier Ringan (REVISI
-        // KETIGA, standar landing page -- lihat RiskClassificationServiceTest utk cakupan
-        // lengkap), jadi 1 pasien (yang eligible/resolved) ter-klasifikasi lewat sync ini.
-        $this->assertSame(1, $result['patients_classified']);
+        // Berat) -- pasien 1 (GDP 250, melebihi) menghasilkan tier Ringan (REVISI KETIGA,
+        // standar landing page -- lihat RiskClassificationServiceTest utk cakupan lengkap),
+        // pasien 2 (GDP 90, normal) menghasilkan 'tidak_berisiko' (REVISI KEEMPAT, audit "852
+        // pasien hilang" -- evaluasi pertama tanpa kriteria yang match SEKARANG tetap ditulis,
+        // bukan lagi dibiarkan tanpa baris sama sekali) -- keduanya ikut ter-klasifikasi.
+        $this->assertSame(2, $result['patients_classified']);
 
         $p1 = PatientsCache::where('external_patient_id', 888001)->first();
         $p2 = PatientsCache::where('external_patient_id', 888002)->first();
@@ -134,6 +136,7 @@ class SyncSilakesServiceTest extends TestCase
         // Gula Darah Puasa sendirian menghasilkan tier Ringan -- lihat RiskClassificationServiceTest
         // utk cakupan lengkap logika klasifikasi itu sendiri.
         $this->assertSame('ringan', $p1->riskClassifications()->where('is_latest', true)->first()->level);
+        $this->assertSame('tidak_berisiko', $p2->riskClassifications()->where('is_latest', true)->first()->level);
     }
 
     public function test_hmac_signature_dan_timestamp_terkirim_di_setiap_request(): void
