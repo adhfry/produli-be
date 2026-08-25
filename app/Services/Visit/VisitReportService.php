@@ -10,6 +10,7 @@ use App\Models\VisitReportAttendee;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
+use App\Services\Realtime\RealtimeBroadcastService;
 use App\Services\Wilayah\WilayahResolver;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -40,7 +41,26 @@ class VisitReportService
         private readonly VisitValidationService $validationService,
         private readonly NotifyService $notifyService,
         private readonly WilayahResolver $wilayahResolver,
+        private readonly RealtimeBroadcastService $realtimeBroadcast,
     ) {}
+
+    /**
+     * Sinyal dashboard realtime (permintaan user) -- broadcast ke topic puskesmas petugas
+     * pelapor DAN "role:super_admin" sekaligus, supaya /dashboard/kunjungan & /dashboard/rujukan
+     * super_admin ikut ter-refresh senyap walau super_admin BUKAN target notifyReportSubmitted()/
+     * notifyPasienDirujuk() di atas (sengaja dikecualikan dari NotifiableTarget::rolesInPuskesmas,
+     * lihat docblock notifyPasienDirujuk()) -- event dashboard ini beda tujuan dari notifikasi
+     * bel/push/fcm/wa (yang memang bukan urusan super_admin per kunjungan), murni "daftar di
+     * layar Anda perlu di-refresh", jadi tidak lewat NotifyService/NotifiableTarget sama sekali.
+     * Try/catch di pemanggil (bukan di sini) -- gagal kirim sinyal TIDAK BOLEH menggagalkan
+     * proses notifikasi channel lain yang mengikutinya.
+     */
+    private function broadcastDashboardSignal(int $puskesmasId, string $event, int $assignmentId): void
+    {
+        $payload = ['assignment_id' => $assignmentId];
+        $this->realtimeBroadcast->broadcast("puskesmas:{$puskesmasId}", $event, $payload);
+        $this->realtimeBroadcast->broadcast('role:super_admin', $event, $payload);
+    }
 
     /**
      * @param  array<string, mixed>  $patientFieldUpdates  Usulan pelengkapan/koreksi data pasien
@@ -305,8 +325,10 @@ class VisitReportService
                     ],
                     imageUrl: $report->photoUrl(),
                 ),
-                ['push', 'fcm'],
+                ['push', 'fcm', 'ws'],
             );
+
+            $this->broadcastDashboardSignal($petugasPuskesmasId, 'visit_report.submitted', $assignment->id);
         } catch (Throwable $e) {
             Log::warning('VisitReportService: gagal mengirim notifikasi laporan kunjungan, laporan tetap tersimpan', [
                 'assignment_id' => $assignment->id,
@@ -362,8 +384,10 @@ class VisitReportService
                         'action_label' => 'Lihat Kunjungan',
                     ],
                 ),
-                ['push', 'fcm', 'email'],
+                ['push', 'fcm', 'email', 'ws'],
             );
+
+            $this->broadcastDashboardSignal($petugasPuskesmasId, 'pasien_dirujuk', $assignment->id);
         } catch (Throwable $e) {
             Log::warning('VisitReportService: gagal mengirim notifikasi rujukan, laporan tetap tersimpan', [
                 'assignment_id' => $assignment->id,

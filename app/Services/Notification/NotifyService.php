@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Notification\Channels\DatabaseReminderChannel;
 use App\Services\Notification\Channels\EmailReminderChannel;
 use App\Services\Notification\Channels\FcmReminderChannel;
+use App\Services\Notification\Channels\WebsocketReminderChannel;
 use App\Services\Notification\Channels\WhatsappReminderChannel;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -34,6 +35,7 @@ class NotifyService
         WhatsappReminderChannel $wa,
         EmailReminderChannel $email,
         FcmReminderChannel $fcm,
+        WebsocketReminderChannel $ws,
     ) {
         // 'wa' terdaftar tapi sengaja belum dipakai di titik pemicu manapun (lihat docblock
         // NotificationService::channelsFor()) -- sama alasannya, cuma satu tempat lagi.
@@ -42,6 +44,7 @@ class NotifyService
             $wa->key() => $wa,
             $email->key() => $email,
             $fcm->key() => $fcm,
+            $ws->key() => $ws,
         ];
     }
 

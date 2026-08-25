@@ -32,5 +32,12 @@
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
+        <!-- RealtimeBroadcastService: tanpa ini nilai .env lokal (http://localhost:4001) ikut
+             kepakai di semua test yang memicu notifyReportSubmitted()/notifyPasienDirujuk(),
+             bikin test coba HTTP request sungguhan ke produli-wss yang mungkin tidak jalan;
+             kosong di sini artinya throw cepat (tertangkap try/catch), test yang memang
+             menguji jalur ini set config()/Http::fake() sendiri (lihat tests/Feature/Realtime). -->
+        <env name="PRODULI_WSS_BASE_URL" value=""/>
+        <env name="WSS_BROADCAST_SECRET" value=""/>
     </php>
 </phpunit>

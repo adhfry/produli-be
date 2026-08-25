@@ -378,6 +378,67 @@ class VisitReportServiceTest extends TestCase
     }
 
     /**
+     * Permintaan user (dashboard realtime) -- 'ws' HARUS ikut channelKeys per-user (bel
+     * notifikasi admin_puskesmas/pj_prolanis lewat produli-wss topic user:{id}), DAN sinyal
+     * TERPISAH dikirim langsung (bukan lewat NotifyService/DispatchNotifyPayloadJob) ke topic
+     * puskesmas:{id} SERTA role:super_admin -- super_admin sengaja BUKAN target
+     * rolesInPuskesmas() di atas, jadi cuma bisa dites lewat sinyal dashboard ini.
+     */
+    public function test_submit_kirim_sinyal_realtime_ws_dan_dashboard(): void
+    {
+        Queue::fake();
+        Http::fake(['fake-wss.test/*' => Http::response(['status' => 'ok'], 200)]);
+        config([
+            'produli.realtime.base_url' => 'http://fake-wss.test',
+            'produli.realtime.broadcast_secret' => 'test-broadcast-secret',
+        ]);
+        $this->seed(\Database\Seeders\RolesSeeder::class);
+
+        $puskesmasId = $this->assignment->puskesmas_id_snapshot;
+        $admin = User::factory()->create(['puskesmas_id' => $puskesmasId]);
+        $admin->assignRole('admin_puskesmas');
+
+        $this->service->submit($this->assignment, $this->makeContext(), 'Kondisi stabil.');
+
+        Queue::assertPushed(\App\Jobs\DispatchNotifyPayloadJob::class, function ($job) use ($admin) {
+            return $job->userId === $admin->id && in_array('ws', $job->channelKeys, true);
+        });
+
+        Http::assertSent(function ($request) use ($puskesmasId) {
+            $body = $request->data();
+
+            return $request->url() === 'http://fake-wss.test/internal/broadcast'
+                && $request->hasHeader('x-internal-secret', 'test-broadcast-secret')
+                && $body['topic'] === "puskesmas:{$puskesmasId}"
+                && $body['event'] === 'visit_report.submitted'
+                && $body['payload']['assignment_id'] === $this->assignment->id;
+        });
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['topic'] === 'role:super_admin' && $body['event'] === 'visit_report.submitted';
+        });
+    }
+
+    /**
+     * Kegagalan produli-wss (down/timeout) TIDAK BOLEH menggagalkan submit() -- sama prinsipnya
+     * dengan kegagalan channel notifikasi lain (try/catch di notifyReportSubmitted()).
+     */
+    public function test_submit_tetap_sukses_meski_produli_wss_down(): void
+    {
+        Queue::fake();
+        Http::fake(['fake-wss.test/*' => Http::response('', 500)]);
+        config([
+            'produli.realtime.base_url' => 'http://fake-wss.test',
+            'produli.realtime.broadcast_secret' => 'test-broadcast-secret',
+        ]);
+
+        $report = $this->service->submit($this->assignment, $this->makeContext(), 'Kondisi stabil.');
+
+        $this->assertNotNull($report->id);
+    }
+
+    /**
      * Verifikasi eksplisit perbaikan targeting: notifikasi HARUS ikut puskesmas KADER pelapor,
      * bukan puskesmas_id_snapshot assignment (yang turunan puskesmas PASIEN). Skenario ini
      * sengaja membuat keduanya BEDA -- sebelum perbaikan, test ini akan gagal karena notif salah
