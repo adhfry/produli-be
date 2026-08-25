@@ -905,7 +905,9 @@ class VisitAssignmentControllerTest extends TestCase
         $pasienSatu = $this->makePatient($this->puskesmasA, 1, ['desa_id' => $desaSatu->id]);
         $pasienDua = $this->makePatient($this->puskesmasA, 2, ['desa_id' => $desaSatu->id]);
         $pasienTiga = $this->makePatient($this->puskesmasA, 3, ['desa_id' => $desaDua->id]);
-        // Belum resolved ke desa mana pun -- TIDAK ikut breakdown per_desa (tetap ikut summary).
+        // Belum resolved ke desa mana pun -- REVISI (bug "Selesai=11 tapi tabel cuma 3 desa"):
+        // sekarang ikut breakdown per_desa juga, dikelompokkan ke bucket "Desa Tidak Dikenali"
+        // (desa_id sentinel 0), bukan lagi dibuang diam-diam.
         $pasienTanpaDesa = $this->makePatient($this->puskesmasA, 4);
 
         VisitAssignment::create([
@@ -934,10 +936,12 @@ class VisitAssignmentControllerTest extends TestCase
         $response = $this->getJson('/api/v1/visit-assignments/monitoring');
 
         $response->assertOk();
-        // 4 assignment total di summary, TAPI cuma 3 masuk per_desa (1 pasien belum resolved desa).
+        // 4 assignment total di summary DAN totalnya sekarang harus konsisten dgn jumlah semua
+        // baris per_desa (termasuk bucket "Desa Tidak Dikenali") -- ini persis yang dulu bug.
         $this->assertSame(3, $response->json('data.summary.pending'));
         $perDesa = collect($response->json('data.per_desa'))->keyBy('desa_id');
-        $this->assertCount(2, $perDesa);
+        $this->assertCount(3, $perDesa);
+        $this->assertSame(4, $perDesa->sum('total'));
 
         $satu = $perDesa[$desaSatu->id];
         $this->assertSame('Ambunten Barat', $satu['desa_nama']);
@@ -950,6 +954,11 @@ class VisitAssignmentControllerTest extends TestCase
         $this->assertSame('Ambunten Timur', $dua['desa_nama']);
         $this->assertSame(1, $dua['total']);
         $this->assertSame(1, $dua['pending']);
+
+        $takDikenali = $perDesa[0];
+        $this->assertSame('Desa Tidak Dikenali', $takDikenali['desa_nama']);
+        $this->assertSame(1, $takDikenali['total']);
+        $this->assertSame(1, $takDikenali['pending']);
     }
 
     // ---- Cancel (keputusan Kepala Dinas: admin_puskesmas/pj_prolanis boleh langsung batalkan) ----
