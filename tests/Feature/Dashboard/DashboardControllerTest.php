@@ -128,6 +128,38 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(2, $response->json('data.total_patients_prolanis'));
     }
 
+    public function test_total_patients_aktif_hanya_hitung_ringan_sedang_berat_bukan_tidak_berisiko(): void
+    {
+        // REVISI KELIMA -- "Total Pasien Aktif" (total_patients) HARUS cuma menghitung pasien
+        // yang levelnya SEDANG berisiko (ringan/sedang/berat), BUKAN "punya klasifikasi apa
+        // pun". Pasien tidak_berisiko (baik yang membaik maupun yang memang belum pernah
+        // berisiko sama sekali, lihat RiskClassificationService REVISI KEEMPAT) TIDAK ikut
+        // dihitung sebagai "aktif" -- selisihnya (total_patients_prolanis - total_patients)
+        // adalah "Pasien Tidak Berisiko" murni lewat pengurangan, tanpa perlu formula gabungan.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+
+        $ringan = $this->makePatient($this->puskesmasA, 1);
+        RiskClassification::create(['patient_id' => $ringan->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        $sedang = $this->makePatient($this->puskesmasA, 2);
+        RiskClassification::create(['patient_id' => $sedang->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        $tidakBerisiko = $this->makePatient($this->puskesmasA, 3);
+        RiskClassification::create(['patient_id' => $tidakBerisiko->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+
+        // Belum pernah diklasifikasi sama sekali -- tetap masuk total_patients_prolanis, TAPI
+        // bukan bagian dari total_patients (aktif) krn tidak ada baris ringan/sedang/berat.
+        $this->makePatient($this->puskesmasA, 4);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/dashboard/summary');
+
+        $response->assertOk();
+        $this->assertSame(2, $response->json('data.total_patients'), 'hanya ringan+sedang yang dihitung aktif');
+        $this->assertSame(4, $response->json('data.total_patients_prolanis'));
+    }
+
     public function test_super_admin_dapat_ringkasan_semua_puskesmas(): void
     {
         $superAdmin = $this->makeUser('super_admin');

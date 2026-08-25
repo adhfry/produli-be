@@ -77,22 +77,31 @@ class DashboardService
             ->groupBy('level')
             ->pluck('total', 'level');
 
-        // 'patient_id' dikualifikasi eksplisit -- ambigu kalau $asOf diisi (joinSub 'latest_as_of'
-        // juga punya kolom patient_id), aman/tidak berpengaruh kalau tidak (branch is_latest=true
-        // tanpa join).
+        // REVISI KELIMA (audit lanjutan, laporan user: "aktif 4000an dari total 5000an, tidak
+        // berisiko 3000an, tidak berkesinambungan") -- totalPatients ("Total Pasien Aktif" di
+        // dashboard) SEBELUMNYA menghitung pasien yang PUNYA klasifikasi risiko APA PUN
+        // (termasuk tidak_berisiko), jadi begitu REVISI KEEMPAT (classify() sekarang selalu
+        // menulis baris minimal 'tidak_berisiko') dibackfill ke seluruh pasien lama, angka ini
+        // otomatis mendekati totalPatientsProlanis (hampir semua pasien "aktif") -- kehilangan
+        // maknanya sama sekali sebagai indikator "berapa pasien yang sedang butuh perhatian".
+        // "Aktif" yang DIMAKSUD user adalah pasien yang levelnya SEDANG berisiko sekarang
+        // (ringan/sedang/berat) -- BUKAN "pernah dievaluasi". Card "Pasien Tidak Berisiko" lalu
+        // tinggal SELISIH totalPatientsProlanis-totalPatients (murni pengurangan, TIDAK perlu
+        // lagi menggabungkan risk.tidak_berisiko secara terpisah seperti sebelumnya -- lihat
+        // dashboard/index.vue) -- REVISI KEEMPAT (setiap pasien eligible selalu punya baris
+        // klasifikasi) tetap dipertahankan krn masih dibutuhkan supaya risikoPerKecamatan/
+        // risikoPerDesa/risikoPerPuskesmas dan filter ?risk_level=tidak_berisiko di GET
+        // /patients (JOIN langsung dari risk_classifications, BUKAN pengurangan) tidak lagi
+        // kehilangan pasien yang belum pernah berisiko sama sekali.
         $totalPatients = (clone $this->effectiveRiskClassifications($scopedPatients, $asOf))
+            ->whereIn('level', ['ringan', 'sedang', 'berat'])
             ->distinct('risk_classifications.patient_id')
             ->count('risk_classifications.patient_id');
 
-        // Revisi Bu Kadis -- "3.900 dari total 5.000 pasien Prolanis": totalPatients di atas
-        // cuma menghitung pasien yang PUNYA klasifikasi risiko efektif (belum tentu semua
-        // patients_cache -- ada pasien Prolanis yang lolos gerbang eligibility SyncSilakesService
-        // [punya lab_results_cache] tapi belum pernah ada parameter yang melebihi ambang sama
-        // sekali, jadi classify() tidak pernah menulis baris apa pun untuk mereka, lihat
-        // RiskClassificationService::classify()). totalPatientsProlanis = SEMUA baris
-        // patients_cache dalam scope yang sama (super_admin: semua kabupaten / filter puskesmas
-        // opsional, admin_puskesmas/pj_prolanis: terkunci puskesmas sendiri) -- "universe" pasien
-        // Prolanis yang sudah tersinkron PRODULI, apa pun status klasifikasinya.
+        // totalPatientsProlanis = SEMUA baris patients_cache dalam scope yang sama (super_admin:
+        // semua kabupaten / filter puskesmas opsional, admin_puskesmas/pj_prolanis: terkunci
+        // puskesmas sendiri) -- "universe" pasien Prolanis yang sudah tersinkron PRODULI, apa
+        // pun status klasifikasinya.
         $totalPatientsProlanis = (clone $scopedPatients)->count();
 
         $scopedAssignments = $this->visitAssignmentService->scopedQuery($user);

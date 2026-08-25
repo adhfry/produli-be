@@ -22,10 +22,12 @@ final class DashboardSummary
      * @param  array{puskesmas_nama: string, kecamatan_nama: string, kecamatan_puskesmas_count: int}|null  $kecamatanContext  Caption peta -- null kalau puskesmas tidak diketahui atau kecamatannya cuma py 1 puskesmas (lihat DashboardService::kecamatanContext())
      */
     public function __construct(
+        // "Total Pasien Aktif" -- pasien yang levelnya SEDANG berisiko sekarang (ringan/sedang/
+        // berat), BUKAN "pernah punya klasifikasi apa pun". Lihat DashboardService::summaryFor().
         public readonly int $totalPatients,
         // Revisi Bu Kadis -- "3.900 dari total 5.000 pasien Prolanis". SELALU >= totalPatients
-        // (superset -- semua patients_cache dalam scope, bukan cuma yang punya klasifikasi
-        // risiko efektif). Lihat DashboardService::summaryFor().
+        // (superset -- semua patients_cache dalam scope, terlepas dari level risikonya).
+        // Lihat DashboardService::summaryFor().
         public readonly int $totalPatientsProlanis,
         public readonly array $patientsPerRiskLevel,
         public readonly int $totalAssignments,
