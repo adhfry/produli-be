@@ -6,9 +6,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class VisitAssignment extends Model
 {
+    use SoftDeletes;
+
     protected $table = 'visit_assignments';
 
     protected $fillable = [
@@ -23,13 +26,21 @@ class VisitAssignment extends Model
         'assignment_method',
         'visit_origin',
         'puskesmas_id_snapshot',
+        'deletion_reason',
+        'deleted_by',
     ];
 
     protected function casts(): array
     {
         return [
             'scheduled_date' => 'date',
+            'deleted_at' => 'datetime',
         ];
+    }
+
+    public function deletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
     }
 
     public function patient(): BelongsTo

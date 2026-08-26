@@ -1233,6 +1233,130 @@ class VisitAssignmentControllerTest extends TestCase
         Notification::assertSentTo($nakes->user, GenericDatabaseNotification::class);
     }
 
+    // ---- Hapus Kunjungan (permintaan user, soft delete super_admin saja) ----
+
+    public function test_super_admin_menghapus_kunjungan(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 70);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $superAdmin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'completed', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        $report = VisitReport::create([
+            'assignment_id' => $assignment->id, 'gps_lat' => -6.9, 'gps_lng' => 113.9,
+            'photo_path' => 'pasien/visit-photos/x.jpg', 'kondisi' => 'cukup', 'validation_status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->deleteJson("/api/v1/visit-assignments/{$assignment->id}", ['reason' => 'Salah pasien, seharusnya kunjungan ke pasien lain.']);
+
+        $response->assertOk();
+        $this->assertSoftDeleted($assignment);
+        $this->assertSoftDeleted($report);
+        $assignment->refresh();
+        $this->assertSame('Salah pasien, seharusnya kunjungan ke pasien lain.', $assignment->deletion_reason);
+        $this->assertSame($superAdmin->id, $assignment->deleted_by);
+    }
+
+    public function test_hapus_kunjungan_hilang_dari_daftar_index(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 71);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $superAdmin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+        $this->deleteJson("/api/v1/visit-assignments/{$assignment->id}", ['reason' => 'Data uji coba, bukan kunjungan sungguhan.'])->assertOk();
+
+        $response = $this->getJson('/api/v1/visit-assignments');
+        $ids = collect($response->json('data.items'))->pluck('id');
+        $this->assertFalse($ids->contains($assignment->id));
+    }
+
+    public function test_hapus_kunjungan_tanpa_alasan_ditolak(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 72);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $superAdmin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+        $response = $this->deleteJson("/api/v1/visit-assignments/{$assignment->id}", []);
+
+        $response->assertStatus(422);
+        $this->assertNotSoftDeleted($assignment);
+    }
+
+    public function test_admin_puskesmas_tidak_bisa_menghapus_kunjungan(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 73);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $admin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+        $response = $this->deleteJson("/api/v1/visit-assignments/{$assignment->id}", ['reason' => 'Coba hapus.']);
+
+        $response->assertStatus(403);
+        $this->assertNotSoftDeleted($assignment);
+    }
+
+    public function test_pj_prolanis_tidak_bisa_menghapus_kunjungan(): void
+    {
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 74);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $pj->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'pending', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($pj);
+        $response = $this->deleteJson("/api/v1/visit-assignments/{$assignment->id}", ['reason' => 'Coba hapus.']);
+
+        $response->assertStatus(403);
+    }
+
+    public function test_hapus_kunjungan_yang_punya_lebih_dari_satu_laporan_historis(): void
+    {
+        // Alur "laporan invalid -> assignment kembali pending -> kader submit ulang" (docs/
+        // planning/02 §11) bisa menyisakan >1 baris VisitReport per assignment -- pastikan
+        // SEMUA ikut soft-delete, bukan cuma yang terbaru.
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 75);
+        $assignment = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id, 'assigned_by' => $superAdmin->id,
+            'scheduled_date' => now()->toDateString(), 'status' => 'completed', 'priority' => 'sedang',
+            'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        $reportLama = VisitReport::create([
+            'assignment_id' => $assignment->id, 'gps_lat' => -6.9, 'gps_lng' => 113.9,
+            'photo_path' => 'pasien/visit-photos/lama.jpg', 'kondisi' => 'cukup', 'validation_status' => 'invalid',
+        ]);
+        $reportBaru = VisitReport::create([
+            'assignment_id' => $assignment->id, 'gps_lat' => -6.9, 'gps_lng' => 113.9,
+            'photo_path' => 'pasien/visit-photos/baru.jpg', 'kondisi' => 'cukup', 'validation_status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+        $this->deleteJson("/api/v1/visit-assignments/{$assignment->id}", ['reason' => 'Salah total.'])->assertOk();
+
+        $this->assertSoftDeleted($reportLama);
+        $this->assertSoftDeleted($reportBaru);
+    }
+
     private function makeKader(Puskesmas $puskesmas, bool $aktif = true): Kader
     {
         static $n = 100;

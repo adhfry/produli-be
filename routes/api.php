@@ -170,6 +170,9 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // vs 'patients/{patient}').
     Route::get('visit-assignments/{visitAssignment}', [VisitAssignmentController::class, 'show']);
     Route::patch('visit-assignments/{visitAssignment}/cancel', [VisitAssignmentController::class, 'cancel']);
+    // "Hapus Kunjungan" (permintaan user) -- soft delete, super_admin saja, lihat
+    // VisitAssignmentController::destroy().
+    Route::delete('visit-assignments/{visitAssignment}', [VisitAssignmentController::class, 'destroy']);
 
     Route::post('visit-reports', [VisitReportController::class, 'store']);
     Route::patch('visit-reports/{visitReport}/accept', [VisitReportController::class, 'accept']);

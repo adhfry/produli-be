@@ -113,9 +113,14 @@ class VisitAssignmentPolicy
         return $this->sharesPuskesmas($user, $assignment->puskesmas_id_snapshot);
     }
 
+    /**
+     * "Hapus Kunjungan" (permintaan user, takut ada kunjungan yang BENAR-BENAR salah) --
+     * super_admin SAJA, sengaja lebih ketat dari cancel() (admin_puskesmas/pj_prolanis juga
+     * boleh di sana) -- ini soft delete permanen dari tampilan, bukan sekadar ubah status.
+     */
     public function delete(User $user, VisitAssignment $assignment): bool
     {
-        return false;
+        return $user->hasRole('super_admin');
     }
 
     public function restore(User $user, VisitAssignment $assignment): bool
