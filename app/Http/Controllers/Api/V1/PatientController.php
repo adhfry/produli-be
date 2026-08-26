@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Exceptions\SilakesApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\ListPatientsRequest;
 use App\Http\Requests\Patient\OverridePuskesmasRequest;
@@ -21,11 +20,13 @@ use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
 use App\Services\Patient\PatientQueryService;
+use App\Services\Risk\RiskClassificationHistoryService;
 use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
 use App\Support\DataScope;
 use App\Support\NikHasher;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -50,7 +51,10 @@ class PatientController extends Controller
         'tidak_berisiko' => 'Tidak Berisiko',
     ];
 
-    public function __construct(private readonly PatientQueryService $patientQuery) {}
+    public function __construct(
+        private readonly PatientQueryService $patientQuery,
+        private readonly RiskClassificationHistoryService $riskHistory,
+    ) {}
 
     public function index(ListPatientsRequest $request): JsonResponse
     {
@@ -59,6 +63,25 @@ class PatientController extends Controller
         $paginator = $this->applySort($this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request), $request)
             ->with(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification'])
             ->paginate($request->integer('per_page', 20));
+
+        // Fitur periode bulanan (permintaan user) -- lampirkan status risiko pasien PERSIS
+        // seperti kondisinya di akhir bulan yang diminta, di SAMPING (bukan menggantikan)
+        // latestRiskClassification (status terkini) di atas. Query TERPISAH khusus utk ID
+        // halaman yang sedang tampil (bukan semua pasien scope) -- murah & tidak mengubah
+        // filter/sort utama sama sekali.
+        if ($request->filled('period')) {
+            $asOf = Carbon::parse($request->string('period').'-01')->endOfMonth();
+            $patientIds = $paginator->getCollection()->pluck('id');
+            $periodClassifications = $this->riskHistory
+                ->effectiveQuery(PatientsCache::query()->whereIn('id', $patientIds), $asOf)
+                ->select('risk_classifications.*')
+                ->get()
+                ->keyBy('patient_id');
+
+            $paginator->getCollection()->each(function (PatientsCache $patient) use ($periodClassifications) {
+                $patient->setRelation('periodRiskClassification', $periodClassifications->get($patient->id));
+            });
+        }
 
         return ApiResponse::success([
             'items' => PatientResource::collection($paginator),
@@ -374,11 +397,33 @@ class PatientController extends Controller
         return ApiResponse::success(LabResultResource::collection($latestPerParameter));
     }
 
+    /**
+     * SELURUH riwayat hasil lab (bukan cuma terbaru per parameter seperti labResults() di atas)
+     * -- fitur "Bandingkan Periode" (permintaan user, dashboard/pasien/{id}) numpang di sini,
+     * frontend yang menghitung "nilai per parameter AS OF bulan X" dari histori lengkap ini
+     * (pola sama dengan riskHistory() di atas yang sudah lebih dulu mengirim histori lengkap,
+     * bukan cuma status terkini) -- TIDAK butuh endpoint komputasi baru di backend, cukup kirim
+     * datanya, perbandingan 2 periode murni pengolahan di klien tanpa panggilan API tambahan
+     * tiap kali user ganti periode yang dibandingkan.
+     */
+    public function labResultsHistory(PatientsCache $patient): JsonResponse
+    {
+        $this->authorize('view', $patient);
+
+        $history = LabResultCache::where('patient_id', $patient->external_patient_id)
+            ->orderByDesc('tanggal_periksa')
+            ->orderByDesc('synced_at')
+            ->limit(500)
+            ->get();
+
+        return ApiResponse::success(LabResultResource::collection($history));
+    }
+
     public function show(PatientsCache $patient): JsonResponse
     {
         $this->authorize('view', $patient);
 
-        $patient->load(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification']);
+        $patient->load(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification', 'activeCareAssignments.kader.user', 'activeCareAssignments.tenagaKesehatan.user']);
 
         return ApiResponse::success(new PatientResource($patient));
     }
@@ -521,19 +566,7 @@ class PatientController extends Controller
     {
         $this->authorize('update', $patient);
 
-        try {
-            $body = $client->getPembaruanLapanganHistory($patient->external_patient_id);
-        } catch (SilakesApiException $e) {
-            // 404 dari SiLAKES = pasien ini belum/tidak dikenal di sana (mis. pasien simulasi
-            // sintetis di lingkungan dev, atau pasien asli yang belum pernah punya pengajuan
-            // sama sekali) -- itu bukan error, cuma berarti "belum ada riwayat". Selain 404
-            // (5xx dkk) tetap dilempar ulang, jangan disembunyikan.
-            if ($e->statusCode !== 404) {
-                throw $e;
-            }
-
-            return ApiResponse::success([]);
-        }
+        $body = $client->getPembaruanLapanganHistory($patient->external_patient_id);
 
         return ApiResponse::success($body['data'] ?? []);
     }

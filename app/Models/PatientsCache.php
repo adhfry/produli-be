@@ -101,4 +101,12 @@ class PatientsCache extends Model
     {
         return $this->hasMany(VisitAssignment::class, 'patient_id');
     }
+
+    // Rencana kunjungan berulang AKTIF (permintaan user, fitur jadwal cadence -- lihat
+    // CareAssignmentResource) -- 'active' saja, plan yang sudah 'completed'/dibatalkan tidak
+    // relevan ditampilkan sebagai jadwal MENDATANG.
+    public function activeCareAssignments(): HasMany
+    {
+        return $this->hasMany(CareAssignment::class, 'patient_id')->where('status', 'active');
+    }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Visit\BulkCreateVisitAssignmentRequest;
 use App\Http\Requests\Visit\CreateVisitAssignmentRequest;
+use App\Http\Requests\Visit\MultiDateVisitAssignmentRequest;
 use App\Http\Resources\VisitAssignmentResource;
 use App\Models\Kader;
 use App\Models\PatientsCache;
@@ -179,6 +180,48 @@ class VisitAssignmentController extends Controller
         $assignment->load(['patient', 'kader.user', 'assignedBy', 'companions.kader.user']);
 
         return ApiResponse::success(new VisitAssignmentResource($assignment), 'Assignment berhasil dibuat', 201);
+    }
+
+    /**
+     * Penugasan multi-tanggal (permintaan user) -- otorisasi SAMA PERSIS store() (patient+kader,
+     * VisitAssignmentPolicy::create), bedanya cuma jumlah tanggal. Lihat docblock
+     * VisitAssignmentService::assignMultipleDates() utk aturan lengkapnya (termasuk kenapa guard
+     * "sudah punya assignment aktif" dilonggarkan di jalur ini).
+     */
+    public function storeMultiDate(MultiDateVisitAssignmentRequest $request): JsonResponse
+    {
+        $patient = PatientsCache::findOrFail($request->validated('patient_id'));
+        $kader = Kader::findOrFail($request->validated('kader_id'));
+
+        $this->authorize('create', [VisitAssignment::class, $patient, $kader]);
+
+        $scheduledDates = $request->sortedScheduledDates();
+
+        $assignments = $this->service->assignMultipleDates(
+            $patient,
+            $kader,
+            $request->user(),
+            $scheduledDates,
+            $request->validated('priority'),
+        );
+
+        $this->careAssignmentService->ensureKaderPlanAdvancedTo(
+            $patient->id,
+            $kader->id,
+            $request->user()->id,
+            $assignments[0]->puskesmas_id_snapshot,
+            end($scheduledDates),
+        );
+
+        foreach ($assignments as $assignment) {
+            $assignment->load(['patient', 'kader.user', 'assignedBy']);
+        }
+
+        return ApiResponse::success(
+            VisitAssignmentResource::collection($assignments),
+            sprintf('%d penugasan berhasil dibuat.', count($assignments)),
+            201,
+        );
     }
 
     /**

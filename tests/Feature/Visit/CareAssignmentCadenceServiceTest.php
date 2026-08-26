@@ -169,4 +169,61 @@ class CareAssignmentCadenceServiceTest extends TestCase
 
         $this->assertSame(0, $this->service->generateDueVisits());
     }
+
+    // ---- upcomingDates()/isBlockedByOpenVisit() (permintaan user, fitur jadwal cadence) ----
+
+    public function test_upcoming_dates_kader_berjarak_7_hari(): void
+    {
+        $plan = $this->makeKaderPlan($this->makePatient(), '2026-08-01');
+
+        $dates = $this->service->upcomingDates($plan, 3);
+
+        $this->assertSame(['2026-08-08', '2026-08-15', '2026-08-22'], array_map(fn ($d) => $d->toDateString(), $dates));
+    }
+
+    public function test_upcoming_dates_tanpa_last_triggered_dihitung_dari_hari_ini(): void
+    {
+        $plan = $this->makeKaderPlan($this->makePatient(), null);
+
+        $dates = $this->service->upcomingDates($plan, 1);
+
+        $this->assertSame(now()->addDays(7)->toDateString(), $dates[0]->toDateString());
+    }
+
+    public function test_upcoming_dates_tenaga_kesehatan_ikut_prioritas_pasien_terkini(): void
+    {
+        $patient = $this->makePatient();
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'berat', 'criteria_snapshot' => [], 'computed_at' => now(), 'is_latest' => true]);
+        $plan = $this->makeTkPlan($patient, '2026-08-01');
+
+        // Berat -> cadence 14 hari (tenaga_kesehatan_days_berat), bukan 30 hari normal.
+        $dates = $this->service->upcomingDates($plan, 1);
+
+        $this->assertSame('2026-08-15', $dates[0]->toDateString());
+    }
+
+    public function test_is_blocked_by_open_visit_true_kalau_ada_kunjungan_pending(): void
+    {
+        $patient = $this->makePatient();
+        $plan = $this->makeKaderPlan($patient, '2026-08-01');
+        VisitAssignment::create([
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kader->id,
+            'care_assignment_id' => $plan->id,
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'pending',
+            'priority' => 'ringan',
+            'visit_origin' => 'cadence_generated',
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+        ]);
+
+        $this->assertTrue($this->service->isBlockedByOpenVisit($plan));
+    }
+
+    public function test_is_blocked_by_open_visit_false_kalau_tidak_ada_kunjungan_terbuka(): void
+    {
+        $plan = $this->makeKaderPlan($this->makePatient(), '2026-08-01');
+
+        $this->assertFalse($this->service->isBlockedByOpenVisit($plan));
+    }
 }

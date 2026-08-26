@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Services\Patient\PatientQueryService;
 use App\Services\Performance\PuskesmasPerformanceScoringService;
+use App\Services\Risk\RiskClassificationHistoryService;
 use App\Services\Visit\VisitAssignmentService;
 use App\Support\DataScope;
 use Carbon\Carbon;
@@ -52,6 +53,7 @@ class DashboardService
         private readonly PatientQueryService $patientQuery,
         private readonly VisitAssignmentService $visitAssignmentService,
         private readonly PuskesmasPerformanceScoringService $puskesmasPerformanceScoring,
+        private readonly RiskClassificationHistoryService $riskHistory,
     ) {}
 
     public function summaryFor(
@@ -197,39 +199,19 @@ class DashboardService
     }
 
     /**
-     * RiskClassification EFEKTIF per pasien pada satu titik waktu -- CURRENT (is_latest=true)
-     * kalau $asOf null (perilaku default, sama seperti sebelum filter tanggal ada), atau
-     * REKONSTRUKSI historis (baris computed_at TERBESAR yang masih <= $asOf per pasien) kalau
-     * $asOf diisi. Dipakai bersama oleh patientsPerRiskLevel/totalPatients/risikoPerKecamatan/
-     * risikoPerDesa supaya keempatnya konsisten "per tanggal yang sama".
+     * RiskClassification EFEKTIF per pasien pada satu titik waktu -- dipakai bersama oleh
+     * patientsPerRiskLevel/totalPatients/risikoPerKecamatan/risikoPerDesa supaya keempatnya
+     * konsisten "per tanggal yang sama". Logika sebenarnya di RiskClassificationHistoryService
+     * (diekstrak ke sana, permintaan user fitur periode bulanan dashboard/pasien, supaya
+     * PatientController bisa pakai persis mekanisme yang sama, bukan logika terpisah yang bisa
+     * drift -- lihat docblock service itu).
      *
      * @param  Builder<PatientsCache>  $scopedPatients
      * @return Builder<RiskClassification>
      */
     private function effectiveRiskClassifications(Builder $scopedPatients, ?Carbon $asOf): Builder
     {
-        if ($asOf === null) {
-            return RiskClassification::query()
-                ->where('is_latest', true)
-                ->whereIn('patient_id', (clone $scopedPatients)->select('id'));
-        }
-
-        $latestPerPatient = RiskClassification::query()
-            ->select('patient_id')
-            ->selectRaw('MAX(computed_at) as max_computed_at')
-            ->where('computed_at', '<=', $asOf)
-            ->whereIn('patient_id', (clone $scopedPatients)->select('id'))
-            ->groupBy('patient_id');
-
-        // TIDAK select('risk_classifications.*') di sini -- caller (patientsPerRiskLevel/
-        // risikoPerKecamatan/dst) selalu pasang selectRaw()+groupBy() sendiri; mencampur '*' di
-        // sini bikin GROUP BY tidak lengkap di bawah MySQL ONLY_FULL_GROUP_BY (default sejak
-        // 5.7.5) begitu caller cuma group by 'level' atau 'kecamatan.id', bukan semua kolom.
-        return RiskClassification::query()
-            ->joinSub($latestPerPatient, 'latest_as_of', function ($join) {
-                $join->on('risk_classifications.patient_id', '=', 'latest_as_of.patient_id')
-                    ->on('risk_classifications.computed_at', '=', 'latest_as_of.max_computed_at');
-            });
+        return $this->riskHistory->effectiveQuery($scopedPatients, $asOf);
     }
 
     /**

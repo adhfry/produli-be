@@ -83,6 +83,28 @@ class PatientResource extends JsonResource
                 'latestRiskClassification',
                 fn () => $this->latestRiskClassification?->early_detection_reason,
             ),
+            // Fitur periode bulanan (permintaan user) -- status risiko pasien PERSIS seperti
+            // kondisinya di akhir bulan yang diminta lewat ?period=YYYY-MM (lihat
+            // PatientController::index()), DI SAMPING risk_level/risk_computed_at di atas (itu
+            // tetap status TERKINI, tidak berubah). null kalau ?period= tidak dikirim SAMA
+            // SEKALI (whenLoaded -- controller cuma setRelation() saat period diisi), BUKAN
+            // berarti pasien tidak punya klasifikasi di bulan itu (itu dibedakan lewat
+            // period_risk_level sendiri = null tapi key tetap muncul, lihat whenLoaded()).
+            'period_risk_level' => $this->whenLoaded(
+                'periodRiskClassification',
+                fn () => $this->periodRiskClassification?->level,
+            ),
+            'period_risk_computed_at' => $this->whenLoaded(
+                'periodRiskClassification',
+                fn () => $this->periodRiskClassification?->computed_at?->toIso8601String(),
+            ),
+            // Jadwal kunjungan berulang (permintaan user) -- cuma terisi kalau relasinya
+            // di-eager-load (PatientController::show(), BUKAN index() -- daftar pasien tidak
+            // perlu jadwal cadence tiap baris, terlalu berat).
+            'care_assignments' => $this->whenLoaded(
+                'activeCareAssignments',
+                fn () => CareAssignmentResource::collection($this->activeCareAssignments),
+            ),
             'last_synced_at' => $this->last_synced_at?->toIso8601String(),
         ];
     }

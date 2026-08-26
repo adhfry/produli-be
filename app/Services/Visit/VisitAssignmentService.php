@@ -14,6 +14,7 @@ use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
 use App\Support\DataScope;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
 
@@ -49,6 +50,54 @@ class VisitAssignmentService
         $this->ensureWilayahResolvable($patient, $phoneContactException);
         $this->ensureKaderAvailable($kader, $patient, $phoneContactException);
 
+        return $this->createAssignmentRow($patient, $kader, $assignedBy, $scheduledDate, $priority, $phoneContactException);
+    }
+
+    /**
+     * Penugasan multi-tanggal (permintaan user) -- admin pilih BEBERAPA tanggal sekaligus utk
+     * kader+pasien yang sama (mis. rencana kunjungan PMO sebulan penuh di tanggal-tanggal
+     * spesifik, di luar cadence mingguan otomatis yang sudah ada -- lihat CareAssignmentService/
+     * CareAssignmentCadenceService). BEDA dari assign() single-date: guard "sudah punya
+     * assignment aktif" (ensureKaderAvailable()) SENGAJA DILONGGARKAN di sini -- itu justru
+     * tujuan fitur ini (banyak assignment aktif sekaligus utk pasangan yang sama, beda tanggal).
+     * Yang tetap dicek: tidak boleh ada 2 assignment aktif di TANGGAL PERSIS yang sama (baik
+     * dari batch ini vs assignment lama yang sudah ada, mis. hasil cadence otomatis yang sudah
+     * due sebelumnya).
+     *
+     * @param  string[]  $scheduledDates  Y-m-d, WAJIB sudah unik & terurut (lihat
+     *                                    MultiDateVisitAssignmentRequest -- distinct rule)
+     * @return VisitAssignment[]
+     */
+    public function assignMultipleDates(
+        PatientsCache $patient,
+        Kader $kader,
+        User $assignedBy,
+        array $scheduledDates,
+        string $priority,
+    ): array {
+        $phoneContactException = $this->isBeratPhoneContactEligible($patient);
+
+        $this->ensureWilayahResolvable($patient, $phoneContactException);
+        $this->ensureKaderAvailableForMultipleDates($kader, $patient, $scheduledDates, $phoneContactException);
+
+        return DB::transaction(function () use ($patient, $kader, $assignedBy, $scheduledDates, $priority, $phoneContactException) {
+            $assignments = [];
+            foreach ($scheduledDates as $scheduledDate) {
+                $assignments[] = $this->createAssignmentRow($patient, $kader, $assignedBy, $scheduledDate, $priority, $phoneContactException);
+            }
+
+            return $assignments;
+        });
+    }
+
+    private function createAssignmentRow(
+        PatientsCache $patient,
+        Kader $kader,
+        User $assignedBy,
+        string $scheduledDate,
+        string $priority,
+        bool $phoneContactException,
+    ): VisitAssignment {
         return VisitAssignment::create([
             'patient_id' => $patient->id,
             'kader_id' => $kader->id,
@@ -347,6 +396,47 @@ class VisitAssignmentService
         if ($sudahDitugaskan) {
             throw ValidationException::withMessages([
                 'kader' => ['Pasien ini sudah punya assignment aktif ke kader yang sama.'],
+            ]);
+        }
+    }
+
+    /**
+     * Varian ensureKaderAvailable() KHUSUS assignMultipleDates() -- guard "sudah punya
+     * assignment aktif" SENGAJA TIDAK diikutkan (itu justru tujuan fitur multi-tanggal), diganti
+     * guard tabrakan tanggal PERSIS (lihat docblock assignMultipleDates()).
+     *
+     * @param  string[]  $scheduledDates
+     */
+    private function ensureKaderAvailableForMultipleDates(Kader $kader, PatientsCache $patient, array $scheduledDates, bool $phoneContactException = false): void
+    {
+        if (! $kader->status_aktif) {
+            throw ValidationException::withMessages([
+                'kader' => ['Kader tidak aktif.'],
+            ]);
+        }
+
+        if (! $phoneContactException && $kader->puskesmas_id !== $patient->puskesmas_id) {
+            throw ValidationException::withMessages([
+                'kader' => ['Kader bukan dari puskesmas yang sama dengan pasien.'],
+            ]);
+        }
+
+        // whereIn('scheduled_date', ...) TIDAK bisa dipakai langsung -- meski kolomnya date-only,
+        // beberapa driver (SQLite, konsisten dgn temuan komentar NotificationService::
+        // scheduleUpcomingReminders() soal whereDate() vs whereIn raw utk kolom ini) menyimpan
+        // nilainya dgn komponen waktu ("2026-08-31 00:00:00"), jadi perbandingan string PERSIS
+        // gagal cocok dgn 'Y-m-d' polos. DATE(...) menormalkan kedua sisi, portable MySQL+SQLite.
+        $existingDates = VisitAssignment::where('patient_id', $patient->id)
+            ->where('kader_id', $kader->id)
+            ->whereIn('status', ['pending', 'in_progress'])
+            ->whereIn(DB::raw('DATE(scheduled_date)'), $scheduledDates)
+            ->pluck('scheduled_date')
+            ->map(fn ($d) => $d->toDateString())
+            ->all();
+
+        if ($existingDates !== []) {
+            throw ValidationException::withMessages([
+                'scheduled_dates' => ['Sudah ada penugasan aktif untuk kader ini di tanggal: '.implode(', ', $existingDates).'.'],
             ]);
         }
     }
