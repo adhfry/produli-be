@@ -278,4 +278,22 @@ class VisitAssignmentController extends Controller
 
         return ApiResponse::success(new VisitAssignmentResource($cancelled), 'Penugasan berhasil dibatalkan');
     }
+
+    /**
+     * "Hapus Kunjungan" (permintaan user) -- super_admin saja (VisitAssignmentPolicy::delete()),
+     * beda dari cancel() di atas. Alasan WAJIB diisi (beda dari cancel() yang opsional) --
+     * ini aksi lebih besar akibatnya, dicatat sebagai jejak audit (visit_assignments.deletion_reason).
+     */
+    public function destroy(Request $request, VisitAssignment $visitAssignment): JsonResponse
+    {
+        $this->authorize('delete', $visitAssignment);
+
+        $validated = $request->validate([
+            'reason' => ['required', 'string', 'max:500'],
+        ]);
+
+        $this->service->softDelete($visitAssignment, $request->user(), $validated['reason']);
+
+        return ApiResponse::success(null, 'Kunjungan berhasil dihapus');
+    }
 }

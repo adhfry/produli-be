@@ -5,12 +5,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class VisitReport extends Model
 {
+    use SoftDeletes;
+
     protected $table = 'visit_reports';
 
     protected $fillable = [
@@ -68,6 +71,7 @@ class VisitReport extends Model
             'synced_at' => 'datetime',
             'pj_reviewed_at' => 'datetime',
             'validated_at' => 'datetime',
+            'deleted_at' => 'datetime',
             'gda' => 'decimal:2',
             'gdp' => 'decimal:2',
             'gd2jpp' => 'decimal:2',

@@ -241,6 +241,43 @@ class VisitAssignmentService
     }
 
     /**
+     * "Hapus Kunjungan" (permintaan user, takut ada kunjungan yang BENAR-BENAR salah -- mis.
+     * salah pasien, entri percobaan/test yang kepencet submit sungguhan) -- BEDA dari cancel()
+     * di atas: cancel() cuma ubah status jadi 'cancelled' (barisnya TETAP tampil selamanya di
+     * riwayat/monitoring, cocok utk "batal karena alasan operasional wajar"), ini betul-betul
+     * menghilangkan baris dari SEMUA daftar/riwayat/monitoring (soft delete, VisitAssignmentPolicy::
+     * delete() -- super_admin SAJA, beda dari cancel() yang admin_puskesmas/pj_prolanis juga
+     * boleh -- risiko permanen menghilang dari tampilan lebih besar).
+     *
+     * TIDAK dibatasi status (beda dari cancel() yang cuma pending/in_progress) -- "kunjungan
+     * salah total" bisa terjadi di status apa pun, termasuk yang sudah completed.
+     *
+     * laporan (VisitReport) IKUT di-soft-delete dalam transaksi yang sama -- beberapa query lain
+     * (KaderController::visitHistory(), TenagaKesehatanController, RujukanService,
+     * RiskTransitionScorer) ambil VisitReport LANGSUNG tanpa lewat VisitAssignment, kalau
+     * laporannya tidak ikut dihapus, tetap muncul di tempat-tempat itu walau assignment induknya
+     * sudah "hilang". Foto di S3 SENGAJA TIDAK ikut dihapus fisik -- soft delete berarti bisa
+     * dipulihkan lewat query withTrashed() manual (mis. DB tinker) kalau ternyata keliru hapus,
+     * hapus fisik foto akan membuat pemulihan itu mustahil.
+     */
+    public function softDelete(VisitAssignment $assignment, User $actor, string $reason): VisitAssignment
+    {
+        DB::transaction(function () use ($assignment, $actor, $reason) {
+            // visitReports() (SEMUA laporan historis), BUKAN latestReport() -- alur "laporan
+            // invalid -> assignment kembali pending -> kader submit ulang" (docs/planning/02
+            // §11) bisa menyisakan >1 baris VisitReport per assignment, semuanya harus ikut hilang.
+            $assignment->visitReports()->get()->each->delete();
+            $assignment->update([
+                'deletion_reason' => $reason,
+                'deleted_by' => $actor->id,
+            ]);
+            $assignment->delete();
+        });
+
+        return $assignment->fresh();
+    }
+
+    /**
      * "Companion divalidasi sama seperti kader primer: aktif, sepuskesmas" (docs/planning/02
      * §16) -- "sepuskesmas" di sini berarti sepuskesmas dengan KADER PRIMER (rekan satu tim
      * yang bisa benar-benar ikut kunjungan bareng), bukan cuma sepuskesmas dengan actor yang
