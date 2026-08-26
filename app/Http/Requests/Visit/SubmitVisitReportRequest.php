@@ -68,20 +68,30 @@ class SubmitVisitReportRequest extends FormRequest
             'systolic' => ['nullable', 'integer', 'min:0'],
             'diastolic' => ['nullable', 'integer', 'min:0'],
             'keluhan' => ['nullable', 'string'],
-            // REVISI (kembali eksklusif, permintaan user "harus pilih salah satu") -- wire
-            // format tetap array (max 1 elemen) supaya kompatibel dgn draft lama yg sempat
-            // dibuat semasa Fase 2 (multi-tindakan) tanpa perlu migrasi data historis.
-            'tindakan' => ['nullable', 'array', 'max:1'],
+            // REVISI KEDUA (permintaan user) -- 'diberi_obat' & 'dirujuk_puskesmas' sekarang
+            // BOLEH dipilih BERSAMAAN (kader kadang memang memberi obat SEKALIGUS merujuk pasien
+            // ke puskesmas), tapi 'tidak_ada' TETAP eksklusif -- kalau dipilih, tidak boleh ada
+            // tindakan lain sekaligus (tidak masuk akal "tidak ada tindakan" + "diberi obat").
+            'tindakan' => ['nullable', 'array', 'max:2', function ($attribute, $value, $fail) {
+                $tindakan = array_values(array_unique((array) $value));
+                if (count($tindakan) !== count((array) $value)) {
+                    $fail('Tindakan tidak boleh dipilih dua kali.');
+                }
+                if (in_array('tidak_ada', $tindakan, true) && count($tindakan) > 1) {
+                    $fail("Tindakan 'Tidak Ada Tindakan' tidak boleh dipilih bersamaan dengan tindakan lain.");
+                }
+            }],
             'tindakan.*' => ['string', 'in:diberi_obat,dirujuk_puskesmas,tidak_ada'],
             // Wajib diisi HANYA kalau 'dirujuk_puskesmas' ada di antara tindakan yang dipilih.
             'cara_rujukan' => [
                 Rule::requiredIf(fn () => in_array('dirujuk_puskesmas', (array) $this->input('tindakan', []), true)),
                 'nullable', 'string', 'in:datang_sendiri,dijemput_ambulan,diantar_keluarga,diantar_nakes_kader',
             ],
-            // Detail obat (permintaan user) -- relevan HANYA kalau tindakan=['diberi_obat'],
-            // bisa >1 obat. Diisi siapa pun yang submit laporan ini (kader ATAU nakes) -- sama
-            // seperti tindakan sendiri, tidak digerbang role. dosis/frekuensi opsional (kader
-            // kadang cuma sempat catat nama obatnya saja).
+            // Detail obat (permintaan user) -- relevan kalau tindakan MENGANDUNG 'diberi_obat'
+            // (bisa combo dgn 'dirujuk_puskesmas' sejak REVISI KEDUA di atas), bisa >1 obat.
+            // Diisi siapa pun yang submit laporan ini (kader ATAU nakes) -- sama seperti tindakan
+            // sendiri, tidak digerbang role. dosis/frekuensi opsional (kader kadang cuma sempat
+            // catat nama obatnya saja).
             'obat_detail' => ['nullable', 'array'],
             'obat_detail.*.nama' => ['required', 'string', 'max:255'],
             'obat_detail.*.dosis' => ['nullable', 'string', 'max:100'],

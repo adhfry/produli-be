@@ -163,14 +163,57 @@ class VisitReportControllerTest extends TestCase
         $this->assertSame(['diberi_obat'], $response->json('data.tindakan'));
     }
 
-    public function test_kader_tidak_bisa_pilih_lebih_dari_satu_tindakan_sekaligus(): void
+    public function test_kader_bisa_pilih_diberi_obat_dan_dirujuk_puskesmas_sekaligus(): void
     {
-        // REVISI (permintaan user) -- tindakan dibalik lagi jadi radio EKSKLUSIF, sebelumnya
-        // sempat multi-select (Fase 2). max:1 di SubmitVisitReportRequest menegakkan ini.
+        // REVISI KEDUA (permintaan user) -- diberi_obat & dirujuk_puskesmas BOLEH combo
+        // (sebelumnya sempat radio eksklusif via max:1, dibalik lagi karena kader kadang memang
+        // memberi obat SEKALIGUS merujuk pasien).
         Sanctum::actingAs($this->kader->user);
 
         $response = $this->post('/api/v1/visit-reports', $this->validPayload([
             'tindakan' => ['diberi_obat', 'dirujuk_puskesmas'],
+            'cara_rujukan' => 'diantar_keluarga',
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertCreated();
+        $report = VisitReport::first();
+        $this->assertEqualsCanonicalizing(['diberi_obat', 'dirujuk_puskesmas'], $report->tindakan);
+    }
+
+    public function test_tidak_ada_tindakan_tidak_boleh_digabung_dgn_tindakan_lain(): void
+    {
+        // 'tidak_ada' TETAP eksklusif walau diberi_obat+dirujuk_puskesmas sekarang boleh combo --
+        // "tidak ada tindakan" + "diberi obat" sekaligus tidak masuk akal.
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['tidak_ada', 'diberi_obat'],
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('tindakan');
+        $this->assertSame(0, VisitReport::count());
+    }
+
+    public function test_tindakan_duplikat_ditolak(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['diberi_obat', 'diberi_obat'],
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('tindakan');
+        $this->assertSame(0, VisitReport::count());
+    }
+
+    public function test_tindakan_lebih_dari_dua_ditolak(): void
+    {
+        Sanctum::actingAs($this->kader->user);
+
+        $response = $this->post('/api/v1/visit-reports', $this->validPayload([
+            'tindakan' => ['diberi_obat', 'dirujuk_puskesmas', 'tidak_ada'],
             'cara_rujukan' => 'diantar_keluarga',
         ]), ['Accept' => 'application/json']);
 
