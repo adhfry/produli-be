@@ -41,6 +41,12 @@ class ListPatientsRequest extends FormRequest
             // Header tabel dashboard/pasien yang bisa diklik utk sort (revisi Bu Kadis).
             'sort_by' => ['nullable', 'string', 'in:nama,risk_level'],
             'sort_direction' => ['nullable', 'string', 'in:asc,desc'],
+            // Fitur periode bulanan (permintaan user) -- format 'YYYY-MM', dikonversi ke akhir
+            // bulan itu (Carbon::endOfMonth()) sebagai $asOf ke RiskClassificationHistoryService.
+            // TIDAK mengubah filter risk_level di atas (itu tetap terhadap status TERKINI) --
+            // period cuma menambah kolom period_risk_level/period_risk_computed_at di response
+            // (lihat PatientResource), tidak memfilter daftar berdasarkan status historis.
+            'period' => ['nullable', 'date_format:Y-m'],
         ];
     }
 }

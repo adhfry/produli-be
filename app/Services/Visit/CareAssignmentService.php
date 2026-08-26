@@ -82,6 +82,49 @@ class CareAssignmentService
     }
 
     /**
+     * Varian ensureKaderPlanFor() utk penugasan multi-tanggal (permintaan user,
+     * VisitAssignmentService::assignMultipleDates()) -- kalau plan BELUM ada, buat baru dengan
+     * last_triggered_at = tanggal TERAKHIR (paling jauh ke depan) dari batch. Kalau plan SUDAH
+     * ada, MAJUKAN last_triggered_at ke tanggal itu (JANGAN PERNAH mundur -- ensureKaderPlanFor()
+     * biasa idempotent/no-op kalau sudah ada, itu cukup utk assign() satu-tanggal, tapi DI SINI
+     * kita SENGAJA majukan supaya scan cadence harian (CareAssignmentCadenceService) tidak
+     * langsung generate kunjungan duplikat tepat setelah batch manual ini -- next-due dihitung
+     * dari last_triggered_at, jadi ini yang membuat auto-generate "melompati" tanggal yang sudah
+     * dijadwalkan manual).
+     */
+    public function ensureKaderPlanAdvancedTo(
+        int $patientId,
+        int $kaderId,
+        int $assignedById,
+        ?int $puskesmasIdSnapshot,
+        string $lastScheduledDate,
+    ): CareAssignment {
+        $existing = CareAssignment::where('patient_id', $patientId)
+            ->where('worker_type', 'kader')
+            ->where('kader_id', $kaderId)
+            ->where('status', 'active')
+            ->first();
+
+        if ($existing === null) {
+            return CareAssignment::create([
+                'patient_id' => $patientId,
+                'worker_type' => 'kader',
+                'kader_id' => $kaderId,
+                'assigned_by' => $assignedById,
+                'puskesmas_id_snapshot' => $puskesmasIdSnapshot,
+                'status' => 'active',
+                'last_triggered_at' => $lastScheduledDate,
+            ]);
+        }
+
+        if ($existing->last_triggered_at === null || $existing->last_triggered_at->lt($lastScheduledDate)) {
+            $existing->update(['last_triggered_at' => $lastScheduledDate]);
+        }
+
+        return $existing;
+    }
+
+    /**
      * PJ Prolanis/admin_puskesmas menugaskan tenaga_kesehatan ke pasien -- beda dari kader,
      * TIDAK ada jalur assign satu-kali existing untuk dinaiki, jadi plan DAN kunjungan pertama
      * dibuat sekaligus di sini.

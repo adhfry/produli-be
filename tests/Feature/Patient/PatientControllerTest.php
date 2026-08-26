@@ -660,6 +660,77 @@ class PatientControllerTest extends TestCase
         $this->assertSame('180', $data['Cholesterol']['value']);
     }
 
+    public function test_lab_results_history_mengembalikan_seluruh_riwayat_bukan_cuma_terbaru(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        LabResultCache::create([
+            'external_id' => 1, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'Gula Darah Puasa', 'value' => '90', 'satuan' => 'mg/dL',
+            'tanggal_periksa' => '2026-06-01', 'synced_at' => '2026-06-01 08:00:00',
+        ]);
+        LabResultCache::create([
+            'external_id' => 2, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'Gula Darah Puasa', 'value' => '250', 'satuan' => 'mg/dL',
+            'tanggal_periksa' => '2026-07-20', 'synced_at' => '2026-07-20 08:00:00',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/lab-results-history");
+
+        $response->assertOk();
+        // KEDUA baris muncul (beda dari lab-results yang cuma terbaru) -- frontend yang
+        // menghitung nilai per periode dari histori lengkap ini.
+        $this->assertCount(2, $response->json('data'));
+    }
+
+    public function test_period_menampilkan_klasifikasi_risiko_historis_bukan_terkini(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        // Juni: ringan. Juli: berat (terkini). Minta periode Juni -- harus lihat 'ringan', BUKAN
+        // 'berat' yang sekarang jadi status terkini.
+        RiskClassification::create([
+            'patient_id' => $patient->id, 'level' => 'ringan', 'criteria_snapshot' => [],
+            'computed_at' => '2026-06-15 08:00:00', 'is_latest' => false,
+        ]);
+        RiskClassification::create([
+            'patient_id' => $patient->id, 'level' => 'berat', 'criteria_snapshot' => [],
+            'computed_at' => '2026-07-15 08:00:00', 'is_latest' => true,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients?period=2026-06');
+
+        $response->assertOk();
+        $item = collect($response->json('data.items'))->firstWhere('id', $patient->id);
+        $this->assertSame('ringan', $item['period_risk_level']);
+        // risk_level (status TERKINI) tetap tidak berubah -- period cuma menambah kolom baru.
+        $this->assertSame('berat', $item['risk_level']);
+    }
+
+    public function test_tanpa_period_kolom_period_risk_level_tidak_muncul(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $patient = $this->makePatient($this->puskesmasA, 1);
+        RiskClassification::create([
+            'patient_id' => $patient->id, 'level' => 'berat', 'criteria_snapshot' => [],
+            'computed_at' => now(), 'is_latest' => true,
+        ]);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/patients');
+
+        $response->assertOk();
+        $item = collect($response->json('data.items'))->firstWhere('id', $patient->id);
+        $this->assertArrayNotHasKey('period_risk_level', $item);
+    }
+
     public function test_lab_results_pasien_di_luar_scope_ditolak_403(): void
     {
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
@@ -696,6 +767,30 @@ class PatientControllerTest extends TestCase
         $response->assertOk();
         $this->assertSame($patientA->id, $response->json('data.id'));
         $this->assertSame('success', $response->json('status'));
+    }
+
+    public function test_show_menyertakan_jadwal_cadence_care_assignment_aktif(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+        $kaderUser = User::factory()->create(['name' => 'Bu Kader Siti']);
+        $kader = \App\Models\Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true]);
+        \App\Models\CareAssignment::create([
+            'patient_id' => $patient->id, 'worker_type' => 'kader', 'kader_id' => $kader->id,
+            'puskesmas_id_snapshot' => $this->puskesmasA->id, 'status' => 'active',
+            'last_triggered_at' => '2026-08-01',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}");
+
+        $response->assertOk();
+        $careAssignments = $response->json('data.care_assignments');
+        $this->assertCount(1, $careAssignments);
+        $this->assertSame('kader', $careAssignments[0]['worker_type']);
+        $this->assertSame('Bu Kader Siti', $careAssignments[0]['worker_name']);
+        $this->assertSame(['2026-08-08', '2026-08-15', '2026-08-22', '2026-08-29'], $careAssignments[0]['upcoming_dates']);
     }
 
     public function test_tanpa_login_ditolak_401(): void

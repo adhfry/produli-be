@@ -106,6 +106,8 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('patients/{patient}/risk-history', [PatientController::class, 'riskHistory']);
     Route::get('patients/{patient}/visit-history', [PatientController::class, 'visitHistory']);
     Route::get('patients/{patient}/lab-results', [PatientController::class, 'labResults']);
+    // Fitur "Bandingkan Periode" (permintaan user) -- lihat docblock labResultsHistory().
+    Route::get('patients/{patient}/lab-results-history', [PatientController::class, 'labResultsHistory']);
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
@@ -160,9 +162,12 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('visit-assignments', [VisitAssignmentController::class, 'index']);
     Route::post('visit-assignments', [VisitAssignmentController::class, 'store']);
     Route::post('visit-assignments/bulk', [VisitAssignmentController::class, 'bulkStore']);
+    // Penugasan multi-tanggal (permintaan user) -- lihat VisitAssignmentController::storeMultiDate().
+    Route::post('visit-assignments/multi-dates', [VisitAssignmentController::class, 'storeMultiDate']);
     Route::get('visit-assignments/monitoring', [VisitAssignmentController::class, 'monitoring']);
-    // SETELAH 'bulk'/'monitoring' di atas -- kalau tidak, route-model-binding mencoba mencocokkan
-    // itu sebagai id VisitAssignment (pola sama seperti 'patients/search-nik' vs 'patients/{patient}').
+    // SETELAH 'bulk'/'multi-dates'/'monitoring' di atas -- kalau tidak, route-model-binding
+    // mencoba mencocokkan itu sebagai id VisitAssignment (pola sama seperti 'patients/search-nik'
+    // vs 'patients/{patient}').
     Route::get('visit-assignments/{visitAssignment}', [VisitAssignmentController::class, 'show']);
     Route::patch('visit-assignments/{visitAssignment}/cancel', [VisitAssignmentController::class, 'cancel']);
 

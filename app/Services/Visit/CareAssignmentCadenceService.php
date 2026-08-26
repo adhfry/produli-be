@@ -46,6 +46,40 @@ class CareAssignmentCadenceService
         return $plan->last_triggered_at->diffInDays(Carbon::today()) >= $this->cadenceDaysFor($plan);
     }
 
+    /**
+     * Proyeksi tanggal kunjungan berikutnya yang akan otomatis di-generate scan harian
+     * (generateDueVisits() di atas) -- MURNI perhitungan, TIDAK menulis apa pun ke DB (permintaan
+     * user, fitur "lihat jadwal cadence" di halaman pasien -- sebelumnya cadence otomatis ini
+     * jalan tanpa ada tampilan APA PUN ke admin, jadi tidak terlihat kapan kunjungan berikutnya
+     * bakal muncul). $count kunjungan ke depan, jarak antar tanggal = cadenceDaysFor() (bisa
+     * berubah kalau prioritas pasien nakes berubah di antara proyeksi -- makanya ini SELALU
+     * dihitung ulang saat diminta, bukan disimpan).
+     *
+     * @return array<int, \Illuminate\Support\Carbon>
+     */
+    public function upcomingDates(CareAssignment $plan, int $count = 4): array
+    {
+        $days = $this->cadenceDaysFor($plan);
+        $anchor = $plan->last_triggered_at ?? Carbon::today();
+
+        $dates = [];
+        for ($i = 1; $i <= $count; $i++) {
+            $dates[] = $anchor->copy()->addDays($days * $i);
+        }
+
+        return $dates;
+    }
+
+    /**
+     * true kalau plan ini SEDANG punya kunjungan pending/in_progress -- scan harian TIDAK akan
+     * generate apa pun sampai itu selesai (lihat hasOpenVisit() di bawah), jadi proyeksi
+     * upcomingDates() di atas belum pasti mulai berjalan sebelum kunjungan terbuka ini beres.
+     */
+    public function isBlockedByOpenVisit(CareAssignment $plan): bool
+    {
+        return $this->hasOpenVisit($plan);
+    }
+
     private function cadenceDaysFor(CareAssignment $plan): int
     {
         if ($plan->worker_type === 'kader') {

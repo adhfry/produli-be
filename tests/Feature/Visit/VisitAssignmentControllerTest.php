@@ -173,6 +173,118 @@ class VisitAssignmentControllerTest extends TestCase
         $this->assertSame('081234567890', $response->json('data.patient.phone'));
     }
 
+    // ---- Multi-tanggal (permintaan user) ----
+
+    public function test_pj_prolanis_membuat_penugasan_multi_tanggal(): void
+    {
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($pj);
+
+        $dates = [now()->addDays(3)->toDateString(), now()->addDays(10)->toDateString(), now()->addDays(17)->toDateString()];
+        $response = $this->postJson('/api/v1/visit-assignments/multi-dates', [
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kaderA->id,
+            'scheduled_dates' => $dates,
+            'priority' => 'sedang',
+        ]);
+
+        $response->assertCreated();
+        $this->assertSame(3, VisitAssignment::where('patient_id', $patient->id)->count());
+        $this->assertSame(3, count($response->json('data')));
+
+        // CareAssignment (plan cadence) langsung dibuat & last_triggered_at dimajukan ke tanggal
+        // TERAKHIR dari batch -- supaya scan cadence otomatis tidak langsung generate duplikat.
+        $plan = \App\Models\CareAssignment::where('patient_id', $patient->id)->where('kader_id', $this->kaderA->id)->first();
+        $this->assertNotNull($plan);
+        $this->assertSame(now()->addDays(17)->toDateString(), $plan->last_triggered_at->toDateString());
+    }
+
+    public function test_multi_tanggal_tidak_diblokir_guard_satu_assignment_aktif(): void
+    {
+        // BEDA dari assign() satu-tanggal -- pasangan patient+kader ini SUDAH punya 1 assignment
+        // aktif, tapi multi-dates TETAP boleh nambah beberapa lagi (itu tujuan fiturnya).
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+        VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id,
+            'assigned_by' => $pj->id, 'scheduled_date' => now()->addDay()->toDateString(),
+            'status' => 'pending', 'priority' => 'sedang', 'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($pj);
+
+        $response = $this->postJson('/api/v1/visit-assignments/multi-dates', [
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kaderA->id,
+            'scheduled_dates' => [now()->addDays(8)->toDateString(), now()->addDays(15)->toDateString()],
+            'priority' => 'sedang',
+        ]);
+
+        $response->assertCreated();
+        $this->assertSame(3, VisitAssignment::where('patient_id', $patient->id)->count());
+    }
+
+    public function test_multi_tanggal_ditolak_kalau_tanggal_persis_sama_sudah_ada(): void
+    {
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+        $bentrok = now()->addDays(5)->toDateString();
+        VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $this->kaderA->id,
+            'assigned_by' => $pj->id, 'scheduled_date' => $bentrok,
+            'status' => 'pending', 'priority' => 'sedang', 'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+
+        Sanctum::actingAs($pj);
+
+        $response = $this->postJson('/api/v1/visit-assignments/multi-dates', [
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kaderA->id,
+            'scheduled_dates' => [$bentrok, now()->addDays(12)->toDateString()],
+            'priority' => 'sedang',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertSame(1, VisitAssignment::where('patient_id', $patient->id)->count());
+    }
+
+    public function test_multi_tanggal_duplikat_dalam_satu_request_ditolak(): void
+    {
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($pj);
+
+        $tanggal = now()->addDays(5)->toDateString();
+        $response = $this->postJson('/api/v1/visit-assignments/multi-dates', [
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kaderA->id,
+            'scheduled_dates' => [$tanggal, $tanggal],
+            'priority' => 'sedang',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors('scheduled_dates.0');
+    }
+
+    public function test_kader_tidak_bisa_membuat_penugasan_multi_tanggal(): void
+    {
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($this->kaderA->user);
+
+        $response = $this->postJson('/api/v1/visit-assignments/multi-dates', [
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kaderA->id,
+            'scheduled_dates' => [now()->addDay()->toDateString()],
+            'priority' => 'sedang',
+        ]);
+
+        $response->assertStatus(403);
+    }
+
     // ---- Bulk create ----
 
     public function test_bulk_assign_berhasil_untuk_semua_pasien_valid(): void
