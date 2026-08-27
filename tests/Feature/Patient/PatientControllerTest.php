@@ -705,6 +705,49 @@ class PatientControllerTest extends TestCase
         $this->assertSame('180', $data['Cholesterol']['value']);
     }
 
+    public function test_lab_results_menyertakan_persen_rujukan_untuk_parameter_berambang(): void
+    {
+        // Permintaan user, fitur "Tren Hasil Pemeriksaan" -- LabResultResource sekarang ikut
+        // kirim reference_boundary/percent_of_reference/zone dari risk_thresholds. Cholesterol
+        // ADA ambang aktif (kalau seeder RolesSeeder/database sudah py risk_thresholds default),
+        // tapi test ini tidak bergantung ke seeder apa pun -- insert threshold sendiri supaya
+        // deterministik.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        \App\Models\RiskThreshold::create([
+            'parameter' => 'Cholesterol', 'level' => 'sedang', 'operator' => '>',
+            'is_direct_classifier' => false, 'threshold_min' => 200, 'is_active' => true,
+        ]);
+
+        LabResultCache::create([
+            'external_id' => 1, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'Cholesterol', 'value' => '213', 'satuan' => 'mg/dL',
+            'tanggal_periksa' => '2026-07-20', 'synced_at' => '2026-07-20 08:00:00',
+        ]);
+        // HDL -- TIDAK punya ambang terkonfigurasi, field baru harus null semua.
+        LabResultCache::create([
+            'external_id' => 2, 'patient_id' => $patient->external_patient_id,
+            'parameter' => 'HDL', 'value' => '68', 'satuan' => 'mg/dL',
+            'tanggal_periksa' => '2026-07-20', 'synced_at' => '2026-07-20 08:00:00',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/lab-results");
+
+        $response->assertOk();
+        $data = collect($response->json('data'))->keyBy('parameter');
+        // assertEquals (bukan assertSame) -- 200.0 tanpa pecahan di-encode json_encode sbg
+        // 200 (integer-looking), json_decode balikin int PHP, bukan float, walau nilainya sama.
+        $this->assertEquals(200.0, $data['Cholesterol']['reference_boundary']);
+        $this->assertSame(106.5, $data['Cholesterol']['percent_of_reference']);
+        $this->assertSame('waspada', $data['Cholesterol']['zone']);
+        $this->assertNull($data['HDL']['reference_boundary']);
+        $this->assertNull($data['HDL']['percent_of_reference']);
+        $this->assertNull($data['HDL']['zone']);
+    }
+
     public function test_lab_results_history_mengembalikan_seluruh_riwayat_bukan_cuma_terbaru(): void
     {
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
