@@ -5,13 +5,17 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CareAssignment\AssignTenagaKesehatanRequest;
 use App\Http\Requests\CareAssignment\CreateAdhocVisitRequest;
+use App\Http\Requests\CareAssignment\RescheduleCareAssignmentRequest;
+use App\Http\Resources\CareAssignmentResource;
 use App\Models\CareAssignment;
 use App\Models\Kader;
 use App\Models\PatientsCache;
 use App\Models\TenagaKesehatan;
+use App\Services\Visit\CareAssignmentCadenceService;
 use App\Services\Visit\CareAssignmentService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Carbon;
 
 /**
  * Rencana kunjungan berulang tenaga_kesehatan (revisi Bu Kadis) -- assign kader sudah lewat
@@ -70,6 +74,23 @@ class CareAssignmentController extends Controller
             'status' => $visit->status,
             'visit_origin' => $visit->visit_origin,
         ], 'Kunjungan tambahan mendesak berhasil dijadwalkan', 201);
+    }
+
+    /**
+     * Geser tanggal kunjungan berikutnya dari rencana kunjungan berulang yang masih aktif
+     * (permintaan user, fitur "atur ulang jadwal") -- lihat docblock
+     * CareAssignmentCadenceService::rescheduleTo() untuk cara kerja & guard-nya.
+     */
+    public function reschedule(RescheduleCareAssignmentRequest $request, CareAssignment $careAssignment, CareAssignmentCadenceService $cadence): JsonResponse
+    {
+        $this->authorize('reschedule', $careAssignment);
+
+        $cadence->rescheduleTo($careAssignment, Carbon::parse($request->validated('next_date')));
+
+        return ApiResponse::success(
+            new CareAssignmentResource($careAssignment->fresh()),
+            'Jadwal kunjungan berikutnya berhasil diatur ulang',
+        );
     }
 
     /**

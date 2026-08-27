@@ -29,4 +29,14 @@ class CareAssignmentPolicy
     {
         return $this->sharesPuskesmas($user, $careAssignment->puskesmas_id_snapshot);
     }
+
+    /**
+     * Atur ulang jadwal cadence berikutnya -- gerbang sama dengan createAdhocVisit() (harus
+     * sepuskesmas dengan plan-nya, admin_puskesmas/pj_prolanis tidak boleh menggeser jadwal
+     * pasien puskesmas lain).
+     */
+    public function reschedule(User $user, CareAssignment $careAssignment): bool
+    {
+        return $this->sharesPuskesmas($user, $careAssignment->puskesmas_id_snapshot);
+    }
 }

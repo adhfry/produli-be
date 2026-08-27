@@ -116,4 +116,74 @@ class CareAssignmentControllerTest extends TestCase
             'scheduled_date' => now()->toDateString(),
         ])->assertStatus(401);
     }
+
+    // ---- PATCH /care-assignments/{id}/reschedule (permintaan user, fitur "atur ulang jadwal") ----
+
+    private function makeActiveKaderPlan(): CareAssignment
+    {
+        return CareAssignment::create([
+            'patient_id' => $this->patient->id,
+            'worker_type' => 'kader',
+            'kader_id' => $this->kader->id,
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+            'status' => 'active',
+            'last_triggered_at' => now()->subDays(3)->toDateString(),
+        ]);
+    }
+
+    public function test_pj_prolanis_reschedule_plan_aktif_menggeser_upcoming_dates(): void
+    {
+        $plan = $this->makeActiveKaderPlan();
+        $pj = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $pj->assignRole('pj_prolanis');
+        Sanctum::actingAs($pj);
+
+        $nextDate = now()->addDays(10)->toDateString();
+        $response = $this->patchJson("/api/v1/care-assignments/{$plan->id}/reschedule", [
+            'next_date' => $nextDate,
+        ]);
+
+        $response->assertOk();
+        $this->assertSame($nextDate, $response->json('data.upcoming_dates.0'));
+    }
+
+    public function test_reschedule_ditolak_422_kalau_masih_ada_kunjungan_terbuka(): void
+    {
+        $plan = $this->makeActiveKaderPlan();
+        VisitAssignment::create([
+            'patient_id' => $this->patient->id,
+            'kader_id' => $this->kader->id,
+            'care_assignment_id' => $plan->id,
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'pending',
+            'priority' => 'ringan',
+            'visit_origin' => 'cadence_generated',
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+        ]);
+        $pj = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $pj->assignRole('pj_prolanis');
+        Sanctum::actingAs($pj);
+
+        $response = $this->patchJson("/api/v1/care-assignments/{$plan->id}/reschedule", [
+            'next_date' => now()->addDays(10)->toDateString(),
+        ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_reschedule_ditolak_403_kalau_beda_puskesmas(): void
+    {
+        $plan = $this->makeActiveKaderPlan();
+        $kabupatenLain = Kabupaten::create(['kode_kemendagri' => '35.30', 'nama' => 'Sumenep Lain']);
+        $puskesmasLain = Puskesmas::create(['kabupaten_id' => $kabupatenLain->id, 'kode_internal' => 'PKM-B', 'nama' => 'Puskesmas B']);
+        $pj = User::factory()->create(['puskesmas_id' => $puskesmasLain->id]);
+        $pj->assignRole('pj_prolanis');
+        Sanctum::actingAs($pj);
+
+        $response = $this->patchJson("/api/v1/care-assignments/{$plan->id}/reschedule", [
+            'next_date' => now()->addDays(10)->toDateString(),
+        ]);
+
+        $response->assertStatus(403);
+    }
 }

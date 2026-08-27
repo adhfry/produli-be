@@ -10,7 +10,9 @@ use App\Services\Notification\Channels\DatabaseReminderChannel;
 use App\Services\Notification\Channels\FcmReminderChannel;
 use App\Services\Notification\Channels\WhatsappReminderChannel;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Throwable;
 
 /**
  * Penjadwalan & pengiriman notifikasi ke kader/tenaga_kesehatan (docs/planning/02 §8/§11). Dua
@@ -36,6 +38,7 @@ class NotificationService
         DatabaseReminderChannel $databaseReminderChannel,
         WhatsappReminderChannel $whatsappReminderChannel,
         FcmReminderChannel $fcmReminderChannel,
+        private readonly NotifyService $notifyService,
     ) {
         // WA TERDAFTAR tapi SENGAJA TIDAK DIPAKAI aktif di manapun untuk saat ini (bot WA milik
         // user masih dalam pembuatan) -- channelsFor() di bawah cuma emit 'push'+'fcm'. Kode WA
@@ -232,5 +235,63 @@ class NotificationService
         foreach (['push', 'fcm'] as $channelKey) {
             $this->channels[$channelKey]->send($notifiable, $payload);
         }
+    }
+
+    /**
+     * Ringkasan H-1 untuk admin_puskesmas/pj_prolanis (permintaan user) -- SEBELUMNYA reminder
+     * kunjungan cuma menyasar kader/tenaga_kesehatan yang ditugaskan (assigneeUser() di
+     * deliver()), admin/PJ tidak pernah dapat notifikasi proaktif soal kunjungan besok, harus
+     * buka kartu "Jadwal Kunjungan Mendatang" manual. SATU notifikasi per puskesmas (bukan per
+     * kunjungan spt reminder kader) supaya tidak spam kalau ada banyak kunjungan sekaligus.
+     * Dipanggil dari produli:notify-puskesmas-visit-summary, sekali sehari (BEDA dari
+     * scheduleUpcomingReminders() yang twiceDaily) -- semantiknya "besok akan ada X kunjungan",
+     * cukup sekali per hari, bukan diulang pagi & sore.
+     *
+     * Pola & try/catch per grup PERSIS sama seperti VisitReportService::notifyReportSubmitted()
+     * -- 1 puskesmas gagal kirim tidak boleh menggagalkan grup lain.
+     */
+    public function notifyPuskesmasUpcomingVisitsSummary(): int
+    {
+        $tomorrow = Carbon::tomorrow();
+
+        $counts = VisitAssignment::where('status', 'pending')
+            ->whereDate('scheduled_date', $tomorrow)
+            ->whereNotNull('puskesmas_id_snapshot')
+            ->selectRaw('puskesmas_id_snapshot, count(*) as total')
+            ->groupBy('puskesmas_id_snapshot')
+            ->pluck('total', 'puskesmas_id_snapshot');
+
+        $notified = 0;
+
+        foreach ($counts as $puskesmasId => $count) {
+            try {
+                $this->notifyService->notify(
+                    NotifiableTarget::rolesInPuskesmas(['admin_puskesmas', 'pj_prolanis'], (int) $puskesmasId),
+                    new NotificationPayload(
+                        type: 'visit_summary_tomorrow',
+                        title: 'Ringkasan Kunjungan Besok',
+                        body: "{$count} kunjungan dijadwalkan besok ({$tomorrow->toDateString()}) di wilayah Anda.",
+                        data: [
+                            'type' => 'visit_summary_tomorrow',
+                            'puskesmas_id' => (int) $puskesmasId,
+                            'count' => (int) $count,
+                            'date' => $tomorrow->toDateString(),
+                            'action_url' => '/dashboard/kunjungan',
+                            'action_label' => 'Lihat Kunjungan',
+                        ],
+                    ),
+                    ['push', 'fcm', 'ws'],
+                );
+
+                $notified++;
+            } catch (Throwable $e) {
+                Log::warning('NotificationService: gagal kirim ringkasan kunjungan besok', [
+                    'puskesmas_id' => $puskesmasId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $notified;
     }
 }

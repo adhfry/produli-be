@@ -13,6 +13,8 @@ use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Services\Visit\CareAssignmentCadenceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
@@ -225,5 +227,45 @@ class CareAssignmentCadenceServiceTest extends TestCase
         $plan = $this->makeKaderPlan($this->makePatient(), '2026-08-01');
 
         $this->assertFalse($this->service->isBlockedByOpenVisit($plan));
+    }
+
+    // ---- rescheduleTo() (permintaan user, fitur "atur ulang jadwal") ----
+
+    public function test_reschedule_to_menggeser_last_triggered_at_supaya_upcoming_dates_pertama_persis_next_date(): void
+    {
+        $plan = $this->makeKaderPlan($this->makePatient(), '2026-08-01');
+
+        $this->service->rescheduleTo($plan, Carbon::parse('2026-09-01'));
+
+        $dates = $this->service->upcomingDates($plan->fresh(), 1);
+        $this->assertSame('2026-09-01', $dates[0]->toDateString());
+    }
+
+    public function test_reschedule_to_menolak_plan_yang_tidak_aktif(): void
+    {
+        $plan = $this->makeKaderPlan($this->makePatient(), '2026-08-01');
+        $plan->update(['status' => 'ended']);
+
+        $this->expectException(ValidationException::class);
+        $this->service->rescheduleTo($plan, Carbon::parse('2026-09-01'));
+    }
+
+    public function test_reschedule_to_menolak_plan_yang_masih_diblokir_kunjungan_terbuka(): void
+    {
+        $patient = $this->makePatient();
+        $plan = $this->makeKaderPlan($patient, '2026-08-01');
+        VisitAssignment::create([
+            'patient_id' => $patient->id,
+            'kader_id' => $this->kader->id,
+            'care_assignment_id' => $plan->id,
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'pending',
+            'priority' => 'ringan',
+            'visit_origin' => 'cadence_generated',
+            'puskesmas_id_snapshot' => $this->puskesmas->id,
+        ]);
+
+        $this->expectException(ValidationException::class);
+        $this->service->rescheduleTo($plan, Carbon::parse('2026-09-01'));
     }
 }

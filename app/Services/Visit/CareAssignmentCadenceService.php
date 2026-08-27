@@ -6,6 +6,7 @@ use App\Models\CareAssignment;
 use App\Models\RiskClassification;
 use App\Models\VisitAssignment;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Scan harian semua care_assignments aktif, generate kunjungan yang sudah due (revisi Bu
@@ -78,6 +79,35 @@ class CareAssignmentCadenceService
     public function isBlockedByOpenVisit(CareAssignment $plan): bool
     {
         return $this->hasOpenVisit($plan);
+    }
+
+    /**
+     * Geser jangkar cadence supaya kunjungan berikutnya (upcomingDates()[0]) jatuh PERSIS di
+     * $nextDate (permintaan user, fitur "atur ulang jadwal") -- last_triggered_at diset mundur
+     * $nextDate - cadenceDaysFor(), bukan menulis kolom baru, supaya seluruh proyeksi/scan
+     * harian (generateDueVisits/upcomingDates) otomatis ikut tanpa perlu logic khusus di tempat
+     * lain. Menolak (ValidationException, pola sama seperti CareAssignmentService) kalau plan
+     * sudah tidak aktif atau masih diblokir kunjungan terbuka -- geser jadwal selagi ada
+     * kunjungan pending/in_progress bisa bikin dua sumber kebenaran soal "kunjungan berikutnya
+     * kapan", harus diselesaikan/dibatalkan dulu.
+     */
+    public function rescheduleTo(CareAssignment $plan, Carbon $nextDate): void
+    {
+        if ($plan->status !== 'active') {
+            throw ValidationException::withMessages([
+                'next_date' => ['Rencana kunjungan ini sudah tidak aktif, tidak bisa diatur ulang.'],
+            ]);
+        }
+
+        if ($this->hasOpenVisit($plan)) {
+            throw ValidationException::withMessages([
+                'next_date' => ['Masih ada kunjungan yang belum selesai untuk rencana ini -- selesaikan atau batalkan dulu sebelum mengatur ulang jadwal.'],
+            ]);
+        }
+
+        $plan->update([
+            'last_triggered_at' => $nextDate->copy()->subDays($this->cadenceDaysFor($plan)),
+        ]);
     }
 
     private function cadenceDaysFor(CareAssignment $plan): int

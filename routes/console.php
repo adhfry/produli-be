@@ -18,6 +18,12 @@ Schedule::command('produli:sync-silakes')->dailyAt('02:00');
 // sinkron dengan config('produli.reminders.same_day_time'/'h_minus_1_time') di config/produli.php.
 Schedule::command('produli:send-visit-reminders')->twiceDaily(6, 16);
 
+// Ringkasan H-1 admin_puskesmas/pj_prolanis (permintaan user) -- SEKALI sehari (beda dari
+// reminder kader di atas yang twiceDaily), jam sama dgn reminder H-1 (16:00) karena semantiknya
+// "besok akan ada X kunjungan", cukup sekali, lihat docblock NotificationService::
+// notifyPuskesmasUpcomingVisitsSummary().
+Schedule::command('produli:notify-puskesmas-visit-summary')->dailyAt('16:00');
+
 // Kadensi kunjungan berulang (revisi Bu Kadis) -- sekali sehari cukup, tidak clock-sensitive
 // dalam hari seperti reminder H-1/hari-H di atas (lihat CareAssignmentCadenceService).
 Schedule::command('produli:generate-care-visits')->dailyAt('03:00');

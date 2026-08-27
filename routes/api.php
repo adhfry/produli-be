@@ -158,6 +158,7 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
 
     Route::post('care-assignments', [CareAssignmentController::class, 'store']);
     Route::post('care-assignments/{careAssignment}/adhoc-visit', [CareAssignmentController::class, 'createAdhocVisit']);
+    Route::patch('care-assignments/{careAssignment}/reschedule', [CareAssignmentController::class, 'reschedule']);
 
     Route::get('visit-assignments', [VisitAssignmentController::class, 'index']);
     Route::post('visit-assignments', [VisitAssignmentController::class, 'store']);

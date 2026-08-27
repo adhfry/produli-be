@@ -10,6 +10,7 @@ use App\Models\Reminder;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Services\Notification\NotificationService;
+use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Queue;
@@ -28,6 +29,8 @@ class NotificationServiceTest extends TestCase
 
     private Kader $kader;
 
+    private Puskesmas $puskesmas;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -35,12 +38,14 @@ class NotificationServiceTest extends TestCase
         Config::set('produli.reminders.h_minus_1_time', '16:00');
         Config::set('produli.reminders.same_day_time', '06:00');
 
+        $this->seed(RolesSeeder::class);
+
         $this->service = app(NotificationService::class);
 
         $kabupaten = Kabupaten::create(['kode_kemendagri' => '35.29', 'nama' => 'Sumenep']);
-        $puskesmas = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-A', 'nama' => 'Puskesmas A']);
+        $this->puskesmas = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-A', 'nama' => 'Puskesmas A']);
         $kaderUser = User::factory()->create(['name' => 'Bu Siti']);
-        $this->kader = Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $puskesmas->id, 'status_aktif' => true]);
+        $this->kader = Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $this->puskesmas->id, 'status_aktif' => true]);
     }
 
     private function makeAssignment(string $scheduledDate, array $overrides = []): VisitAssignment
@@ -217,5 +222,44 @@ class NotificationServiceTest extends TestCase
         $this->expectException(RuntimeException::class);
 
         $this->service->deliver($reminder->id);
+    }
+
+    // ---- notifyPuskesmasUpcomingVisitsSummary() (permintaan user, ringkasan H-1 admin/PJ) ----
+
+    public function test_notify_puskesmas_upcoming_visits_summary_kirim_ke_admin_dan_pj_bukan_kader(): void
+    {
+        $this->makeAssignment(now()->addDay()->toDateString());
+        $this->makeAssignment(now()->addDay()->toDateString());
+        // Bukan besok -- tidak boleh ikut terhitung.
+        $this->makeAssignment(now()->toDateString());
+
+        $admin = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $admin->assignRole('admin_puskesmas');
+        $pj = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $pj->assignRole('pj_prolanis');
+
+        $notified = $this->service->notifyPuskesmasUpcomingVisitsSummary();
+
+        $this->assertSame(1, $notified);
+        $this->assertSame(1, $admin->notifications()->count());
+        $this->assertSame(1, $pj->notifications()->count());
+        $this->assertSame(0, $this->kader->user->notifications()->count());
+
+        $data = $admin->notifications()->first()->data;
+        $this->assertSame('visit_summary_tomorrow', $data['type']);
+        $this->assertSame(2, $data['count']);
+        $this->assertSame($this->puskesmas->id, $data['puskesmas_id']);
+    }
+
+    public function test_notify_puskesmas_upcoming_visits_summary_tidak_kirim_kalau_tidak_ada_kunjungan_besok(): void
+    {
+        $this->makeAssignment(now()->toDateString());
+        $admin = User::factory()->create(['puskesmas_id' => $this->puskesmas->id]);
+        $admin->assignRole('admin_puskesmas');
+
+        $notified = $this->service->notifyPuskesmasUpcomingVisitsSummary();
+
+        $this->assertSame(0, $notified);
+        $this->assertSame(0, $admin->notifications()->count());
     }
 }
