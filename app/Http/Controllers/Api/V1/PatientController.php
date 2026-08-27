@@ -352,7 +352,43 @@ class PatientController extends Controller
             ->limit(100)
             ->get();
 
-        return ApiResponse::success(RiskClassificationResource::collection($history));
+        return ApiResponse::success(RiskClassificationResource::collection($this->dedupeSameAssessmentDate($history)));
+    }
+
+    /**
+     * Satu pasien BISA punya beberapa baris risk_classifications dengan assessment_date PERSIS
+     * SAMA -- bukan kunjungan/lab baru, tapi ALGORITMA klasifikasi yang dievaluasi ulang atas
+     * data lab yang SAMA (mis. revisi kriteria Sedang/Berat, backfill produli:reclassify-risk).
+     * Tanpa dedup ini, "Riwayat & Tren Kondisi" menampilkan garis tren di antara 2 titik BER-
+     * TANGGAL SAMA seolah kondisi pasien berubah dalam hitungan hari, padahal itu cuma 2 hasil
+     * hitung berbeda dari 1 kunjungan lab yang identik (temuan lapangan nyata, audit produksi:
+     * 3.970 pasien / 5.002 baris terdampak). Baris yang dipertahankan per assessment_date =
+     * yang id-nya PALING BESAR (evaluasi PALING BARU/akurat) -- $history sudah terurut
+     * COALESCE(assessment_date,computed_at) DESC, id DESC, jadi baris itu yang MUNCUL DULUAN,
+     * cukup ambil kemunculan pertama per tanggal. Baris assessment_date NULL (pasien belum
+     * pernah punya lab sama sekali) SENGAJA tidak ikut dedup -- tidak ada tanggal nyata utk
+     * dikelompokkan, tiap baris tetap baris sendiri seperti sebelumnya.
+     *
+     * @param  \Illuminate\Database\Eloquent\Collection<int, \App\Models\RiskClassification>  $history
+     * @return \Illuminate\Database\Eloquent\Collection<int, \App\Models\RiskClassification>
+     */
+    private function dedupeSameAssessmentDate($history)
+    {
+        $seenDates = [];
+
+        return $history->filter(function ($row) use (&$seenDates) {
+            if ($row->assessment_date === null) {
+                return true;
+            }
+
+            $key = $row->assessment_date->toDateString();
+            if (isset($seenDates[$key])) {
+                return false;
+            }
+            $seenDates[$key] = true;
+
+            return true;
+        })->values();
     }
 
     /**

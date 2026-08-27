@@ -576,6 +576,51 @@ class PatientControllerTest extends TestCase
         $this->assertSame(['sedang', 'berat'], $levels->all());
     }
 
+    public function test_risk_history_dedup_baris_assessment_date_sama_ambil_yang_terbaru(): void
+    {
+        // Temuan lapangan nyata (audit produksi, 3.970 pasien terdampak) -- 2 baris klasifikasi
+        // dari LAB YANG SAMA (assessment_date identik), cuma beda hasil algoritma (revisi
+        // kriteria) -- HARUS jadi 1 titik di "Riwayat & Tren Kondisi", bukan 2 (tren palsu
+        // seolah kondisi berubah dalam hitungan hari padahal cuma re-evaluasi data yang sama).
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'sedang', 'criteria_snapshot' => [], 'computed_at' => '2026-08-12 10:14:49', 'assessment_date' => '2026-05-08', 'is_latest' => false]);
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => '2026-08-17 15:29:30', 'assessment_date' => '2026-05-08', 'is_latest' => true]);
+        // Beda assessment_date -- BUKAN duplikat, keduanya tetap tampil.
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'ringan', 'criteria_snapshot' => [], 'computed_at' => '2026-06-01 00:00:00', 'assessment_date' => '2026-01-01', 'is_latest' => false]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/risk-history");
+
+        $response->assertOk();
+        $data = collect($response->json('data'));
+        $this->assertCount(2, $data);
+        // Yang assessment_date-nya 2026-05-08 harus yang id-nya lebih besar (evaluasi terbaru,
+        // computed_at 17 Agustus) -- 'tidak_berisiko', BUKAN 'sedang' yang lama.
+        $this->assertSame('tidak_berisiko', $data->firstWhere('assessment_date', '2026-05-08')['level']);
+        $this->assertNotNull($data->firstWhere('assessment_date', '2026-01-01'));
+    }
+
+    public function test_risk_history_tidak_dedup_baris_assessment_date_null(): void
+    {
+        // Pasien belum pernah punya lab sama sekali -- assessment_date NULL di kedua baris,
+        // TIDAK boleh dianggap "sama" dan saling menghapus satu sama lain.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => now()->subDay(), 'assessment_date' => null, 'is_latest' => false]);
+        RiskClassification::create(['patient_id' => $patient->id, 'level' => 'tidak_berisiko', 'criteria_snapshot' => [], 'computed_at' => now(), 'assessment_date' => null, 'is_latest' => true]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/risk-history");
+
+        $response->assertOk();
+        $this->assertCount(2, $response->json('data'));
+    }
+
     public function test_risk_history_pasien_di_luar_scope_ditolak_403(): void
     {
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
