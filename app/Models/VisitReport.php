@@ -52,6 +52,12 @@ class VisitReport extends Model
         'obat_detail',
         'cara_rujukan',
         'rujukan_status',
+        'confirmed_at',
+        'confirmed_by',
+        'tindakan_puskesmas',
+        'catatan_tindakan_puskesmas',
+        'tindakan_puskesmas_at',
+        'tindakan_puskesmas_by',
         'kepatuhan_obat',
         'sisa_obat',
     ];
@@ -71,6 +77,9 @@ class VisitReport extends Model
             'synced_at' => 'datetime',
             'pj_reviewed_at' => 'datetime',
             'validated_at' => 'datetime',
+            'confirmed_at' => 'datetime',
+            'tindakan_puskesmas' => 'array',
+            'tindakan_puskesmas_at' => 'datetime',
             'deleted_at' => 'datetime',
             'gda' => 'decimal:2',
             'gdp' => 'decimal:2',
@@ -95,6 +104,16 @@ class VisitReport extends Model
     public function validatedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'validated_by');
+    }
+
+    public function confirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'confirmed_by');
+    }
+
+    public function tindakanPuskesmasBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'tindakan_puskesmas_by');
     }
 
     /**

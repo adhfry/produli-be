@@ -189,6 +189,7 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
 
     Route::get('rujukan', [RujukanController::class, 'index']);
     Route::patch('rujukan/{visitReport}/konfirmasi', [RujukanController::class, 'konfirmasi']);
+    Route::patch('rujukan/{visitReport}/tindakan-lanjutan', [RujukanController::class, 'tindakanLanjutan']);
 
     Route::get('staff', [StaffController::class, 'index']);
     Route::post('staff', [StaffController::class, 'store']);

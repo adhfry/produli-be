@@ -38,6 +38,16 @@ class RujukanResource extends JsonResource
             'cara_rujukan' => $this->cara_rujukan,
             'rujukan_status' => $this->rujukan_status,
             'created_at' => $this->created_at?->toIso8601String(),
+            // Permintaan user -- siapa & kapan keputusan konfirmasi/pembatalan diambil (SEBELUM
+            // ini tidak pernah terekam, cuma status akhirnya).
+            'confirmed_at' => $this->confirmed_at?->toIso8601String(),
+            'confirmed_by' => $this->confirmedBy ? ['id' => $this->confirmedBy->id, 'name' => $this->confirmedBy->name] : null,
+            // Tindak lanjut puskesmas (permintaan user) -- HANYA terisi setelah rujukan_status=
+            // 'dikonfirmasi', lihat RujukanService::inputTindakanLanjutan().
+            'tindakan_puskesmas' => $this->tindakan_puskesmas,
+            'catatan_tindakan_puskesmas' => $this->catatan_tindakan_puskesmas,
+            'tindakan_puskesmas_at' => $this->tindakan_puskesmas_at?->toIso8601String(),
+            'tindakan_puskesmas_by' => $this->tindakanPuskesmasBy ? ['id' => $this->tindakanPuskesmasBy->id, 'name' => $this->tindakanPuskesmasBy->name] : null,
         ];
     }
 }

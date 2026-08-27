@@ -55,7 +55,7 @@ class RujukanService
     /**
      * @param  'dikonfirmasi'|'dibatalkan'  $status
      */
-    public function konfirmasi(VisitReport $visitReport, string $status): VisitReport
+    public function konfirmasi(VisitReport $visitReport, string $status, User $confirmedBy): VisitReport
     {
         if ($visitReport->rujukan_status === null) {
             throw ValidationException::withMessages([
@@ -63,9 +63,44 @@ class RujukanService
             ]);
         }
 
-        $visitReport->update(['rujukan_status' => $status]);
+        // confirmed_at/confirmed_by dicatat utk KEDUA hasil (dikonfirmasi MAUPUN dibatalkan) --
+        // permintaan user, sebelumnya siapa & kapan keputusan ini diambil tidak pernah terekam
+        // sama sekali, cuma status akhirnya. Pola sama dgn validated_at/validated_by yang sudah ada.
+        $visitReport->update([
+            'rujukan_status' => $status,
+            'confirmed_at' => now(),
+            'confirmed_by' => $confirmedBy->id,
+        ]);
 
         $this->notifyPelapor($visitReport, $status);
+
+        return $visitReport;
+    }
+
+    /**
+     * Tindak lanjut puskesmas SETELAH pasien dikonfirmasi datang (permintaan user) -- rawat
+     * inap/edukasi/obat tambahan/dst, plus catatan bebas (hasil diagnosa). HANYA boleh diisi
+     * kalau rujukan_status SUDAH 'dikonfirmasi' -- mencatat tindak lanjut utk rujukan yang belum
+     * dikonfirmasi kedatangannya (atau yang dibatalkan) tidak masuk akal secara alur klinis.
+     * Boleh diisi ULANG (menimpa, bukan ditolak) -- kasus nyata: diagnosa awal berubah setelah
+     * observasi lanjut, admin perlu bisa mengoreksi tanpa membuat baris baru.
+     *
+     * @param  array<int, string>  $tindakanPuskesmas
+     */
+    public function inputTindakanLanjutan(VisitReport $visitReport, array $tindakanPuskesmas, ?string $catatan, User $filledBy): VisitReport
+    {
+        if ($visitReport->rujukan_status !== 'dikonfirmasi') {
+            throw ValidationException::withMessages([
+                'rujukan' => ['Tindak lanjut cuma bisa diisi setelah rujukan ini dikonfirmasi kedatangannya.'],
+            ]);
+        }
+
+        $visitReport->update([
+            'tindakan_puskesmas' => $tindakanPuskesmas,
+            'catatan_tindakan_puskesmas' => $catatan,
+            'tindakan_puskesmas_at' => now(),
+            'tindakan_puskesmas_by' => $filledBy->id,
+        ]);
 
         return $visitReport;
     }

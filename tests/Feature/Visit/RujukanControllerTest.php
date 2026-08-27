@@ -308,4 +308,145 @@ class RujukanControllerTest extends TestCase
     {
         $this->getJson('/api/v1/rujukan')->assertStatus(401);
     }
+
+    public function test_konfirmasi_mencatat_waktu_dan_pelaku(): void
+    {
+        // Permintaan user -- sebelumnya siapa & kapan konfirmasi diambil TIDAK PERNAH terekam.
+        Notification::fake();
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA);
+
+        Sanctum::actingAs($admin);
+        $this->travelTo(now()->setTime(10, 30));
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/konfirmasi", ['status' => 'dikonfirmasi']);
+
+        $response->assertOk();
+        $this->assertSame($admin->id, $response->json('data.confirmed_by.id'));
+        $this->assertNotNull($response->json('data.confirmed_at'));
+        $fresh = $rujukan->fresh();
+        $this->assertSame($admin->id, $fresh->confirmed_by);
+        $this->assertTrue($fresh->confirmed_at->equalTo(now()));
+    }
+
+    public function test_pembatalan_juga_mencatat_waktu_dan_pelaku(): void
+    {
+        Notification::fake();
+        $pj = $this->makeUser('pj_prolanis', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA);
+
+        Sanctum::actingAs($pj);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/konfirmasi", ['status' => 'dibatalkan']);
+
+        $response->assertOk();
+        $this->assertSame($pj->id, $response->json('data.confirmed_by.id'));
+        $this->assertNotNull($response->json('data.confirmed_at'));
+    }
+
+    // ---- PATCH /rujukan/{id}/tindakan-lanjutan ----
+
+    public function test_admin_puskesmas_berhasil_input_tindakan_lanjutan_setelah_dikonfirmasi(): void
+    {
+        Notification::fake();
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA, ['rujukan_status' => 'dikonfirmasi']);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/tindakan-lanjutan", [
+            'tindakan_puskesmas' => ['edukasi', 'obat_tambahan'],
+            'catatan' => 'Tekanan darah terkontrol, diberi edukasi pola makan.',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame(['edukasi', 'obat_tambahan'], $response->json('data.tindakan_puskesmas'));
+        $this->assertSame('Tekanan darah terkontrol, diberi edukasi pola makan.', $response->json('data.catatan_tindakan_puskesmas'));
+        $this->assertSame($admin->id, $response->json('data.tindakan_puskesmas_by.id'));
+        $this->assertNotNull($response->json('data.tindakan_puskesmas_at'));
+
+        $fresh = $rujukan->fresh();
+        $this->assertSame(['edukasi', 'obat_tambahan'], $fresh->tindakan_puskesmas);
+        $this->assertSame($admin->id, $fresh->tindakan_puskesmas_by);
+    }
+
+    public function test_tindakan_lanjutan_ditolak_kalau_belum_dikonfirmasi(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA); // masih menunggu_konfirmasi
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/tindakan-lanjutan", [
+            'tindakan_puskesmas' => ['rawat_inap'],
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertNull($rujukan->fresh()->tindakan_puskesmas);
+    }
+
+    public function test_tindakan_lanjutan_ditolak_kalau_rujukan_dibatalkan(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA, ['rujukan_status' => 'dibatalkan']);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/tindakan-lanjutan", [
+            'tindakan_puskesmas' => ['rawat_inap'],
+        ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_tindakan_lanjutan_admin_beda_puskesmas_ditolak_403(): void
+    {
+        $adminB = $this->makeUser('admin_puskesmas', $this->puskesmasB);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA, ['rujukan_status' => 'dikonfirmasi']);
+
+        Sanctum::actingAs($adminB);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/tindakan-lanjutan", [
+            'tindakan_puskesmas' => ['rawat_inap'],
+        ]);
+
+        $response->assertStatus(403);
+    }
+
+    public function test_tindakan_lanjutan_nilai_tidak_valid_ditolak_422(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA, ['rujukan_status' => 'dikonfirmasi']);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/tindakan-lanjutan", [
+            'tindakan_puskesmas' => ['ngasal'],
+        ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_tindakan_lanjutan_boleh_diisi_ulang_menimpa_yang_lama(): void
+    {
+        // Permintaan user: diagnosa awal bisa berubah setelah observasi lanjut -- admin harus
+        // bisa mengoreksi, bukan ditolak krn "sudah pernah diisi".
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $rujukan = $this->makeRujukan($this->kaderA, $this->puskesmasA, [
+            'rujukan_status' => 'dikonfirmasi',
+            'tindakan_puskesmas' => ['edukasi'],
+            'catatan_tindakan_puskesmas' => 'Catatan awal.',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->patchJson("/api/v1/rujukan/{$rujukan->id}/tindakan-lanjutan", [
+            'tindakan_puskesmas' => ['rawat_inap'],
+            'catatan' => 'Dirujuk rawat inap setelah observasi.',
+        ]);
+
+        $response->assertOk();
+        $this->assertSame(['rawat_inap'], $rujukan->fresh()->tindakan_puskesmas);
+        $this->assertSame('Dirujuk rawat inap setelah observasi.', $rujukan->fresh()->catatan_tindakan_puskesmas);
+    }
 }

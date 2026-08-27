@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Visit\ConfirmRujukanRequest;
+use App\Http\Requests\Visit\InputTindakanLanjutanRujukanRequest;
 use App\Http\Resources\RujukanResource;
 use App\Models\VisitReport;
 use App\Services\Visit\RujukanService;
@@ -27,7 +28,7 @@ class RujukanController extends Controller
         $this->authorize('viewAnyRujukan', VisitReport::class);
 
         $paginator = $this->service->scopedQuery($request->user())
-            ->with(['assignment.patient', 'assignment.kader.user', 'assignment.kader.puskesmas', 'assignment.tenagaKesehatan.user', 'assignment.tenagaKesehatan.puskesmas'])
+            ->with(['assignment.patient', 'assignment.kader.user', 'assignment.kader.puskesmas', 'assignment.tenagaKesehatan.user', 'assignment.tenagaKesehatan.puskesmas', 'confirmedBy', 'tindakanPuskesmasBy'])
             ->when(
                 $request->filled('rujukan_status'),
                 fn ($query) => $query->where('rujukan_status', $request->string('rujukan_status'))
@@ -53,9 +54,29 @@ class RujukanController extends Controller
     {
         $this->authorize('confirmRujukan', $visitReport);
 
-        $report = $this->service->konfirmasi($visitReport, $request->validated('status'));
-        $report->load(['assignment.patient', 'assignment.kader.user', 'assignment.kader.puskesmas', 'assignment.tenagaKesehatan.user', 'assignment.tenagaKesehatan.puskesmas']);
+        $report = $this->service->konfirmasi($visitReport, $request->validated('status'), $request->user());
+        $report->load(['assignment.patient', 'assignment.kader.user', 'assignment.kader.puskesmas', 'assignment.tenagaKesehatan.user', 'assignment.tenagaKesehatan.puskesmas', 'confirmedBy', 'tindakanPuskesmasBy']);
 
         return ApiResponse::success(new RujukanResource($report), 'Status rujukan berhasil diperbarui');
+    }
+
+    /**
+     * Tindak lanjut puskesmas SETELAH pasien dikonfirmasi datang (permintaan user) -- rawat
+     * inap/edukasi/obat tambahan/dst + catatan hasil diagnosa. Gerbang sama dgn konfirmasi()
+     * (VisitReportPolicy::confirmRujukan) -- aktor & scope puskesmas identik.
+     */
+    public function tindakanLanjutan(InputTindakanLanjutanRujukanRequest $request, VisitReport $visitReport): JsonResponse
+    {
+        $this->authorize('confirmRujukan', $visitReport);
+
+        $report = $this->service->inputTindakanLanjutan(
+            $visitReport,
+            $request->validated('tindakan_puskesmas'),
+            $request->validated('catatan'),
+            $request->user(),
+        );
+        $report->load(['assignment.patient', 'assignment.kader.user', 'assignment.kader.puskesmas', 'assignment.tenagaKesehatan.user', 'assignment.tenagaKesehatan.puskesmas', 'confirmedBy', 'tindakanPuskesmasBy']);
+
+        return ApiResponse::success(new RujukanResource($report), 'Tindak lanjut berhasil disimpan');
     }
 }
