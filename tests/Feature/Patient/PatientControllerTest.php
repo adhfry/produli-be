@@ -12,6 +12,7 @@ use App\Models\Puskesmas;
 use App\Models\RiskClassification;
 use App\Models\User;
 use App\Models\VisitAssignment;
+use App\Models\VisitReport;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
@@ -59,6 +60,62 @@ class PatientControllerTest extends TestCase
             'puskesmas_id' => $puskesmas->id,
             'wilayah_status' => 'unknown',
         ], $overrides));
+    }
+
+    public function test_index_menyertakan_ringkasan_kunjungan_gabungan_kader_dan_nakes(): void
+    {
+        // Permintaan user -- kolom "Nx dikunjungi" + tooltip riwayat, gabungan kader & nakes.
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        $kaderUser = User::factory()->create(['puskesmas_id' => $this->puskesmasA->id, 'name' => 'Bu Siti']);
+        $kaderUser->assignRole('kader');
+        $kader = Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true]);
+
+        $assignment1 = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $kader->id, 'scheduled_date' => now()->toDateString(),
+            'status' => 'completed', 'priority' => 'sedang', 'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitReport::create([
+            'assignment_id' => $assignment1->id, 'kondisi' => 'Baik', 'photo_path' => 'x.jpg',
+            'gps_lat' => -7.0, 'gps_lng' => 113.8, 'geo_status' => 'verified', 'sync_status' => 'synced',
+        ]);
+
+        $assignment2 = VisitAssignment::create([
+            'patient_id' => $patient->id, 'kader_id' => $kader->id, 'scheduled_date' => now()->subDays(30)->toDateString(),
+            'status' => 'completed', 'priority' => 'sedang', 'puskesmas_id_snapshot' => $this->puskesmasA->id,
+        ]);
+        VisitReport::create([
+            'assignment_id' => $assignment2->id, 'kondisi' => 'Baik', 'photo_path' => 'x.jpg',
+            'gps_lat' => -7.0, 'gps_lng' => 113.8, 'geo_status' => 'verified', 'sync_status' => 'synced',
+            'created_at' => now()->subDays(30),
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/patients');
+
+        $response->assertOk();
+        $row = collect($response->json('data.items'))->firstWhere('id', $patient->id);
+        $this->assertSame(2, $row['visit_count']);
+        $this->assertCount(2, $row['visits']);
+        $this->assertSame('kader', $row['visits'][0]['tipe']);
+        $this->assertSame('Bu Siti', $row['visits'][0]['nama']);
+    }
+
+    public function test_index_pasien_tanpa_kunjungan_visit_count_nol(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $this->makePatient($this->puskesmasA, 1);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/patients');
+
+        $response->assertOk();
+        $row = collect($response->json('data.items'))->first();
+        $this->assertSame(0, $row['visit_count']);
+        $this->assertSame([], $row['visits']);
     }
 
     public function test_admin_puskesmas_hanya_melihat_pasien_puskesmas_sendiri(): void

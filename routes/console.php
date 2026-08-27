@@ -27,3 +27,9 @@ Schedule::command('produli:notify-puskesmas-visit-summary')->dailyAt('16:00');
 // Kadensi kunjungan berulang (revisi Bu Kadis) -- sekali sehari cukup, tidak clock-sensitive
 // dalam hari seperti reminder H-1/hari-H di atas (lihat CareAssignmentCadenceService).
 Schedule::command('produli:generate-care-visits')->dailyAt('03:00');
+
+// Penjadwalan kegiatan Prolanis (permintaan user) -- generate DULUAN (04:00) baru kirim
+// reminder (07:00, setelah reminder kunjungan kader jam 06:00 di atas selesai) supaya jadwal
+// yang direminder sudah mutakhir dari data lab semalam.
+Schedule::command('produli:generate-prolanis-schedules')->dailyAt('04:00');
+Schedule::command('produli:notify-prolanis-schedule-reminders')->dailyAt('07:00');

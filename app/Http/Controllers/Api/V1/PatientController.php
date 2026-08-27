@@ -16,6 +16,7 @@ use App\Models\Kecamatan;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
+use App\Models\VisitReport;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
@@ -82,6 +83,25 @@ class PatientController extends Controller
                 $patient->setRelation('periodRiskClassification', $periodClassifications->get($patient->id));
             });
         }
+
+        // Ringkasan jumlah & riwayat kunjungan (permintaan user, kolom "Nx dikunjungi" + tooltip
+        // list tanggal/pelapor) -- gabungan kader DAN tenaga_kesehatan (mutually exclusive per
+        // assignment). "Dikunjungi" = laporan kunjungan BENAR-BENAR disubmit (VisitReport ada),
+        // BUKAN sekadar ditugaskan (assignment bisa pending/cancelled tanpa laporan) -- waktunya
+        // report.created_at (submit sesungguhnya), SAMA prinsipnya dgn pola yang sudah dipakai
+        // "Terakhir dikunjungi" di dashboard/kunjungan/index.vue. Query batch 1x utk SELURUH
+        // pasien di halaman ini (bukan N+1 per baris) -- daftar pasien bisa ratusan/ribuan baris.
+        $visitPatientIds = $paginator->getCollection()->pluck('id');
+        $visitsByPatient = VisitReport::query()
+            ->whereHas('assignment', fn ($q) => $q->whereIn('patient_id', $visitPatientIds))
+            ->with(['assignment:id,patient_id,kader_id,tenaga_kesehatan_id', 'assignment.kader.user:id,name', 'assignment.tenagaKesehatan.user:id,name'])
+            ->orderByDesc('created_at')
+            ->get()
+            ->groupBy(fn (VisitReport $r) => $r->assignment->patient_id);
+
+        $paginator->getCollection()->each(function (PatientsCache $patient) use ($visitsByPatient) {
+            $patient->setRelation('visitHistorySummary', $visitsByPatient->get($patient->id, collect()));
+        });
 
         return ApiResponse::success([
             'items' => PatientResource::collection($paginator),

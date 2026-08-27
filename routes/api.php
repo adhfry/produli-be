@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\KecamatanController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PatientController;
 use App\Http\Controllers\Api\V1\PuskesmasController;
+use App\Http\Controllers\Api\V1\ProlanisScheduleController;
 use App\Http\Controllers\Api\V1\RealtimeController;
 use App\Http\Controllers\Api\V1\RujukanController;
 use App\Http\Controllers\Api\V1\SilakesSyncController;
@@ -190,6 +191,10 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('rujukan', [RujukanController::class, 'index']);
     Route::patch('rujukan/{visitReport}/konfirmasi', [RujukanController::class, 'konfirmasi']);
     Route::patch('rujukan/{visitReport}/tindakan-lanjutan', [RujukanController::class, 'tindakanLanjutan']);
+
+    Route::get('jadwal-prolanis', [ProlanisScheduleController::class, 'index']);
+    Route::patch('jadwal-prolanis/{prolanisSchedule}/reschedule', [ProlanisScheduleController::class, 'reschedule']);
+    Route::patch('jadwal-prolanis/{prolanisSchedule}/status', [ProlanisScheduleController::class, 'updateStatus']);
 
     Route::get('staff', [StaffController::class, 'index']);
     Route::post('staff', [StaffController::class, 'store']);

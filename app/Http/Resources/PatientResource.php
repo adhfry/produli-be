@@ -106,6 +106,20 @@ class PatientResource extends JsonResource
                 fn () => CareAssignmentResource::collection($this->activeCareAssignments),
             ),
             'last_synced_at' => $this->last_synced_at?->toIso8601String(),
+            // Ringkasan kunjungan (permintaan user, kolom "Nx dikunjungi" + tooltip) -- gabungan
+            // kader & tenaga_kesehatan, lihat PatientController::index(). whenLoaded() krn
+            // visitHistorySummary itu pseudo-relation (setRelation manual, bukan Eloquent
+            // relationship sungguhan) -- pola SAMA PERSIS periodRiskClassification di atas.
+            'visit_count' => $this->whenLoaded('visitHistorySummary', fn () => $this->visitHistorySummary->count()),
+            'visits' => $this->whenLoaded('visitHistorySummary', fn () => $this->visitHistorySummary->map(function ($report) {
+                $worker = $report->assignment->kader ?? $report->assignment->tenagaKesehatan;
+
+                return [
+                    'tanggal' => $report->created_at?->toIso8601String(),
+                    'nama' => $worker?->user?->name,
+                    'tipe' => $report->assignment->kader_id !== null ? 'kader' : 'nakes',
+                ];
+            })->values()),
         ];
     }
 }

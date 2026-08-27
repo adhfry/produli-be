@@ -165,6 +165,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Penjadwalan Kegiatan Prolanis (permintaan user)
+    |--------------------------------------------------------------------------
+    |
+    | Jadwal periksa Prolanis berikutnya dihitung dari lab_results_cache.tanggal_periksa
+    | TERBARU pasien (BUKAN created_at) + interval sesuai jenis_prolanis -- lihat
+    | ProlanisScheduleService::computeScheduledDate().
+    |
+    */
+    'prolanis_schedule' => [
+        'dm_interval_months' => (int) env('PRODULI_PROLANIS_DM_INTERVAL_MONTHS', 3),
+        'ht_interval_months' => (int) env('PRODULI_PROLANIS_HT_INTERVAL_MONTHS', 6),
+        // H-berapa hari sebelum scheduled_date puskesmas diberi notifikasi (permintaan user
+        // "H-1 minggu") -- 7 hari, dibuat konfigurabel spt reminder kunjungan yang sudah ada.
+        'reminder_days_before' => (int) env('PRODULI_PROLANIS_REMINDER_DAYS_BEFORE', 7),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Smart Early Detection (revisi Bu Kadis)
     |--------------------------------------------------------------------------
     |
