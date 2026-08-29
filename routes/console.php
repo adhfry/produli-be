@@ -33,3 +33,10 @@ Schedule::command('produli:generate-care-visits')->dailyAt('03:00');
 // yang direminder sudah mutakhir dari data lab semalam.
 Schedule::command('produli:generate-prolanis-schedules')->dailyAt('04:00');
 Schedule::command('produli:notify-prolanis-schedule-reminders')->dailyAt('07:00');
+
+// Modul "Kirim Data Prolanis ke Labkesda Sumenep" (Fase D) -- cek konfirmasi Labkesda tiap 5
+// menit (BUKAN dailyAt seperti job di atas -- ini alur operasional SAME-DAY, puskesmas/kurir
+// menunggu notifikasi "sampel dikonfirmasi" dalam hitungan menit, bukan besok).
+// withoutOverlapping() -- run berikutnya bisa jatuh sebelum yang sebelumnya selesai kalau
+// SiLAKES lambat merespons banyak batch sekaligus.
+Schedule::command('produli:poll-prolanis-delivery-confirmation')->everyFiveMinutes()->withoutOverlapping();

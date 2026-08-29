@@ -10,8 +10,11 @@ use App\Http\Controllers\Api\V1\KaderController;
 use App\Http\Controllers\Api\V1\KecamatanController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PatientController;
-use App\Http\Controllers\Api\V1\PuskesmasController;
+use App\Http\Controllers\Api\V1\PengantarSampelController;
+use App\Http\Controllers\Api\V1\PengirimanSampelController;
+use App\Http\Controllers\Api\V1\PengirimanSampelKurirController;
 use App\Http\Controllers\Api\V1\ProlanisScheduleController;
+use App\Http\Controllers\Api\V1\PuskesmasController;
 use App\Http\Controllers\Api\V1\RealtimeController;
 use App\Http\Controllers\Api\V1\RujukanController;
 use App\Http\Controllers\Api\V1\SilakesSyncController;
@@ -109,6 +112,13 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('patients/{patient}/lab-results', [PatientController::class, 'labResults']);
     // Fitur "Bandingkan Periode" (permintaan user) -- lihat docblock labResultsHistory().
     Route::get('patients/{patient}/lab-results-history', [PatientController::class, 'labResultsHistory']);
+    // Modul "Kirim Data Prolanis ke Labkesda Sumenep" (permintaan user 2026-08-29) -- daftar +
+    // unduh PDF hasil pemeriksaan Prolanis, di-layer lewat API PRODULI sendiri (bukan browser
+    // puskesmas langsung ke SiLAKES) demi keamanan, lihat docblock
+    // PatientController::labDocuments()/labDocumentPdf().
+    Route::get('patients/{patient}/lab-documents', [PatientController::class, 'labDocuments']);
+    Route::get('patients/{patient}/lab-documents/{suratHasilLabId}/pdf', [PatientController::class, 'labDocumentPdf'])
+        ->whereNumber('suratHasilLabId');
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 
@@ -155,6 +165,45 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
         Route::patch('{tenagaKesehatan}', [TenagaKesehatanController::class, 'update']);
         Route::delete('{tenagaKesehatan}', [TenagaKesehatanController::class, 'destroy']);
         Route::post('{tenagaKesehatan}/reset-password', [TenagaKesehatanController::class, 'resetPassword']);
+    });
+
+    // Modul Kirim Data Prolanis ke Labkesda, Fase A -- mirror persis grup tenaga-kesehatan di
+    // atas, dipangkas (belum ada profile/update-requests, kurir belum punya field self-service).
+    Route::prefix('pengantar-sampel')->group(function () {
+        Route::get('/', [PengantarSampelController::class, 'index']);
+        Route::post('/', [PengantarSampelController::class, 'store']);
+        Route::patch('{pengantarSampel}/status', [PengantarSampelController::class, 'setStatus']);
+        Route::patch('{pengantarSampel}', [PengantarSampelController::class, 'update']);
+        Route::delete('{pengantarSampel}', [PengantarSampelController::class, 'destroy']);
+        Route::post('{pengantarSampel}/reset-password', [PengantarSampelController::class, 'resetPassword']);
+    });
+
+    // Modul Kirim Data Prolanis ke Labkesda, Fase B -- penyusun antrian (murni dalam PRODULI,
+    // belum ada pengiriman sungguhan ke SiLAKES, itu Fase D).
+    Route::get('pengiriman-sampel/patient-candidates', [PengirimanSampelController::class, 'patientCandidates']);
+    // Fase C -- daftar tugas kurir sendiri, SEBELUM grup {pengirimanSampel} di bawah (mirror
+    // pola patient-candidates di atas -- kalau tidak, route-model-binding coba cocokkan 'mine'
+    // sebagai id).
+    Route::get('pengiriman-sampel/mine', [PengirimanSampelKurirController::class, 'myAssignments']);
+    Route::prefix('pengiriman-sampel')->group(function () {
+        Route::get('/', [PengirimanSampelController::class, 'index']);
+        Route::post('/', [PengirimanSampelController::class, 'store']);
+        Route::get('{pengirimanSampel}', [PengirimanSampelController::class, 'show']);
+        Route::get('{pengirimanSampel}/export-pdf', [PengirimanSampelController::class, 'exportPdf']);
+        Route::post('{pengirimanSampel}/pasien', [PengirimanSampelController::class, 'addPatient']);
+        Route::delete('{pengirimanSampel}/pasien/{pasien}', [PengirimanSampelController::class, 'removePatient']);
+        Route::post('{pengirimanSampel}/reorder', [PengirimanSampelController::class, 'reorder']);
+        Route::post('{pengirimanSampel}/lock', [PengirimanSampelController::class, 'lock']);
+        Route::post('{pengirimanSampel}/unlock', [PengirimanSampelController::class, 'unlock']);
+        Route::post('{pengirimanSampel}/cancel', [PengirimanSampelController::class, 'cancel']);
+        // Fase C -- kurir, GPS, foto.
+        Route::post('{pengirimanSampel}/assign-courier', [PengirimanSampelController::class, 'assignCourier']);
+        Route::get('{pengirimanSampel}/lokasi', [PengirimanSampelController::class, 'lokasi']);
+        // Sisi kurir sendiri (PengirimanSampelPolicy::isAssignedCourier, lebih ketat dari
+        // sharesPuskesmas() di atas) -- lihat docblock PengirimanSampelKurirController.
+        Route::post('{pengirimanSampel}/start-otw', [PengirimanSampelKurirController::class, 'startOtw']);
+        Route::post('{pengirimanSampel}/heartbeat', [PengirimanSampelKurirController::class, 'heartbeat']);
+        Route::post('{pengirimanSampel}/confirm-arrival', [PengirimanSampelKurirController::class, 'confirmArrival']);
     });
 
     Route::post('care-assignments', [CareAssignmentController::class, 'store']);

@@ -16,6 +16,7 @@ use App\Models\Kecamatan;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
+use App\Models\RiskClassification;
 use App\Models\VisitReport;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
@@ -30,6 +31,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -389,8 +391,8 @@ class PatientController extends Controller
      * pernah punya lab sama sekali) SENGAJA tidak ikut dedup -- tidak ada tanggal nyata utk
      * dikelompokkan, tiap baris tetap baris sendiri seperti sebelumnya.
      *
-     * @param  \Illuminate\Database\Eloquent\Collection<int, \App\Models\RiskClassification>  $history
-     * @return \Illuminate\Database\Eloquent\Collection<int, \App\Models\RiskClassification>
+     * @param  Collection<int, RiskClassification>  $history
+     * @return Collection<int, RiskClassification>
      */
     private function dedupeSameAssessmentDate($history)
     {
@@ -625,5 +627,45 @@ class PatientController extends Controller
         $body = $client->getPembaruanLapanganHistory($patient->external_patient_id);
 
         return ApiResponse::success($body['data'] ?? []);
+    }
+
+    /**
+     * Daftar hasil pemeriksaan Prolanis pasien ini yang SUDAH SIAP DIUNDUH (completed+approved
+     * di SiLAKES) -- modul "Kirim Data Prolanis ke Labkesda Sumenep" (permintaan user
+     * 2026-08-29): "setiap puskesmas juga bisa mendownload dan melihat hasil pemeriksaan
+     * (terhubung ke api labkesda) ... tinggal layering aja di balik itu". Gerbang akses SAMA
+     * dengan labResults()/updateHistory() (PatientsCachePolicy::view, scoped ke puskesmas
+     * sendiri) -- SENGAJA tidak ada endpoint terpisah tanpa scope, satu puskesmas TIDAK BOLEH
+     * melihat daftar dokumen pasien puskesmas lain lewat jalur ini.
+     */
+    public function labDocuments(PatientsCache $patient, SilakesApiClient $client): JsonResponse
+    {
+        $this->authorize('view', $patient);
+
+        $body = $client->getPatientLabDocuments($patient->external_patient_id);
+
+        return ApiResponse::success($body['data'] ?? []);
+    }
+
+    /**
+     * Streaming PDF hasil pemeriksaan Prolanis -- PRODULI sendiri yang memanggil SiLAKES di sini
+     * (backend-ke-backend, ditandatangani HMAC lewat SilakesApiClient), browser puskesmas TIDAK
+     * PERNAH memanggil SiLAKES langsung (permintaan keamanan eksplisit user). $suratHasilLabId
+     * TIDAK divalidasi kepemilikannya terhadap $patient di sisi PRODULI (PRODULI tidak menyimpan
+     * salinan surat_hasil_labs) -- SiLAKES sendiri yang jadi sumber kebenaran, tapi gerbang
+     * `authorize('view', $patient)` di sini tetap menegakkan "hanya puskesmas pasien ini yang
+     * boleh memakai endpoint ini", membatasi permukaan serangan ID-guessing ke lingkup 1
+     * puskesmas per user.
+     */
+    public function labDocumentPdf(PatientsCache $patient, int $suratHasilLabId, SilakesApiClient $client): Response
+    {
+        $this->authorize('view', $patient);
+
+        $pdf = $client->getLabResultPdf($suratHasilLabId);
+
+        return response($pdf['content'], 200, [
+            'Content-Type' => $pdf['content_type'],
+            'Content-Disposition' => 'inline; filename="'.($pdf['filename'] ?? "hasil-pemeriksaan-{$suratHasilLabId}.pdf").'"',
+        ]);
     }
 }

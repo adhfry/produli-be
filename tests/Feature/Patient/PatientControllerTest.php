@@ -3,6 +3,7 @@
 namespace Tests\Feature\Patient;
 
 use App\Http\Controllers\Api\V1\PatientController;
+use App\Models\CareAssignment;
 use App\Models\Kabupaten;
 use App\Models\Kader;
 use App\Models\Kecamatan;
@@ -10,12 +11,14 @@ use App\Models\LabResultCache;
 use App\Models\PatientsCache;
 use App\Models\Puskesmas;
 use App\Models\RiskClassification;
+use App\Models\RiskThreshold;
 use App\Models\User;
 use App\Models\VisitAssignment;
 use App\Models\VisitReport;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -772,7 +775,7 @@ class PatientControllerTest extends TestCase
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
         $patient = $this->makePatient($this->puskesmasA, 1);
 
-        \App\Models\RiskThreshold::create([
+        RiskThreshold::create([
             'parameter' => 'Cholesterol', 'level' => 'sedang', 'operator' => '>',
             'is_direct_classifier' => false, 'threshold_min' => 200, 'is_active' => true,
         ]);
@@ -919,8 +922,8 @@ class PatientControllerTest extends TestCase
         $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
         $patient = $this->makePatient($this->puskesmasA, 1);
         $kaderUser = User::factory()->create(['name' => 'Bu Kader Siti']);
-        $kader = \App\Models\Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true]);
-        \App\Models\CareAssignment::create([
+        $kader = Kader::create(['user_id' => $kaderUser->id, 'puskesmas_id' => $this->puskesmasA->id, 'status_aktif' => true]);
+        CareAssignment::create([
             'patient_id' => $patient->id, 'worker_type' => 'kader', 'kader_id' => $kader->id,
             'puskesmas_id_snapshot' => $this->puskesmasA->id, 'status' => 'active',
             'last_triggered_at' => '2026-08-01',
@@ -943,5 +946,70 @@ class PatientControllerTest extends TestCase
         $response = $this->getJson('/api/v1/patients');
 
         $response->assertStatus(401);
+    }
+
+    // ---- Modul "Kirim Data Prolanis ke Labkesda Sumenep" (permintaan user 2026-08-29): PDF-proxy
+    // -- puskesmas mengunduh hasil pemeriksaan Prolanis lewat API PRODULI sendiri, yang me-layer
+    // panggilan ke SiLAKES di backend (browser puskesmas TIDAK PERNAH memanggil SiLAKES langsung).
+
+    public function test_lab_documents_mengembalikan_daftar_dari_silakes(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        Http::fake(['*' => Http::response(['status' => 'success', 'message' => 'ok', 'data' => [
+            ['surat_hasil_lab_id' => 9, 'tanggal' => '2026-08-01', 'jenis_spesimen' => 'Darah dan Urine', 'is_kunjungan_prolanis' => true, 'tgl_konfirmasi' => '2026-08-02'],
+        ]], 200)]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patient->id}/lab-documents");
+
+        $response->assertOk();
+        $this->assertSame(9, $response->json('data.0.surat_hasil_lab_id'));
+        Http::assertSent(fn ($request) => str_contains($request->url(), "/api/v1/integration/patients/{$patient->external_patient_id}/lab-documents"));
+    }
+
+    public function test_lab_documents_pasien_di_luar_scope_ditolak_403(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson("/api/v1/patients/{$patientB->id}/lab-documents");
+
+        $response->assertStatus(403);
+    }
+
+    public function test_lab_document_pdf_meneruskan_byte_pdf_dari_silakes(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patient = $this->makePatient($this->puskesmasA, 1);
+
+        Http::fake(['*' => Http::response('%PDF-1.4 isi-biner-palsu', 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="hasil-9.pdf"',
+        ])]);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->get("/api/v1/patients/{$patient->id}/lab-documents/9/pdf");
+
+        $response->assertOk();
+        $this->assertSame('%PDF-1.4 isi-biner-palsu', $response->getContent());
+        $this->assertStringContainsString('application/pdf', $response->headers->get('Content-Type'));
+    }
+
+    public function test_lab_document_pdf_pasien_di_luar_scope_ditolak_403(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $patientB = $this->makePatient($this->puskesmasB, 2);
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->get("/api/v1/patients/{$patientB->id}/lab-documents/9/pdf");
+
+        $response->assertStatus(403);
     }
 }

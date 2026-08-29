@@ -33,4 +33,13 @@ class DataScope
     {
         return $user->hasRole('tenaga_kesehatan') && ! $user->hasAnyRole(['admin_puskesmas', 'pj_prolanis']);
     }
+
+    /**
+     * Pengantar Sampel MURNI -- simetris dengan isKaderOnly()/isTenagaKesehatanOnly(), lihat
+     * komentar di sana.
+     */
+    public static function isPengantarSampelOnly(User $user): bool
+    {
+        return $user->hasRole('pengantar_sampel') && ! $user->hasAnyRole(['admin_puskesmas', 'pj_prolanis']);
+    }
 }

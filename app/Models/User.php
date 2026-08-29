@@ -145,6 +145,11 @@ class User extends Authenticatable
         return $this->hasOne(TenagaKesehatan::class);
     }
 
+    public function pengantarSampel(): HasOne
+    {
+        return $this->hasOne(PengantarSampel::class);
+    }
+
     public function fcmTokens(): HasMany
     {
         return $this->hasMany(FcmToken::class);

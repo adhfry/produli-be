@@ -173,4 +173,70 @@ class SilakesApiClientTest extends TestCase
 
         Http::assertSentCount(1);
     }
+
+    // ---- Fase D (modul "Kirim Data Prolanis ke Labkesda Sumenep") ----
+    // postProlanisDelivery()/getProlanisDeliveryStatus() cuma pemetik path tipis di atas
+    // post()/get() yang sudah diuji lengkap (HMAC/retry/dst) di atas -- cukup pastikan path &
+    // pemakaian write_token/read token-nya benar, tidak perlu mengulang semua skenario HMAC.
+
+    public function test_post_prolanis_delivery_ke_path_yang_benar_pakai_write_token(): void
+    {
+        Http::fake(['*' => Http::response(['status' => 'success', 'message' => 'ok', 'data' => ['silakes_delivery_id' => 1, 'items' => []]], 200)]);
+
+        $this->makeClient()->postProlanisDelivery(['produli_pengiriman_sampel_id' => 1]);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/api/v1/integration/prolanis-deliveries')
+            && $request->header('Authorization')[0] === 'Bearer '.self::WRITE_TOKEN);
+    }
+
+    public function test_get_prolanis_delivery_status_ke_path_yang_benar_pakai_read_token(): void
+    {
+        Http::fake(['*' => Http::response(['status' => 'success', 'message' => 'ok', 'data' => ['status' => 'diterima']], 200)]);
+
+        $this->makeClient()->getProlanisDeliveryStatus(42);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/api/v1/integration/prolanis-deliveries/42')
+            && $request->header('Authorization')[0] === 'Bearer '.self::READ_TOKEN);
+    }
+
+    // ---- PDF-proxy (permintaan user 2026-08-29): "puskesmas juga bisa mendownload dan melihat
+    // hasil pemeriksaan ... layering di balik itu mendapatkan data PDF pemeriksaan dari silakes" ----
+
+    public function test_get_patient_lab_documents_ke_path_yang_benar_pakai_read_token(): void
+    {
+        Http::fake(['*' => Http::response(['status' => 'success', 'message' => 'ok', 'data' => [
+            ['surat_hasil_lab_id' => 5, 'tanggal' => '2026-08-01', 'jenis_spesimen' => 'Darah dan Urine', 'is_kunjungan_prolanis' => true, 'tgl_konfirmasi' => '2026-08-02'],
+        ]], 200)]);
+
+        $body = $this->makeClient()->getPatientLabDocuments(777);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/api/v1/integration/patients/777/lab-documents')
+            && $request->header('Authorization')[0] === 'Bearer '.self::READ_TOKEN);
+        $this->assertSame(5, $body['data'][0]['surat_hasil_lab_id']);
+    }
+
+    public function test_get_lab_result_pdf_mengembalikan_byte_mentah_bukan_decode_json(): void
+    {
+        Http::fake(['*' => Http::response('%PDF-1.4 isi-biner-palsu', 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="hasil-5.pdf"',
+        ])]);
+
+        $pdf = $this->makeClient()->getLabResultPdf(5);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/api/v1/integration/surat-hasil-labs/5/pdf')
+            && $request->header('Authorization')[0] === 'Bearer '.self::READ_TOKEN);
+        $this->assertSame('%PDF-1.4 isi-biner-palsu', $pdf['content']);
+        $this->assertSame('application/pdf', $pdf['content_type']);
+        $this->assertSame('hasil-5.pdf', $pdf['filename']);
+    }
+
+    public function test_get_lab_result_pdf_lempar_exception_kalau_gagal(): void
+    {
+        Http::fake(['*' => Http::response(['status' => 'error', 'message' => 'not found'], 404)]);
+
+        $this->expectException(SilakesApiException::class);
+
+        $this->makeClient()->getLabResultPdf(999);
+    }
 }

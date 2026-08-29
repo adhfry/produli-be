@@ -26,6 +26,7 @@ class SilakesApiClient
     private const RETRY_TIMES = 3;
 
     private const RETRY_BASE_DELAY_MS = 1000;
+
     protected string $baseUrl;
 
     protected string $token;
@@ -63,10 +64,21 @@ class SilakesApiClient
      */
     public function get(string $path, array $query = []): array
     {
+        return $this->decode($path, $this->signedGet($path, $query));
+    }
+
+    /**
+     * Sama seperti get() (HMAC/retry identik), TAPI mengembalikan Response MENTAH -- dipakai
+     * getLabResultPdf() yang perlu STREAM byte PDF apa adanya, bukan decode sebagai envelope
+     * {status,message,data} JSON (isi respons SiLAKES di jalur ini memang bukan JSON sama
+     * sekali, langsung binary application/pdf).
+     */
+    private function signedGet(string $path, array $query = [], int $timeoutSeconds = 15): Response
+    {
         $timestamp = (string) time();
         $signature = hash_hmac('sha256', '.'.$timestamp, $this->signatureSecret);
 
-        $response = $this->withRetryOn429(
+        return $this->withRetryOn429(
             Http::baseUrl($this->baseUrl)
                 ->withToken($this->token)
                 ->withHeaders([
@@ -74,10 +86,8 @@ class SilakesApiClient
                     'X-Timestamp' => $timestamp,
                 ])
                 ->acceptJson()
-                ->timeout(15)
+                ->timeout($timeoutSeconds)
         )->get($path, $query);
-
-        return $this->decode($path, $response);
     }
 
     /**
@@ -256,5 +266,80 @@ class SilakesApiClient
     public function getPembaruanLapanganHistory(int $externalPatientId): array
     {
         return $this->get("/api/v1/integration/patients/{$externalPatientId}/pembaruan-lapangan");
+    }
+
+    /**
+     * POST /api/v1/integration/prolanis-deliveries — modul "Kirim Data Prolanis ke Labkesda
+     * Sumenep" (Fase D). Ability token BARU `integration:write-prolanis-queue`, tapi lewat
+     * $writeToken YANG SAMA (bukan token ketiga terpisah) -- lihat ManageProduliServiceAccount
+     * di sisi SiLAKES, token tulis PRODULI sekarang membawa 2 ability sekaligus.
+     *
+     * @return array{status: string, message: string, data: array{silakes_delivery_id: int, items: array}}
+     */
+    public function postProlanisDelivery(array $payload): array
+    {
+        return $this->post('/api/v1/integration/prolanis-deliveries', $payload);
+    }
+
+    /**
+     * GET /api/v1/integration/prolanis-deliveries/{produli_pengiriman_sampel_id} — dipoling
+     * PollProlanisDeliveryConfirmationCommand, BUKAN token tulis (baca token biasa) -- lihat
+     * ability integration:read-lab-results yang dipasang di route SiLAKES.
+     *
+     * `worksheet_status` di sini SELALU status Worksheet ASLI SiLAKES (draf/diajukan/disetujui/
+     * ditolak/revisi_diajukan/selesai, atau `null` kalau worksheet belum sungguh dibuat) --
+     * REVISI 2026-08-29, modul ini tidak lagi punya status buatan sendiri.
+     *
+     * @return array{status: string, message: string, data: array{worksheet_status: ?string, items: array}}
+     */
+    public function getProlanisDeliveryStatus(int $produliPengirimanSampelId): array
+    {
+        return $this->get("/api/v1/integration/prolanis-deliveries/{$produliPengirimanSampelId}");
+    }
+
+    /**
+     * GET /api/v1/integration/patients/{patient_id}/lab-documents — daftar hasil pemeriksaan
+     * SIAP DIUNDUH (completed+approved) milik satu pasien, dasar "riwayat hasil, unduh PDF" di
+     * halaman detail pasien PRODULI (permintaan user 2026-08-29). `$externalPatientId` =
+     * `patients_cache.external_patient_id`.
+     *
+     * @return array{status: string, message: string, data: array<int, array{surat_hasil_lab_id: int, tanggal: ?string, jenis_spesimen: ?string, is_kunjungan_prolanis: bool, tgl_konfirmasi: ?string}>}
+     */
+    public function getPatientLabDocuments(int $externalPatientId): array
+    {
+        return $this->get("/api/v1/integration/patients/{$externalPatientId}/lab-documents");
+    }
+
+    /**
+     * GET /api/v1/integration/surat-hasil-labs/{id}/pdf — STREAM byte PDF mentah (BUKAN
+     * envelope JSON, lihat docblock signedGet()). PRODULI memanggil ini dari BACKEND-nya
+     * sendiri (bukan browser puskesmas langsung ke SiLAKES, permintaan eksplisit user demi
+     * keamanan -- layering di belakang API PRODULI) lewat
+     * PatientController::downloadLabResultPdf(), lalu meneruskan body respons ini apa adanya.
+     *
+     * @return array{content: string, content_type: string, filename: ?string}
+     */
+    public function getLabResultPdf(int $suratHasilLabId): array
+    {
+        $response = $this->signedGet("/api/v1/integration/surat-hasil-labs/{$suratHasilLabId}/pdf", timeoutSeconds: 30);
+
+        if ($response->failed()) {
+            throw new SilakesApiException(
+                sprintf('Gagal mengunduh PDF hasil pemeriksaan %d dari SiLAKES (HTTP %d).', $suratHasilLabId, $response->status()),
+                $response->status(),
+            );
+        }
+
+        $contentDisposition = $response->header('Content-Disposition');
+        $filename = null;
+        if ($contentDisposition && preg_match('/filename="?([^"]+)"?/', $contentDisposition, $matches)) {
+            $filename = $matches[1];
+        }
+
+        return [
+            'content' => $response->body(),
+            'content_type' => $response->header('Content-Type') ?: 'application/pdf',
+            'filename' => $filename,
+        ];
     }
 }
