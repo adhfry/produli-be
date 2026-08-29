@@ -304,4 +304,70 @@ class PengirimanSampelControllerTest extends TestCase
 
         $this->postJson('/api/v1/pengiriman-sampel')->assertStatus(403);
     }
+
+    // ---- Filter super_admin (permintaan user -- lihat & filter antrian lintas puskesmas) ----
+
+    public function test_super_admin_melihat_semua_puskesmas_dan_boleh_filter_puskesmas_id(): void
+    {
+        $superAdmin = $this->makeUser('super_admin');
+        $adminA = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $adminB = $this->makeUser('admin_puskesmas', $this->puskesmasB);
+        $batchA = $this->makeBatch($this->puskesmasA, $adminA);
+        $batchB = $this->makeBatch($this->puskesmasB, $adminB);
+
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/pengiriman-sampel');
+        $response->assertOk();
+        $ids = collect($response->json('data.items'))->pluck('id')->sort()->values();
+        $this->assertEquals(collect([$batchA->id, $batchB->id])->sort()->values()->all(), $ids->all());
+
+        $filtered = $this->getJson('/api/v1/pengiriman-sampel?puskesmas_id='.$this->puskesmasB->id);
+        $filtered->assertOk();
+        $this->assertEquals([$batchB->id], collect($filtered->json('data.items'))->pluck('id')->all());
+    }
+
+    public function test_admin_puskesmas_mengirim_puskesmas_id_diabaikan_tetap_terkunci_sendiri(): void
+    {
+        $adminA = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $batchA = $this->makeBatch($this->puskesmasA, $adminA);
+        $adminB = $this->makeUser('admin_puskesmas', $this->puskesmasB);
+        $this->makeBatch($this->puskesmasB, $adminB);
+
+        Sanctum::actingAs($adminA);
+
+        $response = $this->getJson('/api/v1/pengiriman-sampel?puskesmas_id='.$this->puskesmasB->id);
+
+        $response->assertOk();
+        $this->assertEquals([$batchA->id], collect($response->json('data.items'))->pluck('id')->all());
+    }
+
+    public function test_index_boleh_difilter_rentang_tanggal_dibuat(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        // forceFill() (bukan update() biasa) -- created_at SENGAJA tidak ada di $fillable
+        // model (kolom timestamp yang harusnya diisi otomatis Eloquent), jadi update() massal
+        // diam-diam mengabaikannya. Di test ini kita perlu menimpanya secara eksplisit.
+        $lama = $this->makeBatch($this->puskesmasA, $admin);
+        $lama->forceFill(['created_at' => '2026-01-10 08:00:00'])->save();
+        $baru = $this->makeBatch($this->puskesmasA, $admin);
+        $baru->forceFill(['created_at' => '2026-08-20 08:00:00'])->save();
+
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/pengiriman-sampel?date_from=2026-08-01&date_to=2026-08-31');
+
+        $response->assertOk();
+        $this->assertEquals([$baru->id], collect($response->json('data.items'))->pluck('id')->all());
+    }
+
+    public function test_index_date_to_sebelum_date_from_ditolak_422(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/pengiriman-sampel?date_from=2026-08-20&date_to=2026-08-01');
+
+        $response->assertStatus(422);
+    }
 }

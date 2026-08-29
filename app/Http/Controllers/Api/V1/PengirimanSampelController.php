@@ -32,6 +32,14 @@ class PengirimanSampelController extends Controller
     {
         $this->authorize('viewAny', PengirimanSampel::class);
 
+        // Filter tanggal dibuat (permintaan user -- super_admin perlu menyisir antrian LINTAS
+        // puskesmas per tanggal, bukan cuma per status) -- format & validasi SAMA persis
+        // DashboardController::summary() supaya konsisten se-aplikasi.
+        $validated = $request->validate([
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
+        ]);
+
         $paginator = $this->service->scopedQuery($request->user())
             ->with(['puskesmas', 'dibuatOleh', 'pengantarSampel.user'])
             ->withCount('pasien')
@@ -42,6 +50,14 @@ class PengirimanSampelController extends Controller
             ->when(
                 $request->filled('status'),
                 fn ($query) => $query->where('status', $request->string('status'))
+            )
+            ->when(
+                isset($validated['date_from']),
+                fn ($query) => $query->whereDate('created_at', '>=', $validated['date_from'])
+            )
+            ->when(
+                isset($validated['date_to']),
+                fn ($query) => $query->whereDate('created_at', '<=', $validated['date_to'])
             )
             ->orderBy('created_at', 'desc')
             ->paginate($request->integer('per_page', 20));
