@@ -4,7 +4,6 @@ namespace App\Exports;
 
 use App\Models\PatientsCache;
 use App\Services\Patient\HasilPemeriksaanExportService;
-use App\Support\NikDisplay;
 use Illuminate\Database\Eloquent\Builder;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
@@ -41,12 +40,12 @@ class PatientsHasilExport implements FromQuery, ShouldAutoSize, WithChunkReading
 
     public function query(): Builder
     {
-        return $this->query->with(['desa', 'kecamatan', 'labResults']);
+        return $this->query->with(['desa', 'kecamatan', 'puskesmas', 'labResults']);
     }
 
     public function headings(): array
     {
-        return array_merge(['No', 'Nama', 'NIK', 'Desa / Kecamatan'], $this->parameters);
+        return array_merge(['No', 'Nama', 'FKTP', 'Desa / Kecamatan'], $this->parameters);
     }
 
     /**
@@ -63,7 +62,7 @@ class PatientsHasilExport implements FromQuery, ShouldAutoSize, WithChunkReading
         $row = [
             $this->rowNumber,
             $patient->nama,
-            NikDisplay::resolve($patient->nik),
+            $this->hasilExport->fktpLabel($patient),
             $this->hasilExport->kelurahanKecamatan($patient),
         ];
 
