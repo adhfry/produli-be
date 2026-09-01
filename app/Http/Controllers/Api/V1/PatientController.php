@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Exports\PatientsHasilExport;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\ListPatientsRequest;
 use App\Http\Requests\Patient\OverridePuskesmasRequest;
@@ -21,11 +22,13 @@ use App\Models\VisitReport;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
+use App\Services\Patient\HasilPemeriksaanExportService;
 use App\Services\Patient\PatientQueryService;
 use App\Services\Risk\RiskClassificationHistoryService;
 use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
 use App\Support\DataScope;
+use App\Support\NikDisplay;
 use App\Support\NikHasher;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -38,6 +41,8 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Maatwebsite\Excel\Facades\Excel;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
 
 class PatientController extends Controller
@@ -57,6 +62,7 @@ class PatientController extends Controller
     public function __construct(
         private readonly PatientQueryService $patientQuery,
         private readonly RiskClassificationHistoryService $riskHistory,
+        private readonly HasilPemeriksaanExportService $hasilExport,
     ) {}
 
     public function index(ListPatientsRequest $request): JsonResponse
@@ -330,8 +336,17 @@ class PatientController extends Controller
      */
     private function exportPdfFilename(Request $request): string
     {
-        $wilayahSegment = 'seluruh-wilayah';
+        return "data-pasien-prolanis-{$this->wilayahFilenameSegment($request)}-{$this->risikoFilenameSegment($request)}-".now()->format('Ymd-His').'.pdf';
+    }
 
+    /**
+     * Segmen "seluruh-wilayah" / "kecamatan-x" / slug nama puskesmas -- diekstrak dari
+     * exportPdfFilename() supaya exportHasilPdf()/exportHasilExcel() di bawah pakai aturan
+     * PERSIS SAMA tanpa duplikasi logic yang bisa drift. Gerbang wilayah SAMA persis
+     * applyFilters()/resolveExportFilterSummary() (puskesmas_id cuma berlaku utk super_admin).
+     */
+    private function wilayahFilenameSegment(Request $request): string
+    {
         if ($request->filled('puskesmas_id') && DataScope::isFullAccess($request->user())) {
             $puskesmas = Puskesmas::find($request->integer('puskesmas_id'));
 
@@ -339,21 +354,132 @@ class PatientController extends Controller
                 // puskesmas.nama SUDAH termasuk kata "Puskesmas " sendiri (lihat PuskesmasSeeder),
                 // jangan ditambah lagi -- beda dari kecamatan.nama di bawah yang polos tanpa
                 // prefix "Kecamatan ".
-                $wilayahSegment = Str::slug($puskesmas->nama);
+                return Str::slug($puskesmas->nama);
             }
         } elseif ($request->filled('kecamatan_id')) {
             $kecamatan = Kecamatan::find($request->integer('kecamatan_id'));
 
             if ($kecamatan !== null) {
-                $wilayahSegment = 'kecamatan-'.Str::slug($kecamatan->nama);
+                return 'kecamatan-'.Str::slug($kecamatan->nama);
             }
         }
 
-        $risikoSegment = $request->filled('risk_level')
+        return 'seluruh-wilayah';
+    }
+
+    /** Segmen "risiko-x" / "semua-risiko" -- lihat wilayahFilenameSegment() di atas. */
+    private function risikoFilenameSegment(Request $request): string
+    {
+        return $request->filled('risk_level')
             ? 'risiko-'.Str::slug($request->string('risk_level')->toString())
             : 'semua-risiko';
+    }
 
-        return "data-pasien-prolanis-{$wilayahSegment}-{$risikoSegment}-".now()->format('Ymd-His').'.pdf';
+    /**
+     * Nama file unduhan "Download Hasil" (PDF maupun Excel) -- aturan segmen SAMA PERSIS
+     * exportPdfFilename() (lihat wilayahFilenameSegment()/risikoFilenameSegment() di atas),
+     * cuma prefix & ekstensi yang beda.
+     */
+    private function exportHasilFilename(Request $request, string $extension): string
+    {
+        return "hasil-pemeriksaan-prolanis-{$this->wilayahFilenameSegment($request)}-{$this->risikoFilenameSegment($request)}-".now()->format('Ymd-His').".{$extension}";
+    }
+
+    /**
+     * Unduh "Download Hasil" versi PDF (dashboard/pasien, permintaan user 2026-09-01) -- tabel
+     * pasien terfilter dipivot jadi kolom DINAMIS per parameter pemeriksaan (mis. GDP/
+     * CHOLESTEROL/TRIGLISERIDA), lihat HasilPemeriksaanExportService utk logika bersama dgn
+     * exportHasilExcel() di bawah. Filter query param SAMA persis index()/exportPdf().
+     *
+     * Batas baris ADAPTIF terhadap jumlah kolom parameter yang match filter saat itu (lihat
+     * docblock config produli.reports.hasil_pdf_export_max_cells) -- BUKAN angka baris tetap
+     * seperti pdf_export_max_rows, karena tabel ini bisa punya jauh lebih banyak kolom daripada
+     * tabel pasien biasa (dompdf boros memori NON-LINEAR terhadap jumlah SEL, bukan cuma
+     * baris). Kalau operator butuh data lebih besar dari batas ini, arahkan ke
+     * exportHasilExcel() (WithChunkReading, jauh lebih murah memori untuk data besar).
+     */
+    public function exportHasilPdf(ListPatientsRequest $request): Response
+    {
+        $this->authorize('viewAny', PatientsCache::class);
+
+        $query = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request);
+        $parameters = $this->hasilExport->resolveParameters($query);
+
+        $maxCells = (int) config('produli.reports.hasil_pdf_export_max_cells');
+        $columnCount = count($parameters) + 3; // Nama + NIK + Desa/Kecamatan (kolom "No" diabaikan, tidak menambah beban render berarti)
+        $maxRows = max(1, intdiv($maxCells, $columnCount));
+
+        $matchedCount = (clone $query)->count();
+        if ($matchedCount > $maxRows) {
+            throw ValidationException::withMessages([
+                'filter' => ["Data yang cocok filter ({$matchedCount} pasien, {$columnCount} kolom) melebihi batas ekspor PDF untuk jumlah kolom ini (maksimal {$maxRows} pasien). Persempit filter dulu, atau gunakan tombol Unduh Excel untuk data yang lebih besar."],
+            ]);
+        }
+
+        // dompdf boros memori non-linear terhadap jumlah sel tabel (lihat docblock config
+        // produli.reports) -- batas adaptif di atas sudah menahan kasus wajar, ini cuma
+        // tambahan headroom, BUKAN pengganti batas itu.
+        ini_set('memory_limit', config('produli.reports.hasil_pdf_export_memory_limit', '768M'));
+
+        $patients = $query->with(['desa', 'kecamatan', 'labResults'])->orderBy('nama')->get();
+
+        // Dikonversi ke array/collection POLOS sebelum masuk blade (bukan lewat Eloquent model
+        // langsung) -- baris tabel di sini punya kolom parameter DINAMIS yang jauh lebih banyak
+        // daripada patients-export.blade.php biasa, mengecilkan apa yang perlu ditahan dompdf
+        // di memori saat merender selain data pasien mentahnya sendiri.
+        $rows = $patients->map(function (PatientsCache $patient) use ($parameters) {
+            $latest = $this->hasilExport->latestPerParameter($patient->labResults);
+
+            return [
+                'nama' => $patient->nama,
+                'nik' => NikDisplay::resolve($patient->nik),
+                'wilayah' => $this->hasilExport->kelurahanKecamatan($patient),
+                'values' => collect($parameters)->mapWithKeys(
+                    fn ($parameter) => [$parameter => $this->hasilExport->cellValue($latest->get($parameter))]
+                ),
+            ];
+        });
+        $totalCount = $rows->count();
+        unset($patients);
+
+        $pdf = Pdf::loadView('pdf.patients-hasil-export', [
+            'rows' => $rows,
+            'parameters' => $parameters,
+            'generatedAt' => now(),
+            'generatedBy' => $request->user(),
+            'totalCount' => $totalCount,
+            'filterSummary' => $this->resolveExportFilterSummary($request),
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download($this->exportHasilFilename($request, 'pdf'));
+    }
+
+    /**
+     * Unduh "Download Hasil" versi Excel (dashboard/pasien, permintaan user 2026-09-01) --
+     * jalur yang DIREKOMENDASIKAN untuk data besar (lihat docblock exportHasilPdf() di atas):
+     * App\Exports\PatientsHasilExport pakai WithChunkReading, baris ditulis bertahap ke file,
+     * tidak pernah menahan SEMUA pasien+hasil lab di memori sekaligus seperti dompdf.
+     */
+    public function exportHasilExcel(ListPatientsRequest $request): BinaryFileResponse
+    {
+        $this->authorize('viewAny', PatientsCache::class);
+
+        $query = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request);
+        $parameters = $this->hasilExport->resolveParameters($query);
+
+        $maxRows = (int) config('produli.reports.hasil_excel_export_max_rows');
+        $matchedCount = (clone $query)->count();
+
+        if ($matchedCount > $maxRows) {
+            throw ValidationException::withMessages([
+                'filter' => ["Data yang cocok filter ({$matchedCount} pasien) melebihi batas ekspor Excel ({$maxRows} pasien). Persempit filter dulu (mis. pilih puskesmas/kecamatan/tingkat risiko tertentu) sebelum mengunduh."],
+            ]);
+        }
+
+        return Excel::download(
+            new PatientsHasilExport($query->orderBy('nama'), $parameters, $this->hasilExport),
+            $this->exportHasilFilename($request, 'xlsx')
+        );
     }
 
     /**

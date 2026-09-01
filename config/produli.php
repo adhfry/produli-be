@@ -130,6 +130,31 @@ return [
     */
     'reports' => [
         'pdf_export_max_rows' => (int) env('PRODULI_PDF_EXPORT_MAX_ROWS', 500),
+
+        // Ekspor "Download Hasil" (tabel pasien + kolom DINAMIS per parameter pemeriksaan --
+        // GDP/CHOLESTEROL/TRIGLISERIDA/dst, permintaan user 2026-09-01). dompdf makin boros
+        // memori makin banyak KOLOM (bukan cuma baris, lihat catatan pdf_export_max_rows di
+        // atas) -- tabel ini bisa punya jauh lebih banyak kolom daripada tabel pasien biasa,
+        // jadi batas barisnya dihitung ADAPTIF: maxRows = max_cells / jumlah_kolom (lihat
+        // PatientController::exportHasilPdf()), bukan angka baris tetap. 4000 sel dipilih
+        // dengan margin di bawah titik aman terukur di pdf_export_max_rows (500 baris x ~10
+        // kolom = 5000 sel ~262MB, masih jauh dari crash 512M) -- angka BUKAN diukur ulang
+        // khusus untuk tabel ini (kolom pemeriksaannya beda struktur), jadi sengaja dibuat
+        // sedikit lebih konservatif.
+        'hasil_pdf_export_max_cells' => (int) env('PRODULI_HASIL_PDF_EXPORT_MAX_CELLS', 4000),
+        // Headroom tambahan di ATAS memory_limit default (biasanya 512M) KHUSUS request ekspor
+        // ini -- batas sel adaptif di atas sudah menahan kasus wajar, ini cuma jaring pengaman
+        // kedua, BUKAN pengganti batas adaptif (memory_limit besar tidak menolong kalau
+        // pemakaian memori dompdf sendiri tetap non-linear terhadap jumlah sel).
+        'hasil_pdf_export_memory_limit' => env('PRODULI_HASIL_PDF_MEMORY_LIMIT', '768M'),
+
+        // Ekspor Excel TIDAK lewat dompdf -- Maatwebsite\Excel WithChunkReading menulis baris
+        // ke file bertahap per chunk, tidak pernah menahan SEMUA pasien+hasil lab di memori
+        // sekaligus, jadi jauh lebih murah dan batasnya bisa lebih longgar daripada PDF. Tetap
+        // dibatasi (bukan unlimited) supaya filter yang longgar tidak membuat request berjalan
+        // berjam-jam tanpa gerbang sama sekali -- untuk data lebih besar dari ini, gunakan
+        // beberapa kali unduh dengan filter yang lebih sempit (mis. per puskesmas/kecamatan).
+        'hasil_excel_export_max_rows' => (int) env('PRODULI_HASIL_EXCEL_EXPORT_MAX_ROWS', 20000),
     ],
 
     /*
