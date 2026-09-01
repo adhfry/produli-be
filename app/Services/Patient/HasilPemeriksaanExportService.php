@@ -120,4 +120,24 @@ class HasilPemeriksaanExportService
 
         return "{$desa} / {$kecamatan}";
     }
+
+    /**
+     * Nama FKTP (puskesmas) pengirim/binaan pasien ini -- kolom "FKTP" (permintaan user
+     * 2026-09-02, menggantikan kolom NIK). SAMA PERSIS prioritas puskesmasCellLabel() di
+     * dashboard/pasien/index.vue & resources/views/pdf/patients-export.blade.php (jangan
+     * sampai drift 3 tempat): puskesmas yang SUDAH resolve dulu, fallback nama pengirim
+     * PERORANGAN (dokter/bidan, bukan institusi puskesmas) kalau itu jelas dari SiLAKES,
+     * terakhir "Belum Teridentifikasi" -- BUKAN dikosongkan, datanya memang belum ter-resolve.
+     */
+    public function fktpLabel(PatientsCache $patient): string
+    {
+        if ($patient->puskesmas?->nama) {
+            return $patient->puskesmas->nama;
+        }
+        if ($patient->puskesmas_resolution_method === 'pengirim_individual' && $patient->pengirim_raw) {
+            return "Rujukan: {$patient->pengirim_raw}";
+        }
+
+        return 'Belum Teridentifikasi';
+    }
 }

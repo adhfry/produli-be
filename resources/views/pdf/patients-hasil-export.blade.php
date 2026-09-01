@@ -67,10 +67,12 @@
 </table>
 
 @php
-    // Lebar kolom "No"/"Nama"/"NIK"/"Desa-Kecamatan" tetap proporsional lebih besar, sisanya
+    // Lebar kolom "No"/"Nama"/"FKTP"/"Desa-Kecamatan" tetap proporsional lebih besar, sisanya
     // dibagi rata ke 9 kolom parameter tetap (HasilPemeriksaanExportService::PARAMETER_COLUMNS)
-    // -- supaya kolom identitas pasien tidak jadi terlalu sempit utk terbaca.
-    $fixedWidthPercent = 34;
+    // -- supaya kolom identitas pasien tidak jadi terlalu sempit utk terbaca. FKTP dapat jatah
+    // lebih besar dari NIK sebelumnya (permintaan user) -- nama puskesmas ("Puskesmas Gapura")
+    // rata-rata lebih panjang dari 16 digit NIK.
+    $fixedWidthPercent = 37;
     $paramWidthPercent = count($parameters) > 0 ? (100 - $fixedWidthPercent) / count($parameters) : 0;
 @endphp
 
@@ -78,8 +80,8 @@
     <thead>
         <tr>
             <th style="width: 3%;">No</th>
-            <th style="width: 14%;">Nama</th>
-            <th style="width: 8%;">NIK</th>
+            <th style="width: 13%;">Nama</th>
+            <th style="width: 12%;">FKTP</th>
             <th style="width: 9%;">Desa / Kecamatan</th>
             @foreach ($parameters as $parameter)
                 <th style="width: {{ $paramWidthPercent }}%;">{{ $parameter }}</th>
@@ -91,7 +93,7 @@
             <tr>
                 <td>{{ $index + 1 }}</td>
                 <td>{{ $row['nama'] }}</td>
-                <td>{{ $row['nik'] }}</td>
+                <td>{{ $row['fktp'] }}</td>
                 <td>{{ $row['wilayah'] }}</td>
                 @foreach ($parameters as $parameter)
                     <td>{{ $row['values'][$parameter] ?? '-' }}</td>

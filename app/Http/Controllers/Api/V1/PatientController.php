@@ -26,7 +26,6 @@ use App\Services\Risk\RiskClassificationHistoryService;
 use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
 use App\Support\DataScope;
-use App\Support\NikDisplay;
 use App\Support\NikHasher;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -383,7 +382,7 @@ class PatientController extends Controller
         $parameters = $this->hasilExport->columnLabels();
 
         $maxCells = (int) config('produli.reports.hasil_pdf_export_max_cells');
-        $columnCount = count($parameters) + 3; // Nama + NIK + Desa/Kecamatan (kolom "No" diabaikan, tidak menambah beban render berarti)
+        $columnCount = count($parameters) + 3; // Nama + FKTP + Desa/Kecamatan (kolom "No" diabaikan, tidak menambah beban render berarti)
         $maxRows = max(1, intdiv($maxCells, $columnCount));
 
         $matchedCount = (clone $query)->count();
@@ -398,7 +397,7 @@ class PatientController extends Controller
         // tambahan headroom, BUKAN pengganti batas itu.
         ini_set('memory_limit', config('produli.reports.hasil_pdf_export_memory_limit', '768M'));
 
-        $patients = $query->with(['desa', 'kecamatan', 'labResults'])->orderBy('nama')->get();
+        $patients = $query->with(['desa', 'kecamatan', 'puskesmas', 'labResults'])->orderBy('nama')->get();
 
         // Dikonversi ke array polos sebelum masuk blade (bukan lewat Eloquent model langsung) --
         // baris tabel di sini tetap punya lebih banyak kolom daripada patients-export.blade.php
@@ -407,7 +406,7 @@ class PatientController extends Controller
         $rows = $patients->map(function (PatientsCache $patient) {
             return [
                 'nama' => $patient->nama,
-                'nik' => NikDisplay::resolve($patient->nik),
+                'fktp' => $this->hasilExport->fktpLabel($patient),
                 'wilayah' => $this->hasilExport->kelurahanKecamatan($patient),
                 'values' => $this->hasilExport->rowValues($patient->labResults),
             ];
