@@ -131,16 +131,17 @@ return [
     'reports' => [
         'pdf_export_max_rows' => (int) env('PRODULI_PDF_EXPORT_MAX_ROWS', 500),
 
-        // Ekspor "Download Hasil" (tabel pasien + kolom DINAMIS per parameter pemeriksaan --
-        // GDP/CHOLESTEROL/TRIGLISERIDA/dst, permintaan user 2026-09-01). dompdf makin boros
-        // memori makin banyak KOLOM (bukan cuma baris, lihat catatan pdf_export_max_rows di
-        // atas) -- tabel ini bisa punya jauh lebih banyak kolom daripada tabel pasien biasa,
-        // jadi batas barisnya dihitung ADAPTIF: maxRows = max_cells / jumlah_kolom (lihat
-        // PatientController::exportHasilPdf()), bukan angka baris tetap. 4000 sel dipilih
-        // dengan margin di bawah titik aman terukur di pdf_export_max_rows (500 baris x ~10
-        // kolom = 5000 sel ~262MB, masih jauh dari crash 512M) -- angka BUKAN diukur ulang
-        // khusus untuk tabel ini (kolom pemeriksaannya beda struktur), jadi sengaja dibuat
-        // sedikit lebih konservatif.
+        // Ekspor "Download Hasil" (tabel pasien + 9 kolom TETAP parameter pemeriksaan -- GDP,
+        // Cholesterol, Trigliserida, Urea, Creatinine, HDL, LDL, HbA1c, Microalbumin, lihat
+        // HasilPemeriksaanExportService::PARAMETER_COLUMNS, permintaan user 2026-09-01/02).
+        // dompdf makin boros memori makin banyak KOLOM (bukan cuma baris, lihat catatan
+        // pdf_export_max_rows di atas) -- tabel ini punya lebih banyak kolom daripada tabel
+        // pasien biasa, jadi batas barisnya dihitung dari jumlah sel: maxRows = max_cells /
+        // jumlah_kolom (lihat PatientController::exportHasilPdf()), bukan angka baris tetap.
+        // 4000 sel dipilih dengan margin di bawah titik aman terukur di pdf_export_max_rows
+        // (500 baris x ~10 kolom = 5000 sel ~262MB, masih jauh dari crash 512M) -- angka BUKAN
+        // diukur ulang khusus untuk tabel ini (kolom pemeriksaannya beda struktur), jadi
+        // sengaja dibuat sedikit lebih konservatif.
         'hasil_pdf_export_max_cells' => (int) env('PRODULI_HASIL_PDF_EXPORT_MAX_CELLS', 4000),
         // Headroom tambahan di ATAS memory_limit default (biasanya 512M) KHUSUS request ekspor
         // ini -- batas sel adaptif di atas sudah menahan kasus wajar, ini cuma jaring pengaman

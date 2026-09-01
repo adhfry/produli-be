@@ -92,8 +92,8 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // Query besar + generate PDF dompdf sekali panggil cukup berat -- throttle lebih ketat
     // daripada endpoint baca biasa (temuan audit, docs/planning/15).
     Route::get('patients/export-pdf', [PatientController::class, 'exportPdf'])->middleware('throttle:5,1');
-    // "Download Hasil" (permintaan user 2026-09-01) -- tabel pasien terfilter + kolom DINAMIS
-    // per parameter pemeriksaan (GDP/CHOLESTEROL/dst), dua format sama beratnya dgn export-pdf
+    // "Download Hasil" (permintaan user 2026-09-01) -- tabel pasien terfilter + 9 kolom TETAP
+    // per parameter pemeriksaan (GDP/Cholesterol/dst), dua format sama beratnya dgn export-pdf
     // di atas (query besar + generate file sekali panggil), throttle sama.
     Route::get('patients/export-hasil-pdf', [PatientController::class, 'exportHasilPdf'])->middleware('throttle:5,1');
     Route::get('patients/export-hasil-excel', [PatientController::class, 'exportHasilExcel'])->middleware('throttle:5,1');

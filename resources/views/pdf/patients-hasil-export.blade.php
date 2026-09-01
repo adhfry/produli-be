@@ -24,8 +24,9 @@
     .letterhead .report-scope { text-align: right; font-size: 8.5px; font-weight: 600; color: #334155; margin-top: 2px; }
     .letterhead .report-meta { text-align: right; font-size: 8px; color: #64748b; margin-top: 2px; }
 
-    {{-- Tabel kolom dinamis bisa jauh lebih lebar dari kertas -- word-wrap supaya isi sel
-    panjang (nama pasien, dst) tidak memaksa kolom parameter jadi lebih sempit dari perlu. --}}
+    {{-- 9 kolom parameter tetap + identitas pasien bisa jauh lebih lebar dari kertas --
+    word-wrap supaya isi sel panjang (nama pasien, dst) tidak memaksa kolom parameter jadi
+    lebih sempit dari perlu. --}}
     table.data { width: 100%; border-collapse: collapse; table-layout: fixed; }
     table.data th {
         background: #0f766e; color: #ffffff; font-size: 7px; text-transform: uppercase;
@@ -67,8 +68,8 @@
 
 @php
     // Lebar kolom "No"/"Nama"/"NIK"/"Desa-Kecamatan" tetap proporsional lebih besar, sisanya
-    // dibagi rata ke seluruh kolom parameter dinamis -- supaya tabel dgn banyak parameter tidak
-    // membuat kolom identitas pasien jadi terlalu sempit utk terbaca.
+    // dibagi rata ke 9 kolom parameter tetap (HasilPemeriksaanExportService::PARAMETER_COLUMNS)
+    // -- supaya kolom identitas pasien tidak jadi terlalu sempit utk terbaca.
     $fixedWidthPercent = 34;
     $paramWidthPercent = count($parameters) > 0 ? (100 - $fixedWidthPercent) / count($parameters) : 0;
 @endphp
