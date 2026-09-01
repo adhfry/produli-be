@@ -387,23 +387,22 @@ class PatientController extends Controller
 
     /**
      * Unduh "Download Hasil" versi PDF (dashboard/pasien, permintaan user 2026-09-01) -- tabel
-     * pasien terfilter dipivot jadi kolom DINAMIS per parameter pemeriksaan (mis. GDP/
-     * CHOLESTEROL/TRIGLISERIDA), lihat HasilPemeriksaanExportService utk logika bersama dgn
-     * exportHasilExcel() di bawah. Filter query param SAMA persis index()/exportPdf().
+     * pasien terfilter dipivot jadi kolom TETAP & URUT per parameter pemeriksaan (GDP,
+     * Cholesterol, Trigliserida, Urea, Creatinine, HDL, LDL, HbA1c, Microalbumin -- lihat
+     * HasilPemeriksaanExportService::PARAMETER_COLUMNS), lihat service itu utk logika bersama
+     * dgn exportHasilExcel() di bawah. Filter query param SAMA persis index()/exportPdf().
      *
-     * Batas baris ADAPTIF terhadap jumlah kolom parameter yang match filter saat itu (lihat
-     * docblock config produli.reports.hasil_pdf_export_max_cells) -- BUKAN angka baris tetap
-     * seperti pdf_export_max_rows, karena tabel ini bisa punya jauh lebih banyak kolom daripada
-     * tabel pasien biasa (dompdf boros memori NON-LINEAR terhadap jumlah SEL, bukan cuma
-     * baris). Kalau operator butuh data lebih besar dari batas ini, arahkan ke
-     * exportHasilExcel() (WithChunkReading, jauh lebih murah memori untuk data besar).
+     * Batas baris dihitung dari jumlah kolom TETAP di atas (lihat docblock config
+     * produli.reports.hasil_pdf_export_max_cells) -- dompdf boros memori NON-LINEAR terhadap
+     * jumlah SEL tabel, bukan cuma baris. Kalau operator butuh data lebih besar dari batas ini,
+     * arahkan ke exportHasilExcel() (WithChunkReading, jauh lebih murah memori untuk data besar).
      */
     public function exportHasilPdf(ListPatientsRequest $request): Response
     {
         $this->authorize('viewAny', PatientsCache::class);
 
         $query = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request);
-        $parameters = $this->hasilExport->resolveParameters($query);
+        $parameters = $this->hasilExport->columnLabels();
 
         $maxCells = (int) config('produli.reports.hasil_pdf_export_max_cells');
         $columnCount = count($parameters) + 3; // Nama + NIK + Desa/Kecamatan (kolom "No" diabaikan, tidak menambah beban render berarti)
@@ -423,20 +422,16 @@ class PatientController extends Controller
 
         $patients = $query->with(['desa', 'kecamatan', 'labResults'])->orderBy('nama')->get();
 
-        // Dikonversi ke array/collection POLOS sebelum masuk blade (bukan lewat Eloquent model
-        // langsung) -- baris tabel di sini punya kolom parameter DINAMIS yang jauh lebih banyak
-        // daripada patients-export.blade.php biasa, mengecilkan apa yang perlu ditahan dompdf
-        // di memori saat merender selain data pasien mentahnya sendiri.
-        $rows = $patients->map(function (PatientsCache $patient) use ($parameters) {
-            $latest = $this->hasilExport->latestPerParameter($patient->labResults);
-
+        // Dikonversi ke array polos sebelum masuk blade (bukan lewat Eloquent model langsung) --
+        // baris tabel di sini tetap punya lebih banyak kolom daripada patients-export.blade.php
+        // biasa (9 parameter tetap + identitas), mengecilkan apa yang perlu ditahan dompdf di
+        // memori saat merender selain data pasien mentahnya sendiri.
+        $rows = $patients->map(function (PatientsCache $patient) {
             return [
                 'nama' => $patient->nama,
                 'nik' => NikDisplay::resolve($patient->nik),
                 'wilayah' => $this->hasilExport->kelurahanKecamatan($patient),
-                'values' => collect($parameters)->mapWithKeys(
-                    fn ($parameter) => [$parameter => $this->hasilExport->cellValue($latest->get($parameter))]
-                ),
+                'values' => $this->hasilExport->rowValues($patient->labResults),
             ];
         });
         $totalCount = $rows->count();
@@ -465,7 +460,7 @@ class PatientController extends Controller
         $this->authorize('viewAny', PatientsCache::class);
 
         $query = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request);
-        $parameters = $this->hasilExport->resolveParameters($query);
+        $parameters = $this->hasilExport->columnLabels();
 
         $maxRows = (int) config('produli.reports.hasil_excel_export_max_rows');
         $matchedCount = (clone $query)->count();

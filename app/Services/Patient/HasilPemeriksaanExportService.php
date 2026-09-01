@@ -4,35 +4,68 @@ namespace App\Services\Patient;
 
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 /**
  * Logika bersama tabel "Download Hasil" (dashboard/pasien, permintaan user 2026-09-01) --
- * pasien terfilter dipivot jadi 1 baris per pasien dengan kolom DINAMIS per parameter
- * pemeriksaan (GDP/CHOLESTEROL/TRIGLISERIDA/dst). Dipakai KEDUA jalur ekspor
- * (PatientController::exportHasilPdf() dan App\Exports\PatientsHasilExport untuk Excel) supaya
- * nilai yang ditampilkan tidak pernah drift antar format.
+ * pasien terfilter dipivot jadi 1 baris per pasien dengan kolom TETAP per parameter
+ * pemeriksaan. Dipakai KEDUA jalur ekspor (PatientController::exportHasilPdf() dan
+ * App\Exports\PatientsHasilExport untuk Excel) supaya nilai yang ditampilkan tidak pernah
+ * drift antar format.
  */
 class HasilPemeriksaanExportService
 {
     /**
-     * Daftar nama parameter unik (jadi kolom dinamis tabel) dari SELURUH pasien yang match
-     * filter -- subquery ke query pasien yang sudah difilter (bukan pluck ID lalu whereIn
-     * array PHP) supaya tetap murah walau jumlah pasien yang match sangat banyak.
+     * Kolom TETAP & URUT kiri-ke-kanan (permintaan user 2026-09-02) -- BUKAN lagi digali
+     * dinamis dari data yang match filter. Key = nama PERSIS kolom lab_results_cache.parameter
+     * dari SiLAKES asli (SUMBER SAMA dengan RiskClassificationService::BERAT_PARAMETERS/
+     * SEDANG_PARAMETERS, dikonfirmasi ulang dari data sync nyata produksi 2026-09-02) -- value
+     * = label kolom yang ditampilkan (mis. raw "Gula Darah Puasa" ditampilkan sbg singkatan
+     * "GDP", permintaan user). Pasien yang tidak punya hasil parameter tsb (mis. pasien
+     * Hipertensi tanpa GDP/HbA1c) TETAP dapat kolomnya, cuma isinya "-" (lihat cellValue()) --
+     * bukan kolom yang hilang/collapse.
+     */
+    private const PARAMETER_COLUMNS = [
+        'Gula Darah Puasa' => 'GDP',
+        'Cholesterol' => 'Cholesterol',
+        'Trigliserida' => 'Trigliserida',
+        'Urea' => 'Urea',
+        'Creatinine' => 'Creatinine',
+        'HDL' => 'HDL',
+        'LDL' => 'LDL',
+        'HbA1c' => 'HbA1c',
+        'Microalbumin' => 'Microalbumin',
+    ];
+
+    /**
+     * Label kolom kiri-ke-kanan -- dipakai sbg header tabel PDF/Excel. TETAP & URUT, tidak
+     * bergantung pasien/filter mana pun yang sedang diekspor.
      *
-     * @param  Builder<PatientsCache>  $filteredPatientQuery
      * @return array<int, string>
      */
-    public function resolveParameters(Builder $filteredPatientQuery): array
+    public function columnLabels(): array
     {
-        return LabResultCache::query()
-            ->whereIn('patient_id', (clone $filteredPatientQuery)->select('patients_cache.external_patient_id'))
-            ->distinct()
-            ->orderBy('parameter')
-            ->pluck('parameter')
-            ->values()
-            ->all();
+        return array_values(self::PARAMETER_COLUMNS);
+    }
+
+    /**
+     * Isi 1 baris pasien untuk SEMUA kolom parameter TETAP di atas, keyBy LABEL kolom (bukan
+     * nama parameter mentah) dalam urutan PERSIS SAMA columnLabels() -- siap dipakai langsung
+     * sbg 1 baris tabel PDF/Excel tanpa lookup tambahan di sisi caller.
+     *
+     * @param  Collection<int, LabResultCache>  $labResults
+     * @return array<string, string>
+     */
+    public function rowValues(Collection $labResults): array
+    {
+        $latest = $this->latestPerParameter($labResults);
+
+        $values = [];
+        foreach (self::PARAMETER_COLUMNS as $rawParameter => $label) {
+            $values[$label] = $this->cellValue($latest->get($rawParameter));
+        }
+
+        return $values;
     }
 
     /**
@@ -46,7 +79,7 @@ class HasilPemeriksaanExportService
      * @param  Collection<int, LabResultCache>  $labResults
      * @return Collection<string, LabResultCache>
      */
-    public function latestPerParameter(Collection $labResults): Collection
+    private function latestPerParameter(Collection $labResults): Collection
     {
         return $labResults
             ->sort(function (LabResultCache $a, LabResultCache $b) {
@@ -62,8 +95,8 @@ class HasilPemeriksaanExportService
 
     /**
      * Teks 1 sel kolom parameter -- "126 mg/dL" kalau ada, "-" kalau pasien ini belum pernah
-     * diperiksa parameter tsb sama sekali (kolom dinamis dibentuk dari GABUNGAN semua pasien
-     * yang match filter, jadi wajar banyak sel kosong per pasien).
+     * diperiksa parameter tsb sama sekali (mis. pasien Hipertensi murni tanpa GDP/HbA1c,
+     * permintaan user -- kolom tetap muncul, isinya "-").
      */
     public function cellValue(?LabResultCache $result): string
     {

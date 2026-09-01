@@ -14,8 +14,9 @@ use Maatwebsite\Excel\Concerns\WithMapping;
 
 /**
  * "Download Hasil" versi Excel (dashboard/pasien, permintaan user 2026-09-01) -- pivot 1 baris
- * per pasien, kolom DINAMIS per parameter pemeriksaan. $parameters dihitung SEKALI di
- * PatientController::exportHasilExcel() lewat HasilPemeriksaanExportService::resolveParameters()
+ * per pasien, kolom TETAP & URUT per parameter pemeriksaan (lihat
+ * HasilPemeriksaanExportService::PARAMETER_COLUMNS). $parameters diambil SEKALI di
+ * PatientController::exportHasilExcel() lewat HasilPemeriksaanExportService::columnLabels()
  * SEBELUM kelas ini dibuat -- WithHeadings butuh daftar kolom yang sudah FIXED sebelum baris
  * mana pun diproses, tidak bisa ditentukan sambil jalan dari map().
  *
@@ -59,8 +60,6 @@ class PatientsHasilExport implements FromQuery, ShouldAutoSize, WithChunkReading
         // counter statis akan diam-diam terbawa ke unduhan berikutnya dan mulai bukan dari 1.
         $this->rowNumber++;
 
-        $latest = $this->hasilExport->latestPerParameter($patient->labResults);
-
         $row = [
             $this->rowNumber,
             $patient->nama,
@@ -68,11 +67,9 @@ class PatientsHasilExport implements FromQuery, ShouldAutoSize, WithChunkReading
             $this->hasilExport->kelurahanKecamatan($patient),
         ];
 
-        foreach ($this->parameters as $parameter) {
-            $row[] = $this->hasilExport->cellValue($latest->get($parameter));
-        }
-
-        return $row;
+        // rowValues() sudah keyBy label DALAM urutan PARAMETER_COLUMNS yang sama persis dgn
+        // $this->parameters (headings()) -- array_values() aman, tidak perlu lookup per label.
+        return array_merge($row, array_values($this->hasilExport->rowValues($patient->labResults)));
     }
 
     public function chunkSize(): int
