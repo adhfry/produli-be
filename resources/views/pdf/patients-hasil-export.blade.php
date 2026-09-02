@@ -35,7 +35,16 @@
     table.data td { padding: 3px; border: 1px solid #e2e8f0; font-size: 7.5px; word-wrap: break-word; }
     table.data tr:nth-child(even) td { background: #f8fafc; }
 
-    .footer { margin-top: 10px; font-size: 7.5px; color: #94a3b8; text-align: right; }
+    {{-- NIK pindah jadi sub-teks di bawah nama (permintaan user) -- italic KHUSUS saat NIK
+    tidak diketahui/tidak valid (App\Support\NikDisplay), teks normal (non-italic) saat NIK
+    beneran tampil. --}}
+    .nik-subline { display: block; font-size: 6.5px; color: #64748b; margin-top: 1px; }
+    .nik-subline.unknown { font-style: italic; }
+
+    {{-- Kolom parameter: nilai hasil MERAH kalau abnormal (permintaan user), satuan & baris BN
+    (batas normal = nilai_rujukan asli SiLAKES) TETAP HITAM apa pun status nilainya. --}}
+    .result-value.abnormal { color: #dc2626; font-weight: bold; }
+    .result-bn { display: block; font-size: 6.5px; color: #475569; margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -92,11 +101,27 @@
         @forelse ($rows as $index => $row)
             <tr>
                 <td>{{ $index + 1 }}</td>
-                <td>{{ $row['nama'] }}</td>
+                <td>
+                    {{ $row['nama'] }}
+                    <span class="nik-subline {{ $row['nik']['italic'] ? 'unknown' : '' }}">{{ $row['nik']['text'] }}</span>
+                </td>
                 <td>{{ $row['fktp'] }}</td>
                 <td>{{ $row['wilayah'] }}</td>
                 @foreach ($parameters as $parameter)
-                    <td>{{ $row['values'][$parameter] ?? '-' }}</td>
+                    @php $cell = $row['values'][$parameter] ?? ['value' => null, 'satuan' => null, 'bn' => null, 'abnormal' => false]; @endphp
+                    <td>
+                        @if ($cell['value'] === null)
+                            -
+                        @else
+                            <span class="result-value {{ $cell['abnormal'] ? 'abnormal' : '' }}">{{ $cell['value'] }}</span>
+                            @if ($cell['satuan'])
+                                {{ $cell['satuan'] }}
+                            @endif
+                            @if ($cell['bn'])
+                                <span class="result-bn">BN: {{ $cell['bn'] }}</span>
+                            @endif
+                        @endif
+                    </td>
                 @endforeach
             </tr>
         @empty

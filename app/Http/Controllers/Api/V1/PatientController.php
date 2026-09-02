@@ -406,9 +406,10 @@ class PatientController extends Controller
         $rows = $patients->map(function (PatientsCache $patient) {
             return [
                 'nama' => $patient->nama,
+                'nik' => $this->hasilExport->nikSubline($patient),
                 'fktp' => $this->hasilExport->fktpLabel($patient),
                 'wilayah' => $this->hasilExport->kelurahanKecamatan($patient),
-                'values' => $this->hasilExport->rowValues($patient->labResults),
+                'values' => $this->hasilExport->rowCellData($patient->labResults),
             ];
         });
         $totalCount = $rows->count();
