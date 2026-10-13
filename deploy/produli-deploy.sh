@@ -26,6 +26,9 @@ git_as_www() { sudo -u www-data git -C "$1" "${@:2}"; }
 
 update_repo() { # $1 = direktori; mencetak commit lama
   local dir=$1
+  # Repo milik www-data; operasi git sebagai root di masa lalu meninggalkan objek milik root
+  # yang membuat fetch gagal ("insufficient permission ... .git/objects") -- rapikan dulu.
+  chown -R www-data:www-data "$dir/.git"
   git_as_www "$dir" fetch --quiet origin main
   if [ -n "$(git_as_www "$dir" status --porcelain --untracked-files=no)" ]; then
     echo "ABORT: ada perubahan lokal terlacak di $dir -- selesaikan manual dulu:"
