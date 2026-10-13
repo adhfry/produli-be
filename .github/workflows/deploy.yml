@@ -1,0 +1,94 @@
+name: CI/CD Backend PRODULI (production)
+
+# Push ke main -> cek (composer validate + lint PHP) -> deploy ke api.produli.labkesdasumenep.id.
+# Deploy lewat SSH ke skrip /usr/local/sbin/produli-deploy (salinan: deploy/produli-deploy.sh) --
+# kunci CI dibatasi forced command, hanya bisa menjalankan skrip itu. Branch dev TIDAK di-deploy
+# otomatis.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: produli-deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, intl, gd, zip, pdo_sqlite, redis
+          tools: composer:v2
+          coverage: none
+
+      - name: Validasi composer.json/lock
+        run: composer validate --no-check-publish
+
+      - name: Install dependensi
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Lint sintaks PHP
+        run: find app bootstrap config database routes -name '*.php' -print0 | xargs -0 -n 50 -P 4 php -l > /dev/null
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Ambil pesan commit
+        run: |
+          # Pesan commit bisa multi-baris -> heredoc GITHUB_ENV dengan delimiter acak.
+          DELIM=$(openssl rand -hex 8)
+          echo "MESSAGE<<$DELIM" >> "$GITHUB_ENV"
+          git log -1 --pretty=%B >> "$GITHUB_ENV"
+          echo "$DELIM" >> "$GITHUB_ENV"
+
+      - name: Siapkan SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.PRODULI_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/produli_deploy && chmod 600 ~/.ssh/produli_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy backend ke VPS
+        env:
+          VPS_IP: ${{ secrets.VPS_IP }}
+        run: ssh -i ~/.ssh/produli_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "root@$VPS_IP" backend
+
+      - name: Notifikasi WhatsApp
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          # Pesan commit dibaca dari variabel shell $MESSAGE (GITHUB_ENV), BUKAN ekspresi GitHub
+          # Actions -- ekspresi diganti mentah sebelum bash berjalan dan bisa memecah skrip.
+          if [[ "$STATUS" == "success" ]]; then
+            BODY="> ✅ *DEPLOYMENT SUKSES*
+
+          Proses CI/CD untuk *$REPO* ke branch *$BRANCH* telah berhasil.
+
+          *Commit:*
+          > $MESSAGE"
+          else
+            BODY="*❌ DEPLOYMENT GAGAL*
+
+          Proses CI/CD untuk *$REPO* ke branch *$BRANCH* GAGAL.
+
+          *Commit:*
+          > $MESSAGE
+
+          Mohon segera diperiksa."
+          fi
+          curl -s -X POST https://bot-silakes.labkesdasumenep.cloud/v1/api/wa/send-chat-message \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg to "6281233107475" --arg message "$BODY" '{to: $to, message: $message}')" || true
