@@ -25,6 +25,8 @@ class VisitAssignmentResource extends JsonResource
                 'nama' => $this->patient->nama,
                 'alamat' => $this->patient->alamat,
                 'phone' => $this->patient->phone,
+                // Isian koreksi NIK di form laporan kunjungan kader (App\Support\NikKoreksi).
+                'nik_bisa_dikoreksi' => \App\Support\NikKoreksi::bisaDiajukan($this->patient->nik, $this->patient->no_reg),
                 'latitude' => $this->patient->latitude !== null ? (float) $this->patient->latitude : null,
                 'longitude' => $this->patient->longitude !== null ? (float) $this->patient->longitude : null,
                 'geo_status' => $this->patient->geo_status,

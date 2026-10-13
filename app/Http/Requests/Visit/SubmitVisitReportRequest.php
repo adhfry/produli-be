@@ -2,8 +2,11 @@
 
 namespace App\Http\Requests\Visit;
 
+use App\Models\VisitAssignment;
+use App\Support\NikKoreksi;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class SubmitVisitReportRequest extends FormRequest
@@ -55,6 +58,11 @@ class SubmitVisitReportRequest extends FormRequest
             'no_bpjs' => ['nullable', 'string', 'max:50'],
             'jenis_prolanis' => ['nullable', 'string', 'max:50'],
             'jenis_perokok' => ['nullable', 'string', 'max:50'],
+            // Koreksi NIK HANYA untuk pasien ber-NIK kosong/"-"/berisi no. reg (NikKoreksi).
+            // SENGAJA longgar di sini: NIK yang tidak layak TIDAK boleh menggagalkan laporan
+            // kunjungan (foto/GPS sah, bisa datang dari antrean offline) -- disaring di
+            // patientFieldUpdates() dan cuma dibuang dari usulan (format sudah dicek di form).
+            'nik' => ['nullable', 'string', 'max:32'],
 
             // Pemeriksaan saat kunjungan (docs/planning/02 §3 tabel visit_reports) -- SEMUA
             // opsional, BUKAN bagian dari 7-layer VisitValidationService (itu anti-fraud
@@ -124,7 +132,7 @@ class SubmitVisitReportRequest extends FormRequest
         $updates = Arr::only($this->validated(), [
             'alamat', 'kel_desa', 'kecamatan', 'rt_rw', 'phone', 'pekerjaan',
             'status_perkawinan', 'golongan_darah', 'agama', 'is_bpjs', 'no_bpjs',
-            'jenis_prolanis', 'jenis_perokok',
+            'jenis_prolanis', 'jenis_perokok', 'nik',
         ]);
 
         // "boolean" rule tidak meng-cast nilai di validated() (tetap '1'/'0' string dari
@@ -132,6 +140,25 @@ class SubmitVisitReportRequest extends FormRequest
         // berupa JSON boolean asli, bukan string.
         if (array_key_exists('is_bpjs', $updates)) {
             $updates['is_bpjs'] = $this->boolean('is_bpjs');
+        }
+
+        if (array_key_exists('nik', $updates) && blank($updates['nik'])) {
+            unset($updates['nik']);
+        } elseif (array_key_exists('nik', $updates)) {
+            $nik = preg_replace('/\D/', '', (string) $updates['nik']);
+            $patient = VisitAssignment::with('patient')->find($this->integer('assignment_id'))?->patient;
+            $galat = strlen($nik) === 16 ? NikKoreksi::galat($patient, $nik) : 'format NIK bukan 16 digit';
+
+            if ($galat === null) {
+                $updates['nik'] = $nik;
+            } else {
+                unset($updates['nik']);
+                Log::info('Usulan koreksi NIK dari laporan kunjungan dibuang', [
+                    'assignment_id' => $this->integer('assignment_id'),
+                    'patient_id' => $patient?->id,
+                    'alasan' => $galat,
+                ]);
+            }
         }
 
         return $updates;

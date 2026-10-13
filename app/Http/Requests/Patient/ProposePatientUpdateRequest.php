@@ -2,8 +2,11 @@
 
 namespace App\Http\Requests\Patient;
 
+use App\Models\PatientsCache;
+use App\Support\NikKoreksi;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Arr;
+use Illuminate\Validation\Validator;
 
 class ProposePatientUpdateRequest extends FormRequest
 {
@@ -38,6 +41,25 @@ class ProposePatientUpdateRequest extends FormRequest
             'no_bpjs' => ['nullable', 'string', 'max:50'],
             'jenis_prolanis' => ['nullable', 'string', 'max:50'],
             'jenis_perokok' => ['nullable', 'string', 'max:50'],
+            // Koreksi NIK HANYA untuk pasien ber-NIK kosong/"-"/berisi no. reg (NikKoreksi) --
+            // dicek di after() karena butuh data pasien dari route.
+            'nik' => NikKoreksi::RULES,
+        ];
+    }
+
+    public function after(): array
+    {
+        return [
+            function (Validator $validator) {
+                if (! $this->filled('nik') || $validator->errors()->has('nik')) {
+                    return;
+                }
+                $patient = $this->route('patient');
+                $galat = NikKoreksi::galat($patient instanceof PatientsCache ? $patient : null, (string) $this->input('nik'));
+                if ($galat) {
+                    $validator->errors()->add('nik', $galat);
+                }
+            },
         ];
     }
 
@@ -53,7 +75,7 @@ class ProposePatientUpdateRequest extends FormRequest
         $fields = Arr::only($this->validated(), [
             'alamat', 'kel_desa', 'kecamatan', 'rt_rw', 'phone', 'pekerjaan',
             'status_perkawinan', 'golongan_darah', 'agama', 'is_bpjs', 'no_bpjs',
-            'jenis_prolanis', 'jenis_perokok',
+            'jenis_prolanis', 'jenis_perokok', 'nik',
         ]);
 
         if (array_key_exists('is_bpjs', $fields)) {
