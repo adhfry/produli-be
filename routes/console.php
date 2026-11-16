@@ -40,3 +40,5 @@ Schedule::command('produli:notify-prolanis-schedule-reminders')->dailyAt('07:00'
 // withoutOverlapping() -- run berikutnya bisa jatuh sebelum yang sebelumnya selesai kalau
 // SiLAKES lambat merespons banyak batch sekaligus.
 Schedule::command('produli:poll-prolanis-delivery-confirmation')->everyFiveMinutes()->withoutOverlapping();
+// Cadangan pendaftaran pasien baru langsung (revisi 2026-11-17) bila event SiLAKES tidak sampai.
+Schedule::command('produli:cek-pendaftaran-silakes')->everyFiveMinutes()->withoutOverlapping();

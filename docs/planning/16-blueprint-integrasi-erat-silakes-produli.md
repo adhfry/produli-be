@@ -247,6 +247,35 @@ Yang dibangun:
 - Scan KTP (kamera atau berkas): foto diperkecil di browser (batas upload PHP production 2 MB), disimpan di PRODULI (tabel `ktp_scans`, disk `produli.storage.ktp_photos_disk`), dibaca lewat endpoint baru SiLAKES `POST /integration/ktp-ocr` (mesin OCR yang sama dengan registrasi SiLAKES, token baca). Saat usulan dikirim, foto ikut ke SiLAKES (`foto_ktp_base64`) dan alamat dari KTP masuk ke alamat KTP pasien (sumber `produli_ktp`), bukan domisili.
 - SiLAKES: usulan menerima `tempat_lahir`, `email`, `fktp`, `foto_ktp`; usulan pasien baru menyimpan identitas lengkap + foto; approve NIK yang sudah dipakai pasien lain ditolak 409 dengan pesan jelas (sebelumnya error 500); halaman staf menampilkan foto KTP.
 
+Status: live di production 2026-11-17 (keempat repo).
+
+## 12. FKTP pengirim, cari pasien sambil mengetik, pendaftaran pasien baru langsung (dikerjakan 2026-11-17)
+
+Permintaan user: FKTP otomatis dari pengirim; di `/dashboard/pengiriman-sampel` cari pasien sambil mengetik (10 kartu), bila tidak ada otomatis menawarkan daftar pasien baru dengan mode yang bisa bolak-balik; pendaftaran pasien baru mengikuti alur perubahan data (dikonfirmasi staf Labkesda, atau langsung masuk bila auto approve menyala), no. reg dibuat di Labkesda, hasilnya langsung kembali ke PRODULI dan petugas pengisi dinotifikasi.
+
+Ini sekaligus mengerjakan bagian Fase 3 (event SiLAKES ke PRODULI) yang sudah disetujui di §9 no. 5: keputusan usulan PRODULI didorong seketika. Hasil lab TIDAK ikut (tetap sinkron 02:00).
+
+**FKTP = puskesmas pengirim**
+- Pasien baru di pengiriman sampel: FKTP dikunci ke puskesmas pemilik batch (ditampilkan tetap, dipaksa juga di backend).
+- Usulan perubahan data: bila puskesmas pasien dipetakan dari pengirim sampel (`pengirim_matched`), FKTP dikunci ke puskesmas itu dan ikut di setiap usulan. Pengirim tidak jelas (rujukan perorangan, dipetakan dari desa saja) tetap memilih manual. SiLAKES tidak membuat baris usulan bila FKTP sudah sama.
+
+**Cari sambil mengetik** (`GET /pengiriman-sampel/patient-search?q=&batch_id=`)
+- Nama (min. 2 huruf), atau NIK / no. BPJS / no. reg (min. 4 angka, awalan). Maks 10, Prolanis didahulukan, cakupan puskesmas user. Semua pasien di cakupan ikut, bukan hanya yang sudah Prolanis, supaya pasien terdaftar tidak didaftarkan ulang. Kartu yang sudah di antrian ditandai.
+- Satu dialog, dua mode. Tidak ketemu: tombol "Daftarkan pasien baru", kata kunci dibawa ke form (16 digit = NIK, 13 digit = BPJS, teks = nama). "Kembali ke cari pasien" kapan saja. Escape hanya menutup di mode cari (isian panjang tidak hilang karena satu tombol).
+
+**Pendaftaran langsung**
+1. PRODULI menyimpan baris antrian (`registrasi_status = mengirim`, `diinput_oleh_user_id`), lalu `RegisterPasienBaruToSilakesJob` memanggil `POST /integration/patient-registrations` (token tulis yang sama dengan prolanis-deliveries).
+2. SiLAKES: NIK sudah jadi pasien → balas pasien itu (`sudah_terdaftar`), PRODULI langsung menautkan baris. NIK sudah menunggu → balas usulan yang sama (aman diulang). Selain itu → usulan `patient_registration_proposals` sumber `produli_pendaftaran`.
+3. Ditinjau di halaman Usulan Pembaruan Data SiLAKES (panel "Pendaftaran pasien baru dari PRODULI"), atau disetujui otomatis oleh switch yang sama (sesi, jeda ~3 detik, tepat sekali, log, penyapu tiap menit). Disetujui = pasien + no. reg dibuat.
+4. SiLAKES mendorong `patient_registration.approved/rejected` ke `POST /api/v1/integration/silakes-events` PRODULI (HMAC sama, `event_id` unik, retry 8x). PRODULI: upsert pasien, tautkan baris (`terdaftar` + no. reg), notifikasi pengisi (bel, FCM), sinyal realtime ke layar antrian.
+5. Cadangan: `produli:cek-pendaftaran-silakes` tiap 5 menit membaca `GET /integration/patient-registrations/{id}`; layar antrian juga mengecek tiap 30 detik selama ada pendaftaran berjalan.
+6. Saat sampel tiba, baris yang sudah terdaftar dikirim sebagai pasien lama; yang masih menunggu membawa `registration_proposal_id` sehingga SiLAKES tidak membuat usulan kedua. Gagal kirim di awal tidak menghilangkan pasien: datanya ikut batch seperti alur lama.
+7. Wilayah pasien baru tak terpetakan → puskesmas pengirim (`manual`), supaya pasien tidak hilang dari daftar puskesmas yang mendaftarkannya.
+
+**Keputusan usulan perubahan data** juga didorong (`patient_field_update.approved/rejected`): data pasien di PRODULI langsung berubah, dan pengaju dinotifikasi SEKALI setelah semua field dari satu pengajuan diputuskan (`silakes_field_update_refs`).
+
+**Konfigurasi production yang dibutuhkan:** `.env` SiLAKES `PRODULI_API_BASE_URL=https://api.produli.labkesdasumenep.id`. Tanpa ini tidak ada yang didorong; PRODULI tetap mendapat hasil lewat pengecekan berkala.
+
 ## 11. Pertanyaan review awal (arsip)
 
 1. **Cakupan pasien:** tarik semua 10.776 pasien Prolanis (yang belum punya hasil lab 2026 ditandai "Belum ada hasil lab"), atau tetap 6.757 yang punya hasil lab sejak 2026-01-01? Usulan saya: tarik semua, supaya daftar Prolanis puskesmas lengkap.

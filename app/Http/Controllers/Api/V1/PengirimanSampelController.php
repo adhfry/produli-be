@@ -12,6 +12,7 @@ use App\Models\PengirimanSampel;
 use App\Models\PengirimanSampelPasien;
 use App\Services\PengirimanSampel\PengirimanSampelService;
 use App\Support\ApiResponse;
+use App\Support\NikDisplay;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -188,6 +189,55 @@ class PengirimanSampelController extends Controller
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
+        ]);
+    }
+
+    /**
+     * Cari pasien sambil mengetik (revisi 2026-11-17) untuk antrian pengiriman sampel: nama,
+     * NIK, no. BPJS, atau no. reg, maksimal 10 kandidat, cakupan puskesmas sama dengan
+     * patientCandidates(). Semua pasien di cakupan ikut (bukan hanya yang sudah Prolanis) supaya
+     * pasien yang sudah terdaftar tidak didaftarkan ulang; Prolanis didahulukan.
+     */
+    public function patientSearch(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', PengirimanSampel::class);
+
+        $q = trim((string) $request->string('q'));
+        $tanpaPemisah = preg_replace('/[\s.\-]/', '', $q);
+        $cariAngka = $tanpaPemisah !== '' && ctype_digit($tanpaPemisah);
+
+        if (($cariAngka && strlen($tanpaPemisah) < 4) || (! $cariAngka && mb_strlen($q) < 2)) {
+            return ApiResponse::success(['q' => $q, 'items' => []]);
+        }
+
+        $sudahDiAntrian = $request->filled('batch_id')
+            ? PengirimanSampelPasien::where('pengiriman_sampel_id', $request->integer('batch_id'))
+                ->whereNotNull('external_patient_id')->pluck('external_patient_id')->all()
+            : [];
+
+        $pasien = $this->service->patientSearchQuery($request->user())
+            ->when($cariAngka, fn ($query) => $query->where(fn ($w) => $w
+                ->where('nik', 'like', $tanpaPemisah.'%')
+                ->orWhere('no_bpjs', 'like', $tanpaPemisah.'%')
+                ->orWhere('no_reg', 'like', $tanpaPemisah.'%')))
+            ->when(! $cariAngka, fn ($query) => $query->where('nama', 'like', '%'.$q.'%'))
+            ->orderByDesc('is_prolanis')
+            ->orderBy('nama')
+            ->limit(10)
+            ->get();
+
+        return ApiResponse::success([
+            'q' => $q,
+            'items' => $pasien->map(fn ($p) => [
+                ...(new PatientCandidateResource($p))->toArray($request),
+                'nik' => NikDisplay::resolve($p->nik),
+                'no_bpjs' => $p->no_bpjs,
+                'no_reg' => $p->no_reg,
+                'gender' => $p->gender,
+                'tgl_lahir' => $p->tgl_lahir?->format('Y-m-d'),
+                'is_prolanis' => (bool) $p->is_prolanis,
+                'sudah_di_antrian' => in_array($p->external_patient_id, $sudahDiAntrian, true),
+            ])->values(),
         ]);
     }
 

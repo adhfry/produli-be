@@ -666,6 +666,16 @@ class PatientController extends Controller
             ]);
         }
 
+        // FKTP terdaftar = puskesmas pengirim sampel bila pengirimnya jelas (permintaan user
+        // 2026-11-17): ikut di setiap usulan, menimpa pilihan klien. SiLAKES melewatinya bila
+        // nilainya sudah sama, jadi tidak muncul usulan FKTP kosong untuk staf Labkesda.
+        $fktpPengirim = $patient->puskesmas_resolution_method === 'pengirim_matched'
+            ? trim((string) $patient->puskesmas?->nama)
+            : '';
+        if ($fktpPengirim !== '') {
+            $fields['fktp'] = $fktpPengirim;
+        }
+
         $ktpScanId = null;
         if ($request->ktpScanId() !== null) {
             $scan = app(KtpScanService::class)->ambilUntukDipakai($request->ktpScanId(), $request->user());
@@ -675,6 +685,7 @@ class PatientController extends Controller
 
         $job = new SyncPatientFieldUpdateToSilakesJob($patient->id, $fields, $request->user()->name);
         $job->ktpScanId = $ktpScanId;
+        $job->proposedByUserId = $request->user()->id;
         dispatch($job);
 
         // Puskesmas-scoped (revisi Bu Kadis) -- dikirim di titik INI (usulan diajukan), bukan

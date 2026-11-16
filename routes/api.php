@@ -18,12 +18,19 @@ use App\Http\Controllers\Api\V1\ProlanisScheduleController;
 use App\Http\Controllers\Api\V1\PuskesmasController;
 use App\Http\Controllers\Api\V1\RealtimeController;
 use App\Http\Controllers\Api\V1\RujukanController;
+use App\Http\Controllers\Api\V1\SilakesEventController;
 use App\Http\Controllers\Api\V1\SilakesSyncController;
 use App\Http\Controllers\Api\V1\StaffController;
 use App\Http\Controllers\Api\V1\TenagaKesehatanController;
 use App\Http\Controllers\Api\V1\VisitAssignmentController;
 use App\Http\Controllers\Api\V1\VisitReportController;
+use App\Http\Middleware\VerifySilakesSignature;
 use Illuminate\Support\Facades\Route;
+
+// Didorong SiLAKES (revisi 2026-11-17): keputusan staf Labkesda atas usulan PRODULI. Tanpa login,
+// digerbangi tanda tangan HMAC bersama (VerifySilakesSignature).
+Route::post('integration/silakes-events', [SilakesEventController::class, 'store'])
+    ->middleware([VerifySilakesSignature::class, 'throttle:120,1']);
 
 Route::prefix('auth')->group(function () {
     Route::post('login', [AuthController::class, 'login'])->middleware('throttle:6,1');
@@ -192,6 +199,8 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     // Modul Kirim Data Prolanis ke Labkesda, Fase B -- penyusun antrian (murni dalam PRODULI,
     // belum ada pengiriman sungguhan ke SiLAKES, itu Fase D).
     Route::get('pengiriman-sampel/patient-candidates', [PengirimanSampelController::class, 'patientCandidates']);
+    // Cari pasien sambil mengetik (revisi 2026-11-17): nama, NIK, atau no. BPJS, maks 10 kandidat.
+    Route::get('pengiriman-sampel/patient-search', [PengirimanSampelController::class, 'patientSearch'])->middleware('throttle:120,1');
     // Fase C -- daftar tugas kurir sendiri, SEBELUM grup {pengirimanSampel} di bawah (mirror
     // pola patient-candidates di atas -- kalau tidak, route-model-binding coba cocokkan 'mine'
     // sebagai id).

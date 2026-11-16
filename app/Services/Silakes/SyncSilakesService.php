@@ -300,7 +300,11 @@ class SyncSilakesService
         return $classifiedCount;
     }
 
-    private function upsertPatient(array $row): void
+    /**
+     * Juga dipakai SilakesEventService (revisi 2026-11-17) untuk menerapkan data pasien yang
+     * didorong SiLAKES seketika -- bentuk $row sama persis dengan item GET /integration/patients.
+     */
+    public function upsertPatient(array $row): PatientsCache
     {
         $resolution = $this->wilayahResolver->resolve($row['kel_desa'] ?? null, $row['kecamatan'] ?? null);
 
@@ -316,7 +320,7 @@ class SyncSilakesService
             ? ['puskesmas_id' => $existing->puskesmas_id, 'method' => 'manual', 'pengirim_raw' => $existing->pengirim_raw]
             : $this->wilayahResolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $row['patient_id']);
 
-        PatientsCache::updateOrCreate(
+        return PatientsCache::updateOrCreate(
             ['external_patient_id' => $row['patient_id']],
             [
                 'no_reg' => $row['no_reg'] ?? null,

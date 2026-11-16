@@ -4,11 +4,13 @@ namespace App\Jobs;
 
 use App\Exceptions\SilakesApiException;
 use App\Models\PatientsCache;
+use App\Models\SilakesFieldUpdateRef;
 use App\Services\Ktp\KtpScanService;
 use App\Services\Silakes\SilakesApiClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -30,6 +32,11 @@ class SyncPatientFieldUpdateToSilakesJob implements ShouldQueue
      * Hanya id yang disimpan di antrian; isi foto dibaca saat job jalan.
      */
     public ?int $ktpScanId = null;
+
+    // Staf pengaju (revisi 2026-11-17): id usulan dari SiLAKES dicatat atas namanya supaya
+    // keputusan staf Labkesda dinotifikasikan ke dia (SilakesEventService::terapkanPerubahan).
+    // Bukan promoted property, sama alasannya dengan $ktpScanId (job lama di antrean tetap aman).
+    public ?int $proposedByUserId = null;
 
     /**
      * @param  array<string, mixed>  $fields
@@ -79,7 +86,7 @@ class SyncPatientFieldUpdateToSilakesJob implements ShouldQueue
         ];
 
         try {
-            $client->postPembaruanLapangan($patient->external_patient_id, $payload);
+            $result = $client->postPembaruanLapangan($patient->external_patient_id, $payload);
         } catch (SilakesApiException $e) {
             if ($e->isClientError()) {
                 // 401/403/422 dst -- tidak akan membaik dengan retry, gagalkan langsung.
@@ -89,6 +96,14 @@ class SyncPatientFieldUpdateToSilakesJob implements ShouldQueue
             }
 
             throw $e; // 5xx/lainnya -> biar Laravel retry sesuai backoff()
+        }
+
+        $usulanId = (string) Str::uuid();
+        foreach ($result['data']['update_ids'] ?? [] as $updateId) {
+            SilakesFieldUpdateRef::firstOrCreate(
+                ['silakes_update_id' => (int) $updateId],
+                ['usulan_id' => $usulanId, 'user_id' => $this->proposedByUserId, 'patients_cache_id' => $patient->id],
+            );
         }
     }
 

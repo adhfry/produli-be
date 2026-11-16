@@ -2,6 +2,7 @@
 
 namespace App\Services\PengirimanSampel;
 
+use App\Jobs\RegisterPasienBaruToSilakesJob;
 use App\Jobs\SendProlanisDeliveryToSilakesJob;
 use App\Models\PatientsCache;
 use App\Models\PengantarSampel;
@@ -68,7 +69,7 @@ class PengirimanSampelService
             ? app(KtpScanService::class)->ambilUntukDipakai((int) $data['ktp_scan_id'], $user)
             : null;
 
-        return DB::transaction(function () use ($batch, $data, $ktpScan) {
+        return DB::transaction(function () use ($batch, $data, $ktpScan, $user) {
             $nextUrutan = (int) $batch->pasien()->max('urutan') + 1;
 
             if (! empty($data['external_patient_id'])) {
@@ -117,11 +118,19 @@ class PengirimanSampelService
                 'data_pasien_baru_status_perkawinan' => $data['status_perkawinan'] ?? null,
                 'data_pasien_baru_pekerjaan' => $data['pekerjaan'] ?? null,
                 'data_pasien_baru_golongan_darah' => $data['golongan_darah'] ?? null,
-                'data_pasien_baru_fktp' => $data['fktp'] ?? null,
+                // FKTP terdaftar = puskesmas pengirim batch (permintaan user 2026-11-17); nilai dari
+                // klien hanya dipakai bila batch tanpa puskesmas (tidak terjadi di alur normal).
+                'data_pasien_baru_fktp' => $this->fktpPengirim($batch) ?? ($data['fktp'] ?? null),
                 'ktp_scan_id' => $ktpScan?->id,
+                'diinput_oleh_user_id' => $user?->id,
+                'registrasi_status' => 'mengirim',
+                'registrasi_diperbarui_at' => now(),
             ]);
 
             $ktpScan?->update(['pengiriman_sampel_pasien_id' => $pasien->id, 'used_at' => now()]);
+
+            // Didaftarkan ke SiLAKES SEKARANG (revisi 2026-11-17), bukan menunggu sampel tiba.
+            RegisterPasienBaruToSilakesJob::dispatch($pasien->id)->afterCommit();
 
             return $pasien;
         });
@@ -395,6 +404,31 @@ class PengirimanSampelService
         }
 
         return $query->withMax('labResults', 'tanggal_periksa');
+    }
+
+    /**
+     * Cakupan pencarian sambil mengetik (revisi 2026-11-17): SEMUA pasien di puskesmas user,
+     * tidak hanya yang sudah Prolanis, supaya pasien yang sebenarnya sudah terdaftar di Labkesda
+     * ketemu dan tidak didaftarkan ulang sebagai pasien baru.
+     *
+     * @return Builder<PatientsCache>
+     */
+    public function patientSearchQuery(User $user): Builder
+    {
+        $query = PatientsCache::query();
+
+        if (! DataScope::isFullAccess($user)) {
+            $query->where('puskesmas_id', $user->puskesmas_id);
+        }
+
+        return $query->withMax('labResults', 'tanggal_periksa');
+    }
+
+    private function fktpPengirim(PengirimanSampel $batch): ?string
+    {
+        $nama = trim((string) $batch->puskesmas?->nama);
+
+        return $nama !== '' ? $nama : null;
     }
 
     private function assertDraft(PengirimanSampel $batch): void

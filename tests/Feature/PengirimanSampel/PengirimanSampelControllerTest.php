@@ -29,6 +29,11 @@ class PengirimanSampelControllerTest extends TestCase
         parent::setUp();
 
         $this->seed(RolesSeeder::class);
+        // Pasien baru kini langsung didaftarkan ke SiLAKES (RegisterPasienBaruToSilakesJob, queue
+        // sync di test) -- balasan tiruan supaya test lama tidak bergantung pada jaringan.
+        \Illuminate\Support\Facades\Http::fake(['*/api/v1/integration/patient-registrations' => \Illuminate\Support\Facades\Http::response([
+            'status' => 'success', 'message' => 'ok', 'data' => ['registration_proposal_id' => 1, 'status' => 'pending_review', 'patient' => null],
+        ])]);
 
         $kabupaten = Kabupaten::create(['kode_kemendagri' => '35.29', 'nama' => 'Sumenep']);
         $this->puskesmasA = Puskesmas::create(['kabupaten_id' => $kabupaten->id, 'kode_internal' => 'PKM-A', 'nama' => 'Puskesmas A']);

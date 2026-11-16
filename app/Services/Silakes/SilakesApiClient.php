@@ -296,6 +296,23 @@ class SilakesApiClient
     }
 
     /**
+     * POST /api/v1/integration/patient-registrations -- daftarkan pasien baru LANGSUNG saat staf
+     * mengisinya (revisi 2026-11-17). Token tulis yang sama dengan prolanis-deliveries. Balasan
+     * data.status: 'pending_review' (menunggu staf / auto approve) atau 'sudah_terdaftar' (NIK
+     * sudah jadi pasien; data.patient berisi pasien itu).
+     */
+    public function postPatientRegistration(array $payload): array
+    {
+        return $this->post('/api/v1/integration/patient-registrations', $payload);
+    }
+
+    /** GET /api/v1/integration/patient-registrations/{id} -- cadangan bila event SiLAKES tidak sampai. */
+    public function getPatientRegistration(int $registrationProposalId): array
+    {
+        return $this->get("/api/v1/integration/patient-registrations/{$registrationProposalId}");
+    }
+
+    /**
      * GET /api/v1/integration/prolanis-deliveries/{produli_pengiriman_sampel_id} — dipoling
      * PollProlanisDeliveryConfirmationCommand, BUKAN token tulis (baca token biasa) -- lihat
      * ability integration:read-lab-results yang dipasang di route SiLAKES.

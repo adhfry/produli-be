@@ -36,6 +36,11 @@ class KtpScanDanUsulanLengkapTest extends TestCase
         parent::setUp();
 
         $this->seed(RolesSeeder::class);
+        // Pasien baru kini langsung didaftarkan ke SiLAKES (RegisterPasienBaruToSilakesJob, queue
+        // sync di test) -- balasan tiruan supaya test lama tidak bergantung pada jaringan.
+        \Illuminate\Support\Facades\Http::fake(['*/api/v1/integration/patient-registrations' => \Illuminate\Support\Facades\Http::response([
+            'status' => 'success', 'message' => 'ok', 'data' => ['registration_proposal_id' => 1, 'status' => 'pending_review', 'patient' => null],
+        ])]);
         Config::set('produli.storage.ktp_photos_disk', 'ktp-uji');
         Config::set('produli.silakes.write_token', 'test-write-token');
         Storage::fake('ktp-uji');
@@ -220,5 +225,59 @@ class KtpScanDanUsulanLengkapTest extends TestCase
             && $r['pasien'][0]['pekerjaan'] === 'Petani'
             && $r['pasien'][0]['golongan_darah'] === 'O'
             && str_starts_with($r['pasien'][0]['foto_ktp_base64'], 'data:image/jpeg;base64,'));
+    }
+
+    // --- FKTP = puskesmas pengirim (permintaan user 2026-11-17) ---------------------------------
+
+    public function test_fktp_pasien_baru_pengiriman_sampel_selalu_puskesmas_pengirim_batch(): void
+    {
+        $staf = $this->staf();
+        Sanctum::actingAs($staf);
+        $batch = PengirimanSampel::create(['puskesmas_id' => $this->puskesmas->id, 'status' => 'draft', 'dibuat_oleh' => $staf->id]);
+
+        $this->postJson("/api/v1/pengiriman-sampel/{$batch->id}/pasien", [
+            'name' => 'Siti Aminah', 'nik' => '3529014101650001', 'gender' => 'P', 'tempat_lahir' => 'Sumenep',
+            'tgl_lahir' => '1965-01-01', 'phone' => '081234567890', 'alamat' => 'Jl. Uji No. 1',
+            'fktp' => 'Puskesmas Lain',
+        ])->assertCreated();
+
+        $this->assertSame('Puskesmas KTP', $batch->pasien()->firstOrFail()->data_pasien_baru_fktp);
+    }
+
+    public function test_usulan_pasien_dengan_pengirim_jelas_selalu_membawa_fktp_puskesmas_pengirim(): void
+    {
+        Queue::fake();
+        Sanctum::actingAs($this->staf());
+        $pasien = $this->pasien(['puskesmas_resolution_method' => 'pengirim_matched']);
+
+        $this->patchJson("/api/v1/patients/{$pasien->id}/propose-update", ['phone' => '081234567890', 'fktp' => 'Puskesmas Lain'])
+            ->assertOk();
+
+        Queue::assertPushed(SyncPatientFieldUpdateToSilakesJob::class,
+            fn ($j) => $j->fields['fktp'] === 'Puskesmas KTP' && $j->fields['phone'] === '081234567890');
+    }
+
+    public function test_fktp_pengirim_saja_tidak_cukup_untuk_membuat_usulan(): void
+    {
+        Queue::fake();
+        Sanctum::actingAs($this->staf());
+        $pasien = $this->pasien(['puskesmas_resolution_method' => 'pengirim_matched']);
+
+        $this->patchJson("/api/v1/patients/{$pasien->id}/propose-update", [])->assertStatus(422);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_pasien_tanpa_pengirim_jelas_memakai_fktp_pilihan_staf(): void
+    {
+        Queue::fake();
+        Sanctum::actingAs($this->staf());
+        $pasien = $this->pasien(['puskesmas_resolution_method' => 'desa']);
+
+        $this->patchJson("/api/v1/patients/{$pasien->id}/propose-update", ['fktp' => 'Puskesmas Batuan'])->assertOk();
+        Queue::assertPushed(SyncPatientFieldUpdateToSilakesJob::class, fn ($j) => $j->fields['fktp'] === 'Puskesmas Batuan');
+
+        $pasienLain = $this->pasien(['external_patient_id' => 880002, 'nik_hash' => 'HASH-880002', 'puskesmas_resolution_method' => 'desa']);
+        $this->patchJson("/api/v1/patients/{$pasienLain->id}/propose-update", ['phone' => '081234567890'])->assertOk();
+        Queue::assertPushed(SyncPatientFieldUpdateToSilakesJob::class, fn ($j) => $j->fields === ['phone' => '081234567890']);
     }
 }

@@ -33,13 +33,24 @@ class PengirimanSampelPasien extends Model
         'data_pasien_baru_golongan_darah',
         'data_pasien_baru_fktp',
         'ktp_scan_id',
+        'diinput_oleh_user_id',
+        'registrasi_status',
+        'registrasi_catatan',
+        'registrasi_no_reg',
+        'registrasi_diperbarui_at',
     ];
 
     protected function casts(): array
     {
         return [
             'data_pasien_baru_tgl_lahir' => 'date',
+            'registrasi_diperbarui_at' => 'datetime',
         ];
+    }
+
+    public function diinputOleh(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'diinput_oleh_user_id');
     }
 
     public function isPasienBaru(): bool

@@ -4,7 +4,7 @@ namespace App\Jobs;
 
 use App\Exceptions\SilakesApiException;
 use App\Models\PengirimanSampel;
-use App\Services\Ktp\KtpScanService;
+use App\Services\PengirimanSampel\PasienBaruPayload;
 use App\Services\Silakes\SilakesApiClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -55,30 +55,10 @@ class SendProlanisDeliveryToSilakesJob implements ShouldQueue
             'pengantar_no_hp' => $batch->pengantarSampel?->no_hp,
             'pasien' => $batch->pasien->map(fn ($pasien) => $pasien->isPasienBaru() ? [
                 'kind' => 'proposal',
-                'name' => $pasien->nama_snapshot,
-                'nik' => $pasien->data_pasien_baru_nik,
-                'gender' => $pasien->data_pasien_baru_gender,
-                'tempat_lahir' => $pasien->data_pasien_baru_tempat_lahir,
-                'tgl_lahir' => $pasien->data_pasien_baru_tgl_lahir?->format('Y-m-d'),
-                'phone' => $pasien->data_pasien_baru_phone,
-                'alamat' => $pasien->data_pasien_baru_alamat,
-                'rt_rw' => $pasien->data_pasien_baru_rt_rw,
-                'kel_desa' => $pasien->data_pasien_baru_kel_desa,
-                'kecamatan' => $pasien->data_pasien_baru_kecamatan,
-                'no_bpjs' => $pasien->data_pasien_baru_no_bpjs,
-                'jenis_prolanis' => $pasien->jenis_prolanis_snapshot,
-                // Revisi 2026-11-16: identitas lengkap + foto KTP (dibaca saat job jalan, bukan
-                // disimpan di antrian). Kunci null dibuang supaya batch lama tetap identik.
-                ...array_filter([
-                    'email' => $pasien->data_pasien_baru_email,
-                    'agama' => $pasien->data_pasien_baru_agama,
-                    'status_perkawinan' => $pasien->data_pasien_baru_status_perkawinan,
-                    'pekerjaan' => $pasien->data_pasien_baru_pekerjaan,
-                    'golongan_darah' => $pasien->data_pasien_baru_golongan_darah,
-                    'fktp' => $pasien->data_pasien_baru_fktp,
-                    'foto_ktp_base64' => app(KtpScanService::class)->base64Of($pasien->ktp_scan_id),
-                ], fn ($v) => $v !== null),
-                'produli_pengiriman_sampel_pasien_id' => $pasien->id,
+                ...PasienBaruPayload::untuk($pasien),
+                // Sudah didaftarkan langsung saat diisi (revisi 2026-11-17) dan masih menunggu
+                // verifikasi: SiLAKES memakai usulan itu, tidak membuat usulan kedua.
+                ...($pasien->registration_proposal_ref ? ['registration_proposal_id' => $pasien->registration_proposal_ref] : []),
             ] : [
                 'kind' => 'existing',
                 'patient_id' => $pasien->external_patient_id,
