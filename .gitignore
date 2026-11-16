@@ -20,3 +20,6 @@ yarn-error.log
 secret.txt
 /storage/firebase-credentials.json
 /*firebase-adminsdk*.json
+
+# Backup kunci hash NIK (lokal saja, rahasia)
+nik-hash-secret.backup.txt

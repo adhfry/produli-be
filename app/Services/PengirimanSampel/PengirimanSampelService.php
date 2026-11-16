@@ -7,7 +7,9 @@ use App\Models\PatientsCache;
 use App\Models\PengantarSampel;
 use App\Models\PengirimanSampel;
 use App\Models\PengirimanSampelPasien;
+use App\Models\KtpScan;
 use App\Models\User;
+use App\Services\Ktp\KtpScanService;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
@@ -56,11 +58,17 @@ class PengirimanSampelService
      *     rt_rw?: ?string, kel_desa?: ?string, kecamatan?: ?string, no_bpjs?: ?string,
      *     jenis_prolanis?: ?string}  $data
      */
-    public function addPatient(PengirimanSampel $batch, array $data): PengirimanSampelPasien
+    public function addPatient(PengirimanSampel $batch, array $data, ?User $user = null): PengirimanSampelPasien
     {
         $this->assertDraft($batch);
 
-        return DB::transaction(function () use ($batch, $data) {
+        // Foto KTP (revisi 2026-11-16): dicek SEBELUM transaksi supaya galat "foto bukan milik
+        // Anda / sudah dipakai" tidak meninggalkan baris pasien setengah jadi.
+        $ktpScan = ! empty($data['ktp_scan_id']) && $user !== null && empty($data['external_patient_id'])
+            ? app(KtpScanService::class)->ambilUntukDipakai((int) $data['ktp_scan_id'], $user)
+            : null;
+
+        return DB::transaction(function () use ($batch, $data, $ktpScan) {
             $nextUrutan = (int) $batch->pasien()->max('urutan') + 1;
 
             if (! empty($data['external_patient_id'])) {
@@ -89,7 +97,7 @@ class PengirimanSampelService
 
             // Pasien baru -- belum ada di SiLAKES sama sekali, identitas lengkap wajib
             // diisi sekarang (lihat docblock migrasi create_pengiriman_sampel_pasien_table).
-            return PengirimanSampelPasien::create([
+            $pasien = PengirimanSampelPasien::create([
                 'pengiriman_sampel_id' => $batch->id,
                 'nama_snapshot' => $data['name'],
                 'jenis_prolanis_snapshot' => $data['jenis_prolanis'] ?? null,
@@ -104,7 +112,18 @@ class PengirimanSampelService
                 'data_pasien_baru_kel_desa' => $data['kel_desa'] ?? null,
                 'data_pasien_baru_kecamatan' => $data['kecamatan'] ?? null,
                 'data_pasien_baru_no_bpjs' => $data['no_bpjs'] ?? null,
+                'data_pasien_baru_email' => $data['email'] ?? null,
+                'data_pasien_baru_agama' => $data['agama'] ?? null,
+                'data_pasien_baru_status_perkawinan' => $data['status_perkawinan'] ?? null,
+                'data_pasien_baru_pekerjaan' => $data['pekerjaan'] ?? null,
+                'data_pasien_baru_golongan_darah' => $data['golongan_darah'] ?? null,
+                'data_pasien_baru_fktp' => $data['fktp'] ?? null,
+                'ktp_scan_id' => $ktpScan?->id,
             ]);
+
+            $ktpScan?->update(['pengiriman_sampel_pasien_id' => $pasien->id, 'used_at' => now()]);
+
+            return $pasien;
         });
     }
 
@@ -117,6 +136,9 @@ class PengirimanSampelService
                 'pasien' => ['Baris pasien ini bukan bagian dari antrian ini.'],
             ]);
         }
+
+        // Foto KTP pasien yang dihapus dari antrian boleh dipakai lagi (mis. ditambahkan ulang).
+        KtpScan::where('pengiriman_sampel_pasien_id', $pasien->id)->update(['pengiriman_sampel_pasien_id' => null, 'used_at' => null]);
 
         $pasien->delete();
     }

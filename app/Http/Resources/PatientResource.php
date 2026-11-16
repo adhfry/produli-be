@@ -27,8 +27,8 @@ class PatientResource extends JsonResource
             'no_reg' => $this->no_reg,
             'no_bpjs' => $this->no_bpjs,
             'nik' => \App\Support\NikDisplay::resolve($this->nik),
-            // true bila NIK di SiLAKES kosong/"-"/berisi no. reg -- form usulan menampilkan
-            // isian koreksi NIK hanya untuk pasien ini (App\Support\NikKoreksi). NIK mentah
+            // Selalu true sejak revisi 2026-11-16 (NIK boleh diajukan untuk semua pasien, lihat
+            // App\Support\NikKoreksi); dipertahankan supaya klien lama tetap jalan. NIK mentah
             // tetap tidak pernah keluar dari resource ini.
             'nik_bisa_dikoreksi' => \App\Support\NikKoreksi::bisaDiajukan($this->nik, $this->no_reg),
             'nama' => $this->nama,

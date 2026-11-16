@@ -171,6 +171,9 @@ return [
     */
     'storage' => [
         'visit_photos_disk' => env('PRODULI_VISIT_PHOTOS_DISK', 's3'),
+        // Foto KTP hasil scan staf (revisi 2026-11-16). Default ikut disk foto kunjungan
+        // supaya tidak perlu konfigurasi baru di server.
+        'ktp_photos_disk' => env('PRODULI_KTP_PHOTOS_DISK', env('PRODULI_VISIT_PHOTOS_DISK', 's3')),
     ],
 
     /*

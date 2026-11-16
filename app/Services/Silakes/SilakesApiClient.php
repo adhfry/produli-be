@@ -98,7 +98,7 @@ class SilakesApiClient
      *
      * @return array{status: string, message: string, data: mixed, meta?: array}
      */
-    public function post(string $path, array $payload, ?string $token = null): array
+    public function post(string $path, array $payload, ?string $token = null, int $timeoutSeconds = 15): array
     {
         $bearerToken = $token ?? $this->writeToken;
 
@@ -121,7 +121,7 @@ class SilakesApiClient
                     'X-Timestamp' => $timestamp,
                 ])
                 ->acceptJson()
-                ->timeout(15)
+                ->timeout($timeoutSeconds)
         )->post($path);
 
         return $this->decode($path, $response);
@@ -266,6 +266,20 @@ class SilakesApiClient
     public function getPembaruanLapanganHistory(int $externalPatientId): array
     {
         return $this->get("/api/v1/integration/patients/{$externalPatientId}/pembaruan-lapangan");
+    }
+
+    /**
+     * POST /api/v1/integration/ktp-ocr -- baca foto KTP dengan mesin OCR SiLAKES (sama dengan
+     * registrasi SiLAKES). Endpoint BACA: pakai token baca (bukan $writeToken), tidak menyimpan
+     * apa pun di SiLAKES. Timeout lebih panjang karena OCR AI bisa butuh belasan detik.
+     *
+     * @return array{fields: array<string, mixed>, checks: array<int, array{field: string, level: string, message: string}>, existing_patient_id: ?int, model: ?string}
+     */
+    public function ktpOcr(string $imageBase64): array
+    {
+        $body = $this->post('/api/v1/integration/ktp-ocr', ['image_base64' => $imageBase64], $this->token, 60);
+
+        return $body['data'] ?? [];
     }
 
     /**

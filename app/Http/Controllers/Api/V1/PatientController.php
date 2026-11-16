@@ -19,6 +19,7 @@ use App\Models\PatientsCache;
 use App\Models\Puskesmas;
 use App\Models\RiskClassification;
 use App\Models\VisitReport;
+use App\Services\Ktp\KtpScanService;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
@@ -658,13 +659,23 @@ class PatientController extends Controller
 
         $fields = $request->proposedFields();
 
-        if ($fields === []) {
+        // Usulan berisi foto KTP saja (semua isian sudah benar) tetap sah -- fotonya yang diajukan.
+        if ($fields === [] && $request->ktpScanId() === null) {
             throw ValidationException::withMessages([
                 'fields' => ['Isi minimal satu field yang ingin diajukan perubahannya.'],
             ]);
         }
 
-        SyncPatientFieldUpdateToSilakesJob::dispatch($patient->id, $fields, $request->user()->name);
+        $ktpScanId = null;
+        if ($request->ktpScanId() !== null) {
+            $scan = app(KtpScanService::class)->ambilUntukDipakai($request->ktpScanId(), $request->user());
+            $scan->update(['patients_cache_id' => $patient->id, 'used_at' => now()]);
+            $ktpScanId = $scan->id;
+        }
+
+        $job = new SyncPatientFieldUpdateToSilakesJob($patient->id, $fields, $request->user()->name);
+        $job->ktpScanId = $ktpScanId;
+        dispatch($job);
 
         // Puskesmas-scoped (revisi Bu Kadis) -- dikirim di titik INI (usulan diajukan), bukan
         // saat SiLAKES approve baliknya (SyncSilakesService, cron) yang tidak punya konteks

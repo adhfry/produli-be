@@ -97,7 +97,7 @@ class PengirimanSampelController extends Controller
     {
         $this->authorize('update', $pengirimanSampel);
 
-        $pasien = $this->service->addPatient($pengirimanSampel, $request->validated());
+        $pasien = $this->service->addPatient($pengirimanSampel, $request->validated(), $request->user());
 
         return ApiResponse::success(new PengirimanSampelPasienResource($pasien), 'Pasien berhasil ditambahkan ke antrian', 201);
     }

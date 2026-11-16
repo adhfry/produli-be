@@ -21,8 +21,9 @@ use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 /**
- * Koreksi NIK lewat usulan pembaruan data (permintaan Kepala Dinas 2026-10-13): hanya pasien yang
- * NIK-nya kosong, "-", atau berisi nomor registrasi.
+ * Usulan NIK lewat PRODULI. Revisi 2026-11-16: NIK boleh diajukan untuk SEMUA pasien (sebelumnya
+ * hanya yang NIK-nya kosong, "-", atau berisi nomor registrasi -- pasien ber-NIK "0000..." seperti
+ * pasien 14029 jadi tidak bisa dikoreksi). Yang tetap dijaga: format NIK asli dan NIK ganda.
  */
 class KoreksiNikTest extends TestCase
 {
@@ -59,17 +60,18 @@ class KoreksiNikTest extends TestCase
         ], $overrides));
     }
 
-    public function test_aturan_kelayakan_nik(): void
+    public function test_semua_pasien_boleh_diajukan_nik_tapi_format_nik_asli_tetap_dijaga(): void
     {
         $this->assertTrue(NikKoreksi::bisaDiajukan(null, 'REG-1'));
-        $this->assertTrue(NikKoreksi::bisaDiajukan('', 'REG-1'));
-        $this->assertTrue(NikKoreksi::bisaDiajukan('-', 'REG-1'));
-        $this->assertTrue(NikKoreksi::bisaDiajukan(' -- ', null));
-        $this->assertTrue(NikKoreksi::bisaDiajukan('REG-20260101-0007', 'REG-20260101-0007'));
-        $this->assertTrue(NikKoreksi::bisaDiajukan('NOREG reg-77', 'REG-77'));
-        $this->assertFalse(NikKoreksi::bisaDiajukan('3529010101800001', 'REG-1'));
-        $this->assertFalse(NikKoreksi::bisaDiajukan('1234567890123456', 'REG-1'));
-        $this->assertFalse(NikKoreksi::bisaDiajukan('REG-9', null));
+        $this->assertTrue(NikKoreksi::bisaDiajukan('3529010101800001', 'REG-1'));
+        $this->assertTrue(NikKoreksi::bisaDiajukan('0000000000000123', 'REG-1'));
+
+        $pasien = $this->pasien(10, ['nik' => '0000000000000123']);
+        $this->assertNull(NikKoreksi::galat($pasien, '3529010101800010'));
+        $this->assertNotNull(NikKoreksi::galat($pasien, '0000000000000999'), 'NIK pengganti 0000 bukan NIK asli');
+        $this->assertNotNull(NikKoreksi::galat($pasien, '1010126000000123'), 'nomor registrasi bukan NIK');
+        $this->assertNotNull(NikKoreksi::galat($pasien, '3529019901800001'), 'tanggal di NIK tidak masuk akal');
+        $this->assertNotNull(NikKoreksi::galat($pasien, '0000000000000123'), 'sama dengan NIK sekarang');
     }
 
     public function test_resource_pasien_menandai_nik_yang_bisa_dikoreksi_tanpa_membocorkan_nik(): void
@@ -82,7 +84,7 @@ class KoreksiNikTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.nik_bisa_dikoreksi', true)
             ->assertJsonPath('data.nik', 'Tidak Diketahui');
-        $this->getJson("/api/v1/patients/{$valid->id}")->assertJsonPath('data.nik_bisa_dikoreksi', false);
+        $this->getJson("/api/v1/patients/{$valid->id}")->assertJsonPath('data.nik_bisa_dikoreksi', true);
     }
 
     public function test_staf_bisa_mengajukan_nik_untuk_pasien_ber_nik_placeholder(): void
@@ -97,17 +99,28 @@ class KoreksiNikTest extends TestCase
         Queue::assertPushed(SyncPatientFieldUpdateToSilakesJob::class, fn ($job) => $job->fields === ['nik' => '3529010101800003']);
     }
 
-    public function test_nik_pasien_yang_sudah_terisi_tidak_bisa_diganti_dari_produli(): void
+    public function test_nik_pasien_yang_sudah_terisi_kini_bisa_diajukan_ganti(): void
     {
         Queue::fake();
         Sanctum::actingAs($this->staf());
         $pasien = $this->pasien(4, ['nik' => '3529010101800004']);
 
         $this->patchJson("/api/v1/patients/{$pasien->id}/propose-update", ['nik' => '3529010101800099'])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('nik');
+            ->assertOk();
 
-        Queue::assertNothingPushed();
+        Queue::assertPushed(SyncPatientFieldUpdateToSilakesJob::class, fn ($job) => $job->fields === ['nik' => '3529010101800099']);
+    }
+
+    public function test_pasien_ber_nik_0000_seperti_pasien_14029_bisa_diajukan_nik(): void
+    {
+        Queue::fake();
+        Sanctum::actingAs($this->staf());
+        $pasien = $this->pasien(11, ['nik' => '0000000000004321']);
+
+        $this->getJson("/api/v1/patients/{$pasien->id}")->assertJsonPath('data.nik_bisa_dikoreksi', true);
+        $this->patchJson("/api/v1/patients/{$pasien->id}/propose-update", ['nik' => '3529010101800011'])->assertOk();
+
+        Queue::assertPushed(SyncPatientFieldUpdateToSilakesJob::class);
     }
 
     public function test_nik_yang_sudah_dipakai_pasien_lain_atau_format_salah_ditolak(): void
@@ -148,8 +161,9 @@ class KoreksiNikTest extends TestCase
         $layak = $tugas($this->pasien(7, ['nik' => 'REG-7']));
         $this->assertSame(['phone' => '081234', 'nik' => '3529010101800007'], $usulan($layak, ['phone' => '081234', 'nik' => '3529010101800007']));
 
+        // Revisi 2026-11-16: pasien ber-NIK valid juga boleh diusulkan NIK baru.
         $sudahValid = $tugas($this->pasien(8, ['nik' => '3529010101800008']));
-        $this->assertSame(['phone' => '081234'], $usulan($sudahValid, ['phone' => '081234', 'nik' => '3529010101800098']));
+        $this->assertSame(['phone' => '081234', 'nik' => '3529010101800098'], $usulan($sudahValid, ['phone' => '081234', 'nik' => '3529010101800098']));
 
         $formatSalah = $tugas($this->pasien(9, ['nik' => '-']));
         $this->assertSame(['phone' => '081234'], $usulan($formatSalah, ['phone' => '081234', 'nik' => '12345']));

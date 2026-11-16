@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Exceptions\SilakesApiException;
 use App\Models\PatientsCache;
+use App\Services\Ktp\KtpScanService;
 use App\Services\Silakes\SilakesApiClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -22,6 +23,13 @@ class SyncPatientFieldUpdateToSilakesJob implements ShouldQueue
     use Queueable;
 
     public int $tries = 5;
+
+    /**
+     * Foto KTP hasil scan (revisi 2026-11-16). Properti biasa dengan default -- BUKAN promoted
+     * property -- supaya job yang sudah antre sebelum deploy tetap bisa di-unserialize.
+     * Hanya id yang disimpan di antrian; isi foto dibaca saat job jalan.
+     */
+    public ?int $ktpScanId = null;
 
     /**
      * @param  array<string, mixed>  $fields
@@ -47,13 +55,18 @@ class SyncPatientFieldUpdateToSilakesJob implements ShouldQueue
     {
         $patient = PatientsCache::find($this->patientId);
 
-        if ($patient === null || $this->fields === []) {
+        $fotoKtp = app(KtpScanService::class)->base64Of($this->ktpScanId);
+
+        if ($patient === null || ($this->fields === [] && $fotoKtp === null)) {
             return;
         }
 
         $payload = [
             ...$this->fields,
-            'sumber' => 'produli_dashboard',
+            // produli_ktp: alamat yang diusulkan berasal dari KTP, jadi SiLAKES menulisnya ke
+            // alamat KTP pasien (bukan domisili) saat disetujui.
+            'sumber' => $this->ktpScanId ? 'produli_ktp' : 'produli_dashboard',
+            ...($fotoKtp ? ['foto_ktp_base64' => $fotoKtp] : []),
             // SiLAKES (IntegrationController::submitFieldUpdate) HANYA membaca
             // 'produli_kader_nama' dari request -- pakai key yang sama di sini (bukan
             // 'produli_diajukan_oleh') supaya nama pengaju SUNGGUHAN tersimpan, bukan

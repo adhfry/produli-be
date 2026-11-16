@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Exceptions\SilakesApiException;
 use App\Models\PengirimanSampel;
+use App\Services\Ktp\KtpScanService;
 use App\Services\Silakes\SilakesApiClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -66,6 +67,17 @@ class SendProlanisDeliveryToSilakesJob implements ShouldQueue
                 'kecamatan' => $pasien->data_pasien_baru_kecamatan,
                 'no_bpjs' => $pasien->data_pasien_baru_no_bpjs,
                 'jenis_prolanis' => $pasien->jenis_prolanis_snapshot,
+                // Revisi 2026-11-16: identitas lengkap + foto KTP (dibaca saat job jalan, bukan
+                // disimpan di antrian). Kunci null dibuang supaya batch lama tetap identik.
+                ...array_filter([
+                    'email' => $pasien->data_pasien_baru_email,
+                    'agama' => $pasien->data_pasien_baru_agama,
+                    'status_perkawinan' => $pasien->data_pasien_baru_status_perkawinan,
+                    'pekerjaan' => $pasien->data_pasien_baru_pekerjaan,
+                    'golongan_darah' => $pasien->data_pasien_baru_golongan_darah,
+                    'fktp' => $pasien->data_pasien_baru_fktp,
+                    'foto_ktp_base64' => app(KtpScanService::class)->base64Of($pasien->ktp_scan_id),
+                ], fn ($v) => $v !== null),
                 'produli_pengiriman_sampel_pasien_id' => $pasien->id,
             ] : [
                 'kind' => 'existing',

@@ -26,6 +26,13 @@ class PengirimanSampelPasien extends Model
         'data_pasien_baru_kel_desa',
         'data_pasien_baru_kecamatan',
         'data_pasien_baru_no_bpjs',
+        'data_pasien_baru_email',
+        'data_pasien_baru_agama',
+        'data_pasien_baru_status_perkawinan',
+        'data_pasien_baru_pekerjaan',
+        'data_pasien_baru_golongan_darah',
+        'data_pasien_baru_fktp',
+        'ktp_scan_id',
     ];
 
     protected function casts(): array

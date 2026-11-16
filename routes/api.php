@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\DesaController;
 use App\Http\Controllers\Api\V1\FcmTokenController;
 use App\Http\Controllers\Api\V1\KaderController;
 use App\Http\Controllers\Api\V1\KecamatanController;
+use App\Http\Controllers\Api\V1\KtpScanController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PatientController;
 use App\Http\Controllers\Api\V1\PengantarSampelController;
@@ -124,6 +125,11 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('patients/{patient}/lab-documents', [PatientController::class, 'labDocuments']);
     Route::get('patients/{patient}/lab-documents/{suratHasilLabId}/pdf', [PatientController::class, 'labDocumentPdf'])
         ->whereNumber('suratHasilLabId');
+
+    // Scan KTP pasien (revisi 2026-11-16) -- dibaca lewat OCR SiLAKES, foto disimpan di PRODULI.
+    // Throttle sama dengan scan KTP staf SiLAKES (OCR AI mahal).
+    Route::post('ktp-scans', [KtpScanController::class, 'store'])->middleware('throttle:20,1');
+    Route::get('ktp-scans/{ktpScan}/image', [KtpScanController::class, 'image']);
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
 

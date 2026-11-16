@@ -5,33 +5,27 @@ namespace App\Support;
 use App\Models\PatientsCache;
 
 /**
- * Koreksi NIK lewat usulan pembaruan data (permintaan Kepala Dinas 2026-10-13): pasien yang NIK-nya
- * di SiLAKES tidak terisi dengan benar -- kosong, "-", atau berisi nomor registrasi (petugas
- * pendaftaran dulu mengisi kolom NIK dengan no. reg) -- boleh diajukan NIK 16 digit yang benar,
- * baik oleh staf (propose-update) maupun kader (laporan kunjungan). Pasien yang NIK-nya sudah
- * terisi lain dari itu TIDAK bisa diajukan ganti NIK dari PRODULI (identitas inti, dikoreksi di
- * SiLAKES). Usulan tetap masuk SiLAKES sebagai pending_review seperti field lain.
+ * Usulan NIK pasien lewat PRODULI (staf lewat propose-update, kader lewat laporan kunjungan).
+ *
+ * Revisi 2026-11-16 (permintaan pemilik sistem, temuan pasien 14029 ber-NIK "0000..."): NIK
+ * BOLEH diajukan untuk SEMUA pasien, tidak lagi hanya yang NIK-nya kosong/"-"/berisi no. reg.
+ * Usulan tetap masuk SiLAKES sebagai pending_review dan diverifikasi staf Labkesda. Yang
+ * dijaga di sini: format NIK asli (NikParser) dan NIK tidak boleh sudah tercatat pada pasien
+ * lain di PRODULI (SiLAKES juga menolak saat approve karena kolom NIK unik).
  */
 final class NikKoreksi
 {
     public const RULES = ['nullable', 'digits:16'];
 
+    /** Dipertahankan untuk kompatibilitas field `nik_bisa_dikoreksi` di API (selalu true). */
     public static function bisaDiajukan(?string $nik, ?string $noReg): bool
     {
-        $nik = trim((string) $nik);
-
-        if ($nik === '' || trim($nik, "- \t") === '') {
-            return true; // kosong / "-" / "--"
-        }
-
-        $noReg = trim((string) $noReg);
-
-        return $noReg !== '' && str_contains(mb_strtoupper($nik), mb_strtoupper($noReg));
+        return true;
     }
 
     public static function bisaDiajukanUntuk(?PatientsCache $patient): bool
     {
-        return $patient !== null && self::bisaDiajukan($patient->nik, $patient->no_reg);
+        return $patient !== null;
     }
 
     /**
@@ -39,8 +33,17 @@ final class NikKoreksi
      */
     public static function galat(?PatientsCache $patient, string $nikBaru): ?string
     {
-        if (! self::bisaDiajukanUntuk($patient)) {
-            return 'NIK pasien ini sudah terisi. Koreksi NIK lewat PRODULI hanya untuk pasien yang NIK-nya kosong, "-", atau berisi nomor registrasi.';
+        if ($patient === null) {
+            return 'Pasien tidak ditemukan.';
+        }
+
+        $parsed = NikParser::parse($nikBaru);
+        if (! $parsed['valid']) {
+            return $parsed['alasan'];
+        }
+
+        if ($patient->nik === $nikBaru) {
+            return 'NIK ini sama dengan NIK pasien yang sekarang, tidak perlu diajukan.';
         }
 
         $dipakai = PatientsCache::query()

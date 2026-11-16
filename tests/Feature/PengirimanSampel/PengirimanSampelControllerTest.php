@@ -125,7 +125,8 @@ class PengirimanSampelControllerTest extends TestCase
 
         $response = $this->postJson("/api/v1/pengiriman-sampel/{$batch->id}/pasien", [
             'name' => 'Siti Aminah',
-            'nik' => '3529010101650001',
+            // Perempuan: tanggal lahir di NIK ditambah 40 (01 -> 41), sesuai aturan Dukcapil.
+            'nik' => '3529014101650001',
             'gender' => 'P',
             'tempat_lahir' => 'Sumenep',
             'tgl_lahir' => '1965-01-01',
@@ -137,6 +138,50 @@ class PengirimanSampelControllerTest extends TestCase
         $response->assertCreated();
         $this->assertTrue($response->json('data.is_pasien_baru'));
         $this->assertNull($batch->pasien()->first()->external_patient_id);
+    }
+
+    public function test_pasien_baru_ditolak_kalau_nik_tidak_cocok_dengan_jenis_kelamin_kecuali_dikonfirmasi(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $batch = $this->makeBatch($this->puskesmasA, $admin);
+        Sanctum::actingAs($admin);
+
+        $data = [
+            'name' => 'Siti Aminah', 'nik' => '3529010101650001', 'gender' => 'P', 'tempat_lahir' => 'Sumenep',
+            'tgl_lahir' => '1965-01-01', 'phone' => '081234567890', 'alamat' => 'Jl. Uji No. 1',
+        ];
+
+        $this->postJson("/api/v1/pengiriman-sampel/{$batch->id}/pasien", $data)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['gender'], 'errors');
+
+        $this->postJson("/api/v1/pengiriman-sampel/{$batch->id}/pasien", [...$data, 'konfirmasi_beda_nik' => true])
+            ->assertCreated();
+    }
+
+    public function test_pasien_baru_ditolak_kalau_nik_placeholder_atau_nomor_hp_salah(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $batch = $this->makeBatch($this->puskesmasA, $admin);
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/pengiriman-sampel/{$batch->id}/pasien", [
+            'name' => 'Siti Aminah', 'nik' => '0000000000000123', 'gender' => 'P', 'tempat_lahir' => 'Sumenep',
+            'tgl_lahir' => '1965-01-01', 'phone' => '12345', 'alamat' => 'Jl. Uji No. 1',
+        ])->assertStatus(422)->assertJsonValidationErrors(['nik', 'phone'], 'errors');
+    }
+
+    public function test_pasien_baru_ditolak_kalau_nik_sudah_terdaftar_di_produli(): void
+    {
+        $admin = $this->makeUser('admin_puskesmas', $this->puskesmasA);
+        $batch = $this->makeBatch($this->puskesmasA, $admin);
+        $this->makeProlanisPatient($this->puskesmasA)->update(['nik' => '3529014101650001']);
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/pengiriman-sampel/{$batch->id}/pasien", [
+            'name' => 'Siti Aminah', 'nik' => '3529014101650001', 'gender' => 'P', 'tempat_lahir' => 'Sumenep',
+            'tgl_lahir' => '1965-01-01', 'phone' => '081234567890', 'alamat' => 'Jl. Uji No. 1',
+        ])->assertStatus(422)->assertJsonValidationErrors(['nik'], 'errors');
     }
 
     public function test_tambah_pasien_ditolak_kalau_batch_sudah_terkunci(): void
