@@ -104,6 +104,10 @@ class PuskesmasPerformanceScoringService
                 'bonus_kunjungan' => (int) $eligible->sum('visit_bonus_point'),
                 'total_poin' => $totalImprovementPoints,
                 'worsened_patients' => $eligible->filter(fn ($row) => $row->final_point < 0)->pluck('patient_id')->unique()->count(),
+                // Pasien yang LEVEL-nya benar-benar turun (Berat ke Sedang, dst). improved_patients di
+                // atas ikut menghitung retensi Terkendali (+2) karena dipakai rumus improvement_rate;
+                // untuk tampilan "Membaik" yang dipakai angka ini.
+                'level_membaik_patients' => $lainnya->where('base_point', '>', 0)->pluck('patient_id')->unique()->count(),
             ];
         }
 

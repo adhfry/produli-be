@@ -752,6 +752,8 @@ class DashboardControllerTest extends TestCase
         $row = collect($response->json('data.puskesmas_performance'))->first();
         $this->assertSame(2, $row['total_improvement_points']);
         $this->assertSame(2, $row['poin_retensi']);
+        $this->assertSame(0, $row['level_membaik_patients'], 'retensi bukan "membaik" di tampilan');
+        $this->assertSame(1, $row['improved_patients'], 'tetap dihitung di rumus improvement_rate');
         $this->assertEquals(100.0, $row['stability_rate']);
     }
 

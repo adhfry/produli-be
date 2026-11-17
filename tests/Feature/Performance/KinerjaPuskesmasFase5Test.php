@@ -97,6 +97,7 @@ class KinerjaPuskesmasFase5Test extends TestCase
         $row = $res->json('data.peringkat.0');
         $this->assertSame($this->pkmA->id, $row['puskesmas_id'], 'peringkat se-kabupaten terlihat semua role');
         $this->assertSame(20, $row['poin_perbaikan']);
+        $this->assertSame(1, $row['level_membaik_patients']);
         $this->assertSame(20, $row['total_poin']);
         $this->assertSame(5, $res->json('data.aturan.bonus_kunjungan'));
 
