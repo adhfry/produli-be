@@ -48,13 +48,14 @@ class RiskTransitionScorerTest extends TestCase
         ]);
     }
 
-    private function classification(string $level, $at): RiskClassification
+    private function classification(string $level, $at, ?string $assessmentDate = null): RiskClassification
     {
         return RiskClassification::create([
             'patient_id' => $this->patient->id,
             'level' => $level,
             'criteria_snapshot' => [],
             'computed_at' => $at,
+            'assessment_date' => $assessmentDate,
             'is_latest' => false,
         ]);
     }
@@ -142,25 +143,69 @@ class RiskTransitionScorerTest extends TestCase
         $this->assertNotNull($score);
         $this->assertTrue($score->eligible);
         $this->assertSame(10, $score->base_point);
-        $this->assertSame(10, $score->final_point);
+        // Aturan v2 (2026-11-17): kunjungan tervalidasi = bonus +5 di atas poin perbaikan.
+        $this->assertSame(5, $score->visit_bonus_point);
+        $this->assertSame(15, $score->final_point);
         $this->assertSame(1, $score->risk_delta);
         $this->assertNotNull($score->related_validated_visit_id);
         $this->assertSame($this->puskesmas->id, $score->puskesmas_id);
+        $this->assertSame(2, $score->rule_version);
     }
 
-    public function test_transisi_tanpa_kunjungan_sama_sekali_tetap_tercatat_tapi_tidak_eligible(): void
+    public function test_transisi_karena_lab_baru_tanpa_kunjungan_tetap_dihitung_tanpa_bonus(): void
     {
+        // Aturan v2 (keputusan blueprint §9 no. 3): SEMUA perbaikan karena pemeriksaan lab baru
+        // dihitung; kunjungan tervalidasi bukan lagi syarat, hanya bonus.
         $previous = $this->classification('berat', now()->subDays(10));
         $current = $this->classification('sedang', now()->subDays(2));
 
         $score = $this->scorer->score($this->patient, $previous, $current);
 
         $this->assertNotNull($score);
-        $this->assertFalse($score->eligible);
+        $this->assertTrue($score->eligible);
+        $this->assertTrue($score->lab_driven);
         $this->assertNull($score->related_validated_visit_id);
-        // Poin TETAP dihitung apa adanya (audit trail lengkap) walau tidak eligible --
-        // PuskesmasPerformanceScoringService yang memfilter eligible=true, bukan scorer ini.
         $this->assertSame(10, $score->base_point);
+        $this->assertSame(0, $score->visit_bonus_point);
+        $this->assertSame(10, $score->final_point);
+    }
+
+    public function test_hitung_ulang_aturan_atas_pemeriksaan_yang_sama_tidak_dihitung(): void
+    {
+        // Revisi ambang 12 -> 17 Agustus 2026: level berubah, pemeriksaannya SAMA.
+        $previous = $this->classification('berat', '2026-08-12 10:00:00', '2026-05-08');
+        $current = $this->classification('sedang', '2026-08-17 15:00:00', '2026-05-08');
+
+        $score = $this->scorer->score($this->patient, $previous, $current);
+
+        $this->assertFalse($score->lab_driven);
+        $this->assertFalse($score->eligible);
+        $this->assertSame('2026-05-08', $score->assessment_date->toDateString());
+    }
+
+    public function test_retensi_terkendali_tetap_dua_poin_tanpa_bonus_kunjungan(): void
+    {
+        $previous = $this->classification('tidak_berisiko', now()->subDays(10));
+        $this->validatedVisit(now()->subDays(5));
+        $current = $this->classification('tidak_berisiko', now()->subDays(2));
+
+        $score = $this->scorer->score($this->patient, $previous, $current);
+
+        $this->assertSame(2, $score->final_point, 'bonus hanya di atas poin perbaikan');
+        $this->assertSame(0, $score->visit_bonus_point);
+    }
+
+    public function test_poin_masuk_ke_puskesmas_pemilik_pada_tanggal_pemeriksaan(): void
+    {
+        $lain = Puskesmas::create(['kabupaten_id' => $this->puskesmas->kabupaten_id, 'kode_internal' => 'PKM-Y', 'nama' => 'Puskesmas Y']);
+        $previous = $this->classification('berat', now()->subDays(10), now()->subDays(10)->toDateString());
+        $current = $this->classification('sedang', now()->subDays(2), now()->subDays(2)->toDateString());
+        \App\Models\PatientDailySnapshot::create(['snapshot_date' => now()->subDays(2)->toDateString(),
+            'patients_cache_id' => $this->patient->id, 'puskesmas_id' => $lain->id]);
+
+        $score = $this->scorer->score($this->patient, $previous, $current);
+
+        $this->assertSame($lain->id, $score->puskesmas_id, 'pemilik saat itu, bukan pemilik sekarang');
     }
 
     public function test_kunjungan_pending_tidak_dihitung_sebagai_bukti_intervensi(): void
@@ -171,7 +216,10 @@ class RiskTransitionScorerTest extends TestCase
 
         $score = $this->scorer->score($this->patient, $previous, $current);
 
-        $this->assertFalse($score->eligible);
+        // Aturan v2: tetap dihitung (lab baru), tetapi kunjungan yang belum/tidak sah bukan bonus.
+        $this->assertTrue($score->eligible);
+        $this->assertNull($score->related_validated_visit_id);
+        $this->assertSame(10, $score->final_point);
     }
 
     public function test_kunjungan_invalid_tidak_dihitung_sebagai_bukti_intervensi(): void
@@ -182,7 +230,10 @@ class RiskTransitionScorerTest extends TestCase
 
         $score = $this->scorer->score($this->patient, $previous, $current);
 
-        $this->assertFalse($score->eligible);
+        // Aturan v2: tetap dihitung (lab baru), tetapi kunjungan yang belum/tidak sah bukan bonus.
+        $this->assertTrue($score->eligible);
+        $this->assertNull($score->related_validated_visit_id);
+        $this->assertSame(10, $score->final_point);
     }
 
     public function test_kunjungan_tervalidasi_di_luar_jendela_waktu_tidak_dihitung(): void
@@ -195,7 +246,8 @@ class RiskTransitionScorerTest extends TestCase
 
         $score = $this->scorer->score($this->patient, $previous, $current);
 
-        $this->assertFalse($score->eligible);
+        $this->assertNull($score->related_validated_visit_id);
+        $this->assertSame(0, $score->visit_bonus_point);
     }
 
     public function test_idempotent_score_dipanggil_dua_kali_untuk_current_yang_sama(): void
@@ -229,7 +281,8 @@ class RiskTransitionScorerTest extends TestCase
         $this->scorer->score($this->patient, $ringan, $terkendali);
 
         $this->assertSame(3, RiskTransitionScore::count());
-        $this->assertSame(30, (int) RiskTransitionScore::sum('final_point'));
+        // Aturan v2: 3 x (+10 perbaikan + 5 bonus kunjungan) = 45.
+        $this->assertSame(45, (int) RiskTransitionScore::sum('final_point'));
         $this->assertTrue(RiskTransitionScore::where('eligible', true)->count() === 3);
     }
 }

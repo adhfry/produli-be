@@ -675,16 +675,19 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(1, $row['eligible_patients']);
         $this->assertSame(1, $row['improved_patients']);
         $this->assertSame(1, $row['validated_visits']);
-        $this->assertSame(10, $row['total_improvement_points']);
+        // Aturan v2 (2026-11-17): +10 perbaikan + 5 bonus kunjungan tervalidasi.
+        $this->assertSame(15, $row['total_improvement_points']);
+        $this->assertSame(10, $row['poin_perbaikan']);
+        $this->assertSame(5, $row['bonus_kunjungan']);
+        $this->assertSame(15, $row['total_poin']);
         $this->assertEquals(100.0, $row['improvement_rate']);
         $this->assertGreaterThan(0, $row['final_score']);
     }
 
-    public function test_puskesmas_performance_transisi_tanpa_kunjungan_tervalidasi_tidak_masuk_leaderboard(): void
+    public function test_puskesmas_performance_transisi_tanpa_kunjungan_tervalidasi_tetap_dihitung_tanpa_bonus(): void
     {
-        // Spesifikasi scoring: kunjungan pending TIDAK dianggap bukti intervensi -- transisi
-        // tetap tercatat di risk_transition_scores (audit trail) tapi eligible=false, TIDAK
-        // masuk agregasi kinerja puskesmas sama sekali.
+        // Aturan v2 (keputusan blueprint §9 no. 3): semua perbaikan karena pemeriksaan lab baru
+        // dihitung. Kunjungan pending bukan bonus, tetapi transisinya tetap masuk peringkat.
         $admin = $this->makeUser('super_admin');
         $pasien = $this->makePatient($this->puskesmasA, 1);
 
@@ -698,7 +701,10 @@ class DashboardControllerTest extends TestCase
         $response = $this->getJson('/api/v1/dashboard/summary');
 
         $response->assertOk();
-        $this->assertSame([], $response->json('data.puskesmas_performance'));
+        $row = collect($response->json('data.puskesmas_performance'))->first();
+        $this->assertSame(10, $row['total_poin']);
+        $this->assertSame(0, $row['bonus_kunjungan']);
+        $this->assertSame(0, $row['validated_visits']);
     }
 
     public function test_puskesmas_performance_transisi_memburuk_tidak_dihitung_sebagai_improved(): void
@@ -723,6 +729,8 @@ class DashboardControllerTest extends TestCase
         $this->assertSame(1, $row['eligible_patients']);
         $this->assertSame(0, $row['improved_patients']);
         $this->assertSame(-10, $row['total_improvement_points']);
+        $this->assertSame(-10, $row['poin_perburukan']);
+        $this->assertSame(0, $row['bonus_kunjungan'], 'bonus hanya di atas poin perbaikan');
         $this->assertEquals(0.0, $row['improvement_rate']);
     }
 
@@ -743,6 +751,7 @@ class DashboardControllerTest extends TestCase
         $response->assertOk();
         $row = collect($response->json('data.puskesmas_performance'))->first();
         $this->assertSame(2, $row['total_improvement_points']);
+        $this->assertSame(2, $row['poin_retensi']);
         $this->assertEquals(100.0, $row['stability_rate']);
     }
 
@@ -767,23 +776,22 @@ class DashboardControllerTest extends TestCase
         $this->assertContains($this->puskesmasB->id, $puskesmasIds);
     }
 
-    public function test_puskesmas_performance_difilter_calculated_at_dalam_periode(): void
+    public function test_puskesmas_performance_difilter_tanggal_pemeriksaan_bukan_tanggal_hitung(): void
     {
+        // Aturan v2: periode = tanggal PEMERIKSAAN (hari -20). calculated_at = sekarang (skor
+        // dihitung hari ini) tidak boleh menarik transisi ini ke periode 7 hari terakhir.
         $admin = $this->makeUser('super_admin');
         $pasien = $this->makePatient($this->puskesmasA, 1);
 
         $this->makeScoredTransition($pasien, $this->puskesmasA, 'berat', 'sedang', now()->subDays(30), now()->subDays(20), now()->subDays(25));
-        // calculated_at (kapan skor DIHITUNG oleh RiskTransitionScorer, BUKAN kapan assessment
-        // medisnya terjadi) selalu "now()" saat score() dipanggil di atas -- paksa mundur secara
-        // eksplisit di sini supaya benar-benar menguji filter date_from/date_to, bukan kebetulan
-        // lolos karena test itu sendiri baru saja jalan.
-        RiskTransitionScore::query()->update(['calculated_at' => now()->subDays(20)]);
 
         Sanctum::actingAs($admin);
         $response = $this->getJson('/api/v1/dashboard/summary?date_from='.now()->subDays(7)->toDateString().'&date_to='.now()->toDateString());
-
         $response->assertOk();
         $this->assertSame([], $response->json('data.puskesmas_performance'));
+
+        $response = $this->getJson('/api/v1/dashboard/summary?date_from='.now()->subDays(21)->toDateString().'&date_to='.now()->subDays(19)->toDateString());
+        $this->assertCount(1, $response->json('data.puskesmas_performance'));
     }
 
     public function test_puskesmas_performance_kosong_kalau_belum_ada_transisi_sama_sekali(): void

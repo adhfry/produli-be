@@ -27,6 +27,11 @@ use Carbon\Carbon;
  * Puskesmas TANPA transisi eligible sama sekali di periode filter TIDAK muncul di hasil (bukan
  * skor 0) -- tidak ada dasar untuk dinilai, beda dari "dinilai dan hasilnya nol".
  *
+ * Aturan v2 (blueprint docs/planning/16 §4e, 2026-11-17): eligible = transisi karena pemeriksaan
+ * lab baru; periode difilter dengan TANGGAL PEMERIKSAAN (assessment_date), bukan calculated_at
+ * (yang menumpuk di tanggal hitung ulang). Setiap baris membawa rincian poin: perbaikan,
+ * perburukan, retensi, bonus kunjungan, dan total.
+ *
  * @see RiskTransitionScorer cara 1 baris risk_transition_scores dihitung & syarat eligible.
  */
 class PuskesmasPerformanceScoringService
@@ -41,16 +46,7 @@ class PuskesmasPerformanceScoringService
      */
     public function topPerforming(?Carbon $dateFrom, ?Carbon $dateTo): array
     {
-        $query = RiskTransitionScore::query()->whereNotNull('puskesmas_id');
-
-        if ($dateFrom !== null) {
-            $query->where('calculated_at', '>=', $dateFrom->copy()->startOfDay());
-        }
-        if ($dateTo !== null) {
-            $query->where('calculated_at', '<=', $dateTo->copy()->endOfDay());
-        }
-
-        $scores = $query->get();
+        $scores = $this->transisiPeriode($dateFrom, $dateTo)->whereNotNull('puskesmas_id')->get();
 
         if ($scores->isEmpty()) {
             return [];
@@ -88,6 +84,8 @@ class PuskesmasPerformanceScoringService
             );
 
             $validatedVisits = $eligible->pluck('related_validated_visit_id')->filter()->unique()->count();
+            $retensi = $eligible->filter(fn ($row) => $row->previous_risk_level === 'tidak_berisiko' && $row->current_risk_level === 'tidak_berisiko');
+            $lainnya = $eligible->diff($retensi);
 
             $rows[] = [
                 'puskesmas_id' => (int) $puskesmasId,
@@ -99,6 +97,13 @@ class PuskesmasPerformanceScoringService
                 'improved_patients' => $improvedPatients,
                 'validated_visits' => $validatedVisits,
                 'total_improvement_points' => $totalImprovementPoints,
+                // Rincian poin (Fase 5): total_poin = perbaikan + perburukan + retensi + bonus.
+                'poin_perbaikan' => (int) $lainnya->where('base_point', '>', 0)->sum('base_point'),
+                'poin_perburukan' => (int) $lainnya->where('base_point', '<', 0)->sum('base_point'),
+                'poin_retensi' => (int) $retensi->sum('base_point'),
+                'bonus_kunjungan' => (int) $eligible->sum('visit_bonus_point'),
+                'total_poin' => $totalImprovementPoints,
+                'worsened_patients' => $eligible->filter(fn ($row) => $row->final_point < 0)->pluck('patient_id')->unique()->count(),
             ];
         }
 
@@ -126,6 +131,37 @@ class PuskesmasPerformanceScoringService
             $rows,
             array_keys($rows),
         ));
+    }
+
+    /**
+     * Transisi pasien yang MEMBAIK (atau memburuk) di satu puskesmas pada periode, untuk rincian
+     * "pasien yang membaik" di halaman kinerja. Terbaru dulu.
+     *
+     * @return \Illuminate\Support\Collection<int, RiskTransitionScore>
+     */
+    public function transisiPuskesmas(int $puskesmasId, ?Carbon $dateFrom, ?Carbon $dateTo, string $arah = 'membaik')
+    {
+        return $this->transisiPeriode($dateFrom, $dateTo)
+            ->where('puskesmas_id', $puskesmasId)
+            ->where('eligible', true)
+            ->where('final_point', $arah === 'memburuk' ? '<' : '>', 0)
+            ->when($arah !== 'memburuk', fn ($q) => $q->whereColumn('previous_risk_level', '!=', 'current_risk_level'))
+            ->with('patient:id,nama,no_reg,jenis_prolanis')
+            ->orderByDesc('assessment_date')
+            ->orderByDesc('id')
+            ->limit(500)
+            ->get();
+    }
+
+    /** Transisi yang tanggal PEMERIKSAAN-nya masuk periode (baris lama tanpa tanggal: calculated_at). */
+    private function transisiPeriode(?Carbon $dateFrom, ?Carbon $dateTo)
+    {
+        // DATE(): sama di MySQL (kolom date) maupun SQLite test (tersimpan 'Y-m-d H:i:s').
+        $tanggal = 'DATE(COALESCE(assessment_date, calculated_at))';
+
+        return RiskTransitionScore::query()
+            ->when($dateFrom, fn ($q) => $q->whereRaw("{$tanggal} >= ?", [$dateFrom->toDateString()]))
+            ->when($dateTo, fn ($q) => $q->whereRaw("{$tanggal} <= ?", [$dateTo->toDateString()]));
     }
 
     private function clampPercent(float $value): float

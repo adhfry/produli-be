@@ -2,6 +2,7 @@
 
 namespace App\Services\Performance;
 
+use App\Models\PatientDailySnapshot;
 use App\Models\PatientsCache;
 use App\Models\RiskClassification;
 use App\Models\RiskTransitionScore;
@@ -10,36 +11,33 @@ use App\Support\RiskLevelScale;
 use Carbon\CarbonInterface;
 
 /**
- * Hitung & simpan skor 1 transisi risk_classifications (baris lama -> baris baru) untuk 1
- * pasien -- dipanggil dari RiskClassificationService::classify() TEPAT setelah baris
- * RiskClassification baru ditulis (lihat pemanggilan di sana). Dasar leaderboard "Top 5
- * Puskesmas Kinerja Terbaik" (App\Services\Performance\PuskesmasPerformanceScoringService).
+ * Hitung & simpan skor 1 transisi risk_classifications (baris lama -> baris baru) untuk 1 pasien,
+ * dipanggil RiskClassificationService::classify() tepat setelah baris baru ditulis. Dasar
+ * peringkat kinerja puskesmas (PuskesmasPerformanceScoringService).
  *
- * Aturan inti (spesifikasi scoring kinerja puskesmas):
- * - Matriks poin: 1 level perbaikan = +10 (mis. Berat->Sedang), 1 level perburukan = -10,
- *   KECUALI Terkendali->Terkendali yang diberi +2 (penghargaan retensi kondisi terkendali,
- *   BUKAN 0 -- supaya puskesmas yang mempertahankan pasien tetap terkendali tidak keliatan
- *   "diam" dibanding puskesmas yang pasiennya naik-turun).
- * - HANYA transisi dengan minimal 1 laporan kunjungan TERVALIDASI (validation_status='valid',
- *   super_admin sudah approve) di ANTARA kedua assessment yang dianggap "eligible" utk masuk
- *   agregasi kinerja puskesmas -- transisi tanpa bukti intervensi tetap DISIMPAN (audit trail
- *   lengkap, poin tetap dihitung apa adanya) tapi ditandai eligible=false, TIDAK ikut dijumlah
- *   PuskesmasPerformanceScoringService (supaya pasien yang kebetulan membaik tanpa program
- *   PRODULI tidak keliru dianggap keberhasilan puskesmas).
- * - Assessment PERTAMA pasien (tidak ada pembanding) TIDAK menghasilkan baris sama sekali --
- *   bukan "membaik", cuma belum pernah ada data sebelumnya.
- * - Idempotent lewat UNIQUE current_risk_classification_id (migration) -- replay sync SiLAKES
- *   atau produli:reclassify-risk yang menghasilkan RiskClassification baru identik (sudah
- *   di-guard classify() sendiri, tidak pernah sampai sini) tidak pernah dobel-hitung; kalau
- *   toh score() dipanggil 2x untuk current yang sama (mis. backfill dijalankan ulang), baris
- *   existing dikembalikan apa adanya, TIDAK membuat baris kedua.
+ * Aturan v2 (blueprint docs/planning/16 §4e, keputusan §9 no. 3, berlaku 2026-11-17):
+ * - Poin: +10 per level membaik, -10 per level memburuk, +2 bila tetap Terkendali (retensi).
+ * - Bonus +5 DI ATAS poin perbaikan bila ada kunjungan tervalidasi (validation_status='valid')
+ *   di antara dua pemeriksaan. Dulu kunjungan tervalidasi adalah SYARAT dihitung; akibatnya tidak
+ *   satu pun transisi dihitung (belum pernah ada kunjungan tervalidasi).
+ * - Hanya transisi karena PEMERIKSAAN LAB BARU (tanggal pemeriksaan lebih baru) yang dihitung
+ *   (eligible). Hitung ulang aturan atas pemeriksaan yang sama (mis. revisi ambang 12 -> 17
+ *   Agustus 2026, 5.002 transisi) tetap tercatat tetapi tidak menghasilkan poin peringkat.
+ * - Poin masuk ke puskesmas pemilik pasien pada tanggal pemeriksaan itu (snapshot harian bila
+ *   ada, selain itu puskesmas saat skor dihitung).
+ * - Pemeriksaan pertama pasien tidak menghasilkan baris (tidak ada pembanding).
+ * - Idempoten lewat UNIQUE current_risk_classification_id.
  */
 class RiskTransitionScorer
 {
+    public const RULE_VERSION = 2;
+
+    public const VISIT_BONUS_POINT = 5;
+
     private const RETENTION_POINT = 2;
 
     /**
-     * @return int poin transisi (bisa negatif)
+     * @return int poin transisi tanpa bonus (bisa negatif)
      */
     public function point(string $previousLevel, string $currentLevel): int
     {
@@ -51,7 +49,7 @@ class RiskTransitionScorer
     }
 
     /**
-     * @return RiskTransitionScore|null null kalau $previous null (assessment pertama pasien).
+     * @return RiskTransitionScore|null null kalau $previous null (pemeriksaan pertama pasien).
      */
     public function score(PatientsCache $patient, ?RiskClassification $previous, RiskClassification $current): ?RiskTransitionScore
     {
@@ -64,43 +62,66 @@ class RiskTransitionScorer
             return $existing;
         }
 
-        $point = $this->point($previous->level, $current->level);
-        $riskDelta = RiskLevelScale::numeric($previous->level) - RiskLevelScale::numeric($current->level);
-        $validatedVisit = $this->findValidatedVisitBetween($patient, $previous, $current);
-
         return RiskTransitionScore::create([
             'patient_id' => $patient->id,
-            'puskesmas_id' => $patient->puskesmas_id,
             'previous_risk_classification_id' => $previous->id,
             'current_risk_classification_id' => $current->id,
-            'previous_risk_level' => $previous->level,
-            'current_risk_level' => $current->level,
-            'risk_delta' => $riskDelta,
-            'base_point' => $point,
-            'final_point' => $point,
-            'related_validated_visit_id' => $validatedVisit?->id,
-            'eligible' => $validatedVisit !== null,
             'calculated_at' => now(),
+            ...$this->hitung($patient, $previous, $current, $this->pemilikPada($patient, $current)),
         ]);
     }
 
     /**
-     * Laporan kunjungan TERVALIDASI TERBARU milik pasien ini yang terjadi di antara kedua
-     * assessment -- dipakai sebagai bukti audit "intervensi apa yang menghasilkan perbaikan
-     * ini". assessment_date (tanggal lab asli, kalau ada) dipakai sebagai batas jendela waktu
-     * daripada computed_at -- konsisten dengan makna "Riwayat & Tren Kondisi" yang lain (lihat
-     * RiskClassificationService::classify()), supaya jendela pencarian merefleksikan kapan
-     * pasien benar-benar diperiksa, bukan kapan sistem kebetulan menghitung ulang.
+     * Nilai skor menurut aturan v2. Dipakai untuk transisi baru DAN hitung ulang transisi lama
+     * (produli:hitung-ulang-poin), supaya keduanya selalu sama.
+     *
+     * @return array<string, mixed>
+     */
+    public function hitung(PatientsCache $patient, RiskClassification $previous, RiskClassification $current, ?int $puskesmasId): array
+    {
+        $base = $this->point($previous->level, $current->level);
+        $labBaru = $this->tanggalPemeriksaan($current)->gt($this->tanggalPemeriksaan($previous));
+        $kunjungan = $this->findValidatedVisitBetween($patient, $previous, $current);
+        $bonus = $kunjungan !== null && $base > 0 && $previous->level !== $current->level ? self::VISIT_BONUS_POINT : 0;
+
+        return [
+            'puskesmas_id' => $puskesmasId,
+            'previous_risk_level' => $previous->level,
+            'current_risk_level' => $current->level,
+            'risk_delta' => RiskLevelScale::numeric($previous->level) - RiskLevelScale::numeric($current->level),
+            'lab_driven' => $labBaru,
+            'assessment_date' => $this->tanggalPemeriksaan($current)->toDateString(),
+            'base_point' => $base,
+            'visit_bonus_point' => $bonus,
+            'final_point' => $base + $bonus,
+            'related_validated_visit_id' => $kunjungan?->id,
+            'eligible' => $labBaru,
+            'rule_version' => self::RULE_VERSION,
+        ];
+    }
+
+    /** Puskesmas pemilik pasien pada tanggal pemeriksaan (snapshot), selain itu saat ini. */
+    public function pemilikPada(PatientsCache $patient, RiskClassification $current): ?int
+    {
+        $snapshot = PatientDailySnapshot::where('patients_cache_id', $patient->id)
+            ->where('snapshot_date', $this->tanggalPemeriksaan($current)->toDateString())
+            ->value('puskesmas_id');
+
+        return $snapshot ?? $patient->puskesmas_id;
+    }
+
+    /**
+     * Laporan kunjungan TERVALIDASI terbaru milik pasien ini di antara kedua pemeriksaan
+     * (berdasar tanggal pemeriksaan, bukan tanggal hitung).
      */
     private function findValidatedVisitBetween(PatientsCache $patient, RiskClassification $previous, RiskClassification $current): ?VisitReport
     {
-        $windowStart = $this->effectiveDate($previous);
-        $windowEnd = $this->effectiveDate($current);
+        $windowStart = $this->tanggalPemeriksaan($previous)->copy()->startOfDay();
+        $windowEnd = $this->tanggalPemeriksaan($current)->copy()->endOfDay();
 
         if ($windowStart->gt($windowEnd)) {
-            // Data lab bisa masuk tidak berurutan (delta sync SiLAKES) -- lihat catatan serupa di
-            // RiskClassificationService::classify(). Jendela dibalik supaya whereBetween tetap valid.
-            [$windowStart, $windowEnd] = [$windowEnd, $windowStart];
+            // Data lab bisa masuk tidak berurutan (delta sync SiLAKES): jendela dibalik.
+            [$windowStart, $windowEnd] = [$windowEnd->copy()->startOfDay(), $windowStart->copy()->endOfDay()];
         }
 
         return VisitReport::query()
@@ -111,8 +132,8 @@ class RiskTransitionScorer
             ->first();
     }
 
-    private function effectiveDate(RiskClassification $classification): CarbonInterface
+    private function tanggalPemeriksaan(RiskClassification $classification): CarbonInterface
     {
-        return $classification->assessment_date ?? $classification->computed_at;
+        return ($classification->assessment_date ?? $classification->computed_at)->copy()->startOfDay();
     }
 }

@@ -140,6 +140,10 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::get('ktp-scans/{ktpScan}/image', [KtpScanController::class, 'image']);
 
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
+    // Kinerja puskesmas (Fase 5 blueprint docs/planning/16): peringkat, rincian pasien, kartu dashboard.
+    Route::get('kinerja-puskesmas', [\App\Http\Controllers\Api\V1\KinerjaPuskesmasController::class, 'index']);
+    Route::get('kinerja-puskesmas/ringkasan', [\App\Http\Controllers\Api\V1\KinerjaPuskesmasController::class, 'ringkasan']);
+    Route::get('kinerja-puskesmas/{puskesmas}/pasien', [\App\Http\Controllers\Api\V1\KinerjaPuskesmasController::class, 'pasien']);
 
     Route::get('puskesmas', [PuskesmasController::class, 'index']);
     // WAJIB sebelum puskesmas/{puskesmas} -- kalau tertukar urutan, "geocode-all" akan

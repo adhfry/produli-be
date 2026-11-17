@@ -27,6 +27,11 @@ class RiskTransitionScore extends Model
         'related_validated_visit_id',
         'eligible',
         'calculated_at',
+        // Aturan poin v2 (Fase 5 blueprint docs/planning/16, 2026-11-17)
+        'lab_driven',
+        'visit_bonus_point',
+        'assessment_date',
+        'rule_version',
     ];
 
     protected function casts(): array
@@ -37,6 +42,10 @@ class RiskTransitionScore extends Model
             'final_point' => 'integer',
             'eligible' => 'boolean',
             'calculated_at' => 'datetime',
+            'lab_driven' => 'boolean',
+            'visit_bonus_point' => 'integer',
+            'assessment_date' => 'date',
+            'rule_version' => 'integer',
         ];
     }
 
