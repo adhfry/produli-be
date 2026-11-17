@@ -2,8 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Models\LabResultCache;
-use App\Models\PatientsCache;
 use Illuminate\Console\Command;
 
 /**
@@ -28,34 +26,12 @@ class PruneIneligiblePatientsCommand extends Command
 
     public function handle(): int
     {
-        $dryRun = (bool) $this->option('dry-run');
+        // DINONAKTIFKAN 2026-11-17: keputusan blueprint docs/planning/16 §9 no. 1 -- SEMUA pasien
+        // Prolanis ditarik ke PRODULI, termasuk yang belum punya hasil lab. Perintah ini justru
+        // menghapus pasien tanpa hasil lab, jadi menjalankannya akan menghapus data yang sah.
+        // Logika lamanya ada di riwayat git bila suatu saat dibutuhkan lagi.
+        $this->error('Perintah ini dinonaktifkan: sejak 2026-11-17 semua pasien Prolanis memang ditarik walau belum punya hasil lab (blueprint §9 no. 1). Tidak ada yang dihapus.');
 
-        $ineligible = PatientsCache::query()
-            ->whereNotIn('external_patient_id', LabResultCache::select('patient_id')->distinct())
-            ->withCount(['visitAssignments', 'riskClassifications'])
-            ->get();
-
-        $deletable = $ineligible->filter(fn (PatientsCache $p) => $p->visit_assignments_count === 0 && $p->risk_classifications_count === 0);
-        $blocked = $ineligible->diff($deletable);
-
-        if ($blocked->isNotEmpty()) {
-            $this->warn(sprintf('%d pasien tidak eligible TAPI punya relasi aktif -- TIDAK dihapus:', $blocked->count()));
-            foreach ($blocked as $patient) {
-                $this->line("  - #{$patient->id} {$patient->nama} (assignments={$patient->visit_assignments_count}, classifications={$patient->risk_classifications_count})");
-            }
-        }
-
-        if (! $dryRun) {
-            PatientsCache::whereIn('id', $deletable->pluck('id'))->delete();
-        }
-
-        $this->info(sprintf(
-            '%s%d pasien tidak eligible dihapus, %d dilewati karena masih punya relasi.',
-            $dryRun ? '[DRY RUN] ' : '',
-            $deletable->count(),
-            $blocked->count(),
-        ));
-
-        return self::SUCCESS;
+        return self::FAILURE;
     }
 }

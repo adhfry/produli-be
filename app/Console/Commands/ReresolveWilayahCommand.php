@@ -31,10 +31,10 @@ class ReresolveWilayahCommand extends Command
 
                 $resolution = $resolver->resolve($patient->kel_desa_raw, $patient->kecamatan_raw);
 
-                // Override manual TIDAK PERNAH ditimpa reresolve otomatis -- lihat catatan sama
-                // di SyncSilakesService::upsertPatient().
-                $puskesmas = $patient->puskesmas_resolution_method === 'manual'
-                    ? ['puskesmas_id' => $patient->puskesmas_id, 'method' => 'manual', 'pengirim_raw' => $patient->pengirim_raw]
+                // Override manual dan kunci kepemilikan (blueprint §4d) TIDAK PERNAH ditimpa reresolve
+                // otomatis -- lihat PatientsCache::puskesmasTerkunci().
+                $puskesmas = $patient->puskesmasTerkunci()
+                    ? ['puskesmas_id' => $patient->puskesmas_id, 'method' => $patient->puskesmas_resolution_method, 'pengirim_raw' => $patient->pengirim_raw]
                     : $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $patient->external_patient_id);
 
                 $patient->forceFill([

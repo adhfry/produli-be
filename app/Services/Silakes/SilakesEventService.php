@@ -53,6 +53,7 @@ class SilakesEventService
         match ($event['event']) {
             'patient_registration.approved', 'patient_registration.rejected' => $this->terapkanPendaftaran($data),
             'patient_field_update.approved', 'patient_field_update.rejected' => $this->terapkanPerubahan($data, $event['event'] === 'patient_field_update.approved'),
+            'patient.merged' => $this->terapkanGabung($data),
             default => Log::info('Event SiLAKES tidak dikenal, diabaikan', ['event' => $event['event']]),
         };
 
@@ -71,7 +72,7 @@ class SilakesEventService
         if (! $baris) {
             // Baris sudah dihapus dari antrian, tapi pasiennya tetap sah terdaftar di Labkesda.
             if (($data['status'] ?? null) === 'approved' && is_array($data['patient'] ?? null)) {
-                $this->sync->upsertPatient($data['patient']);
+                $this->sync->upsertPatient($data['patient'], 'realtime', 'patient_registration.approved');
             }
 
             return;
@@ -86,13 +87,13 @@ class SilakesEventService
             }
 
             $pasien = DB::transaction(function () use ($baris, $patientRow, $data, $status) {
-                $pasien = $this->sync->upsertPatient($patientRow);
+                $pasien = $this->sync->upsertPatient($patientRow, 'realtime', 'patient_registration.approved');
 
                 // Desa/kecamatan tidak terpetakan: tanpa ini pasien yang baru didaftarkan hilang
                 // dari daftar puskesmas pengirimnya sendiri. 'manual' = tidak ditimpa sinkron.
                 $puskesmasPengirim = $baris->pengirimanSampel?->puskesmas_id;
                 if ($pasien->puskesmas_id === null && $puskesmasPengirim !== null) {
-                    $pasien->update(['puskesmas_id' => $puskesmasPengirim, 'puskesmas_resolution_method' => 'manual']);
+                    $pasien->update(['puskesmas_id' => $puskesmasPengirim, 'puskesmas_resolution_method' => 'manual', 'puskesmas_locked_at' => now()]);
                 }
                 $baris->update([
                     'external_patient_id' => $pasien->external_patient_id,
@@ -156,7 +157,7 @@ class SilakesEventService
         // Data pasien terbaru diterapkan walau usulan ini tidak tercatat di sini (mis. diajukan
         // sebelum fitur ini ada): perubahan yang sudah disetujui tidak perlu menunggu sinkron 02:00.
         if ($disetujui && is_array($data['patient'] ?? null)) {
-            $this->sync->upsertPatient($data['patient']);
+            $this->sync->upsertPatient($data['patient'], 'realtime', 'patient_field_update.approved');
         }
 
         $ref = SilakesFieldUpdateRef::where('silakes_update_id', $data['update_id'] ?? 0)->first();
@@ -196,6 +197,70 @@ class SilakesEventService
             data: ['type' => 'usulan_pasien_diputuskan', 'title' => $tolak === 0 ? 'Usulan data pasien disetujui' : 'Usulan data pasien diputuskan',
                 'body' => $body, 'patient_id' => $ref->patients_cache_id, 'patient_nama' => $nama, 'disetujui' => $setuju, 'ditolak' => $tolak],
         ));
+    }
+
+    // ------------------------------------------------------------------ pasien digabung
+
+    /**
+     * Dua pasien digabung di SiLAKES (event patient.merged, blueprint §3a). Hanya kasus yang AMAN
+     * dikerjakan otomatis; prosedurnya sama dengan penautan manual 3 pasien pada 2026-11-17:
+     *  - pasien lama ada di PRODULI, tujuan belum: baris yang sama dipindah ke id tujuan (riwayat
+     *    risiko, jadwal, kunjungan tetap menempel karena id baris tidak berubah), hasil lab ikut;
+     *  - pasien lama tidak ada di PRODULI: data tujuan diterapkan seperti biasa;
+     *  - keduanya sudah ada di PRODULI: TIDAK diubah, super admin diminta meninjau (menggabungkan
+     *    dua riwayat risiko tidak boleh terjadi diam-diam).
+     *
+     * @param  array{from_patient_id: int, to_patient_id: int, patient?: ?array<string, mixed>}  $data
+     */
+    public function terapkanGabung(array $data): void
+    {
+        $dari = (int) ($data['from_patient_id'] ?? 0);
+        $ke = (int) ($data['to_patient_id'] ?? 0);
+        $payload = is_array($data['patient'] ?? null) ? $data['patient'] : null;
+        if ($dari === 0 || $ke === 0 || $dari === $ke || ! $payload || (int) $payload['patient_id'] !== $ke) {
+            Log::warning('Event patient.merged tidak lengkap, diabaikan', ['data' => $data]);
+
+            return;
+        }
+
+        $lama = PatientsCache::where('external_patient_id', $dari)->first();
+        $tujuan = PatientsCache::where('external_patient_id', $ke)->first();
+
+        if ($lama && $tujuan) {
+            $this->kabariSuperAdmin('Pasien digabung di SiLAKES, perlu ditinjau',
+                "SiLAKES menggabungkan {$lama->nama} (#{$dari}) ke {$tujuan->nama} (#{$ke}). Keduanya sudah ada di PRODULI, jadi tidak digabung otomatis.",
+                ['from_patient_id' => $dari, 'to_patient_id' => $ke]);
+
+            return;
+        }
+
+        if (! $lama) {
+            $this->sync->upsertPatient($payload, 'realtime', 'patient.merged');
+
+            return;
+        }
+
+        DB::transaction(function () use ($lama, $dari, $ke, $payload) {
+            DB::table('lab_results_cache')->where('patient_id', $dari)->update(['patient_id' => $ke]);
+            DB::table('pengiriman_sampel_pasien')->where('external_patient_id', $dari)->update(['external_patient_id' => $ke]);
+            PatientsCache::whereKey($lama->id)->where('external_patient_id', $dari)->update(['external_patient_id' => $ke]);
+            \App\Models\PatientSyncHistory::create([
+                'patients_cache_id' => $lama->id,
+                'synced_at' => now(),
+                'sumber' => 'realtime',
+                'silakes_event' => 'patient.merged',
+                'changed_fields' => ['external_patient_id' => ['lama' => $dari, 'baru' => $ke]],
+            ]);
+            $this->sync->upsertPatient($payload, 'realtime', 'patient.merged');
+        });
+    }
+
+    private function kabariSuperAdmin(string $title, string $body, array $data = []): void
+    {
+        foreach (\App\Models\User::role('super_admin')->get() as $admin) {
+            $this->kirim($admin, new NotificationPayload(type: 'silakes_perlu_tinjau', title: $title, body: $body,
+                data: ['type' => 'silakes_perlu_tinjau', 'title' => $title, 'body' => $body, ...$data]));
+        }
     }
 
     // ------------------------------------------------------------------ notifikasi

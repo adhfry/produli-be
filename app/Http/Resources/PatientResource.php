@@ -43,6 +43,24 @@ class PatientResource extends JsonResource
             'jenis_prolanis' => $this->jenis_prolanis,
             'is_perokok' => $this->is_perokok,
             'jenis_perokok' => $this->jenis_perokok,
+            // Fase 2 blueprint docs/planning/16 (2026-11-17): identitas lengkap & domisili dari SiLAKES.
+            'tempat_lahir' => $this->tempat_lahir,
+            'golongan_darah' => $this->golongan_darah,
+            'agama' => $this->agama,
+            'status_perkawinan' => $this->status_perkawinan,
+            'pekerjaan' => $this->pekerjaan,
+            'is_bpjs' => $this->is_bpjs,
+            'fktp' => $this->fktp,
+            'email' => $this->email,
+            'domisili' => $this->domisili_alamat || $this->domisili_kel_desa || $this->domisili_kecamatan ? [
+                'alamat' => $this->domisili_alamat,
+                'rt_rw' => $this->domisili_rt_rw,
+                'kel_desa' => $this->domisili_kel_desa,
+                'kecamatan' => $this->domisili_kecamatan,
+                'sumber' => $this->domisili_sumber,
+                'updated_at' => $this->domisili_updated_at?->toIso8601String(),
+            ] : null,
+            'puskesmas_terkunci' => $this->puskesmasTerkunci(),
             'wilayah_status' => $this->wilayah_status,
             'puskesmas_resolution_method' => $this->puskesmas_resolution_method,
             // Teks asli `pengirim` (surat_hasil_labs SiLAKES) yang dipakai WilayahResolver
@@ -110,6 +128,11 @@ class PatientResource extends JsonResource
                 fn () => CareAssignmentResource::collection($this->activeCareAssignments),
             ),
             'last_synced_at' => $this->last_synced_at?->toIso8601String(),
+            // "Sinkron terakhir" (blueprint §4b): kapan PRODULI terakhir menarik pasien ini dan
+            // lewat jalur apa (harian / manual / realtime); silakes_updated_at = waktu ubah di SiLAKES.
+            'refreshed_at' => $this->refreshed_at?->toIso8601String(),
+            'refreshed_via' => $this->refreshed_via,
+            'silakes_updated_at' => $this->silakes_updated_at?->toIso8601String(),
             // Ringkasan kunjungan (permintaan user, kolom "Nx dikunjungi" + tooltip) -- gabungan
             // kader & tenaga_kesehatan, lihat PatientController::index(). whenLoaded() krn
             // visitHistorySummary itu pseudo-relation (setRelation manual, bukan Eloquent

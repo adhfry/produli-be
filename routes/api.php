@@ -118,6 +118,7 @@ Route::middleware(['auth:sanctum', 'password.changed', 'onboarding.completed'])-
     Route::patch('patients/{patient}/override-puskesmas', [PatientController::class, 'overridePuskesmas']);
     // Riwayat usulan (baca live dari SiLAKES, gerbang akses sama dengan propose-update di atas).
     Route::get('patients/{patient}/update-history', [PatientController::class, 'updateHistory']);
+    Route::get('patients/{patient}/sync-history', [PatientController::class, 'syncHistory']);
     // Riwayat klasifikasi risiko & kunjungan (revisi Bu Kadis, Fase 5) -- "Dasar Klasifikasi",
     // "Riwayat & Tren Kondisi", dan "Riwayat Kunjungan" di detail pasien.
     Route::get('patients/{patient}/risk-history', [PatientController::class, 'riskHistory']);

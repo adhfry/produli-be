@@ -42,6 +42,25 @@ class PatientsCache extends Model
         'geo_verified_by',
         'geo_verified_at',
         'last_synced_at',
+        // Fase 2 blueprint docs/planning/16 (2026-11-17)
+        'tempat_lahir',
+        'golongan_darah',
+        'agama',
+        'status_perkawinan',
+        'pekerjaan',
+        'is_bpjs',
+        'fktp',
+        'email',
+        'domisili_alamat',
+        'domisili_rt_rw',
+        'domisili_kel_desa',
+        'domisili_kecamatan',
+        'domisili_sumber',
+        'domisili_updated_at',
+        'silakes_updated_at',
+        'refreshed_at',
+        'refreshed_via',
+        'puskesmas_locked_at',
     ];
 
     protected function casts(): array
@@ -54,7 +73,28 @@ class PatientsCache extends Model
             'longitude' => 'decimal:7',
             'geo_verified_at' => 'datetime',
             'last_synced_at' => 'datetime',
+            'is_bpjs' => 'boolean',
+            'domisili_updated_at' => 'datetime',
+            'silakes_updated_at' => 'datetime',
+            'refreshed_at' => 'datetime',
+            'puskesmas_locked_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Puskesmas pasien tidak dihitung ulang oleh sinkron maupun produli:reresolve-wilayah /
+     * reconcile-wilayah: ditetapkan manual (override), atau sudah dikunci sejak pertama kali
+     * mendapat puskesmas (blueprint §4d, keputusan §9 no. 2). Pindah hanya lewat override.
+     */
+    public function puskesmasTerkunci(): bool
+    {
+        return $this->puskesmas_resolution_method === 'manual'
+            || ($this->puskesmas_locked_at !== null && $this->puskesmas_id !== null);
+    }
+
+    public function syncHistories(): HasMany
+    {
+        return $this->hasMany(PatientSyncHistory::class, 'patients_cache_id');
     }
 
     public function desa(): BelongsTo

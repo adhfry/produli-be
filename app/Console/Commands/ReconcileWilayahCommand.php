@@ -41,7 +41,10 @@ class ReconcileWilayahCommand extends Command
                 }
 
                 $resolution = $resolver->resolve($patient->kel_desa_raw, $patient->kecamatan_raw);
-                $puskesmas = $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId);
+                // Kunci kepemilikan (blueprint §4d): wilayah tetap diperbarui, puskesmas tidak.
+                $puskesmas = $patient->puskesmasTerkunci()
+                    ? ['puskesmas_id' => $patient->puskesmas_id, 'method' => $patient->puskesmas_resolution_method]
+                    : $resolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId);
 
                 $dirty = $patient->desa_id !== $resolution->desaId
                     || $patient->wilayah_status !== $resolution->wilayahStatus

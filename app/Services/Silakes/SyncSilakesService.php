@@ -6,6 +6,7 @@ use App\Exceptions\SinkronSedangBerjalanException;
 use App\Models\IntegrationSyncLog;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
+use App\Models\PatientSyncHistory;
 use App\Models\ReferenceRangeCache;
 use App\Services\Notification\NotifiableTarget;
 use App\Services\Notification\NotificationPayload;
@@ -47,6 +48,9 @@ class SyncSilakesService
     /** Batas "data baru" pasien setelah syncPatients() selesai, disimpan di log sinkron. */
     private ?string $patientsWatermark = null;
 
+    /** Jalur sinkron yang sedang berjalan, dicatat di patients_cache.refreshed_via: harian | manual. */
+    private string $via = 'harian';
+
     public function __construct(
         private readonly SilakesApiClient $client,
         private readonly WilayahResolver $wilayahResolver,
@@ -59,9 +63,8 @@ class SyncSilakesService
      */
     public function run(): array
     {
-        // Lab results DULUAN, baru patients — syncPatients() butuh lab_results_cache yang
-        // sudah mutakhir untuk menggerbang kelayakan (lihat isEligible()). Urutan sebaliknya
-        // berarti pasien baru selalu dievaluasi dari data lab yang seangkatan lebih lama.
+        // Lab results DULUAN, baru patients -- urutan ini dipertahankan dari masa gerbang
+        // kelayakan (dicabut 2026-11-17); klasifikasi tetap dijalankan setelah keduanya.
         //
         // syncReferenceRanges() WAJIB sebelum classifyPatients() -- RiskClassificationService
         // sekarang baca reference_ranges_cache untuk 5 dari 6 parameter (lihat
@@ -101,8 +104,9 @@ class SyncSilakesService
      * @throws Throwable dilempar ulang setelah dicatat sebagai 'failed' -- pemanggil yang
      *                    menentukan bagaimana meresponnya (CLI exit code vs HTTP error response).
      */
-    public function runAndLog(): array
+    public function runAndLog(string $via = 'harian'): array
     {
+        $this->via = $via;
         $kunci = Cache::lock(self::KUNCI, self::KUNCI_TTL_DETIK);
         if (! $kunci->get()) {
             throw new SinkronSedangBerjalanException;
@@ -162,19 +166,85 @@ class SyncSilakesService
                 'details' => ['error' => $e->getMessage()],
             ]);
 
+            $this->kabariSinkronGagal($e);
+
             throw $e;
         }
+    }
+
+    /**
+     * Peringatan sinkron gagal ke semua super_admin (blueprint §3c). Kegagalan memberi tahu bukan
+     * alasan menutupi galat aslinya, jadi galat notifikasi hanya dicatat.
+     */
+    private function kabariSinkronGagal(Throwable $e): void
+    {
+        try {
+            $pesan = mb_substr($e->getMessage(), 0, 300);
+            foreach (\App\Models\User::role('super_admin')->get() as $admin) {
+                $this->notifyService->notify(
+                    NotifiableTarget::user($admin),
+                    new NotificationPayload(
+                        type: 'silakes_sync_failed',
+                        title: 'Sinkronisasi SiLAKES gagal',
+                        body: "Sinkron data pasien & hasil lab gagal: {$pesan}",
+                        data: ['type' => 'silakes_sync_failed', 'title' => 'Sinkronisasi SiLAKES gagal', 'body' => "Sinkron data pasien & hasil lab gagal: {$pesan}"],
+                    ),
+                    ['push', 'fcm', 'email'],
+                );
+            }
+        } catch (Throwable $notifGagal) {
+            report($notifGagal);
+        }
+    }
+
+    /**
+     * Tarik SEMUA pasien Prolanis dari SiLAKES tanpa batas waktu (produli:tarik-semua-pasien),
+     * untuk pasien yang belum pernah masuk karena gerbang lama "harus punya hasil lab". Memakai
+     * kunci sinkron yang sama dan TIDAK mengubah batas "data baru" sinkron harian.
+     *
+     * @return array{dipindai: int, baru: int, diperbarui: int}
+     */
+    public function tarikSemuaPasien(bool $uji = false): array
+    {
+        $kunci = Cache::lock(self::KUNCI, self::KUNCI_TTL_DETIK);
+        if (! $kunci->get()) {
+            throw new SinkronSedangBerjalanException;
+        }
+
+        $hasil = ['dipindai' => 0, 'baru' => 0, 'diperbarui' => 0];
+        try {
+            $cursor = null;
+            do {
+                $body = $this->client->patients(array_filter(['cursor' => $cursor, 'per_page' => self::PER_PAGE]));
+                $baris = $body['data'] ?? [];
+                $ada = PatientsCache::whereIn('external_patient_id', array_column($baris, 'patient_id'))->pluck('external_patient_id')->flip();
+                foreach ($baris as $row) {
+                    $hasil['dipindai']++;
+                    $ada->has($row['patient_id']) ? $hasil['diperbarui']++ : $hasil['baru']++;
+                    if (! $uji) {
+                        $this->upsertPatient($row, 'manual');
+                    }
+                }
+
+                $cursor = $body['meta']['next_cursor'] ?? null;
+                $lanjut = (bool) ($body['meta']['has_more'] ?? false) && $cursor;
+                if ($lanjut) {
+                    Sleep::for(self::PAGE_DELAY_MS)->milliseconds();
+                }
+            } while ($lanjut);
+        } finally {
+            $kunci->release();
+        }
+
+        return $hasil;
     }
 
     /**
      * Hanya menarik pasien Prolanis — filter is_prolanis=1 dipaksa di SilakesApiClient::patients(),
      * bukan di sini, supaya berlaku untuk pemanggil mana pun (mandat PRODULI, bukan pilihan sync ini saja).
      *
-     * Pasien is_prolanis=1 TAPI tidak punya riwayat surat_hasil_labs final (completed+approved+
-     * is_kunjungan_prolanis) sejak produli.silakes.lab_results_since DILEWATI (tidak di-upsert) --
-     * belum relevan untuk PRODULI (lihat isEligible()). Kalau sebelumnya sempat ter-cache lalu jadi
-     * tidak eligible lagi (mis. cutoff berubah), baris lama TIDAK otomatis dihapus di sini --
-     * lihat produli:prune-ineligible-patients untuk pembersihan eksplisit.
+     * Sejak 2026-11-17 (blueprint §9 no. 1) SEMUA pasien Prolanis ditarik, termasuk yang belum
+     * punya hasil lab (dulu dilewati). produli:prune-ineligible-patients karenanya dinonaktifkan.
      */
     public function syncPatients(): int
     {
@@ -190,15 +260,15 @@ class SyncSilakesService
                 'per_page' => self::PER_PAGE,
             ]));
 
+            // Semua pasien Prolanis ditarik (keputusan blueprint §9 no. 1, 2026-11-17), termasuk
+            // yang belum punya hasil lab; sebelumnya hanya yang sudah punya hasil lab.
             foreach ($body['data'] ?? [] as $row) {
-                if ($this->isEligible($row['patient_id'])) {
-                    $this->upsertPatient($row);
-                    $count++;
+                $this->upsertPatient($row, $this->via);
+                $count++;
 
-                    $diubah = ! empty($row['updated_at']) ? Carbon::parse($row['updated_at']) : null;
-                    if ($diubah && (! $watermark || $diubah->gt($watermark))) {
-                        $watermark = $diubah;
-                    }
+                $diubah = ! empty($row['updated_at']) ? Carbon::parse($row['updated_at']) : null;
+                if ($diubah && (! $watermark || $diubah->gt($watermark))) {
+                    $watermark = $diubah;
                 }
             }
 
@@ -233,15 +303,6 @@ class SyncSilakesService
         return $terakhir?->details['patients_watermark'] ?? $this->toIso8601(PatientsCache::max('last_synced_at'));
     }
 
-    /**
-     * Eligible = punya minimal 1 baris lab_results_cache -- kolom itu sendiri sudah difilter ke
-     * tanggal_periksa >= cutoff saat upsert (lihat upsertLabResultParameter()), jadi cukup cek
-     * keberadaannya, tidak perlu ulang syarat tanggal di sini.
-     */
-    private function isEligible(int $externalPatientId): bool
-    {
-        return LabResultCache::where('patient_id', $externalPatientId)->exists();
-    }
 
     /**
      * @return array{0: int, 1: array<int, true>} [lab_results_synced, external_patient_id => true pasien yang datanya baru]
@@ -354,54 +415,116 @@ class SyncSilakesService
         return $classifiedCount;
     }
 
+    /** Kolom yang perubahannya dicatat di patient_sync_histories (bukan kolom teknis/waktu). */
+    private const KOLOM_RIWAYAT = [
+        'no_reg', 'no_bpjs', 'nik', 'nama', 'gender', 'tgl_lahir', 'tempat_lahir', 'golongan_darah', 'agama',
+        'status_perkawinan', 'pekerjaan', 'is_bpjs', 'fktp', 'phone', 'email', 'alamat', 'rt_rw', 'kel_desa_raw',
+        'kecamatan_raw', 'is_prolanis', 'jenis_prolanis', 'is_perokok', 'jenis_perokok', 'domisili_alamat',
+        'domisili_rt_rw', 'domisili_kel_desa', 'domisili_kecamatan', 'puskesmas_id',
+    ];
+
     /**
-     * Juga dipakai SilakesEventService (revisi 2026-11-17) untuk menerapkan data pasien yang
-     * didorong SiLAKES seketika -- bentuk $row sama persis dengan item GET /integration/patients.
+     * Pemetaan SATU pasien SiLAKES ke patients_cache (blueprint §4b "PatientSyncMapper"), dipakai
+     * semua jalur: sinkron harian, tombol manual, tarik penuh, dan event realtime
+     * (SilakesEventService). $row berbentuk item GET /integration/patients.
+     *
+     * - Kolom yang tidak dikirim SiLAKES (payload lama) TIDAK dikosongkan.
+     * - Puskesmas terkunci (manual / puskesmas_locked_at) tidak dihitung ulang; pasien yang baru
+     *   pertama kali mendapat puskesmas langsung dikunci (§4d).
+     * - Perubahan dicatat di patient_sync_histories. Tarikan pertama dengan pemetaan ini
+     *   (refreshed_at masih kosong) dianggap data awal, bukan perubahan.
+     *
+     * @param  string  $via  harian | manual | realtime
      */
-    public function upsertPatient(array $row): PatientsCache
+    public function upsertPatient(array $row, string $via = 'harian', ?string $event = null): PatientsCache
     {
         $resolution = $this->wilayahResolver->resolve($row['kel_desa'] ?? null, $row['kecamatan'] ?? null);
-
-        // Override manual (revisi Bu Kadis, kasus "kunjungan khusus di luar wilayah" -- mis.
-        // Puskesmas Gapura punya pasien yang desa geografisnya resolve ke Kota Sumenep, tapi
-        // pengirim aslinya Gapura) SENGAJA tidak pernah ditimpa sync otomatis berikutnya --
-        // staf yang sudah menetapkan puskesmas_resolution_method='manual' via
-        // PATCH /patients/{id}/override-puskesmas lebih tahu daripada resolusi otomatis.
         $existing = PatientsCache::where('external_patient_id', $row['patient_id'])->first();
-        $isManualOverride = $existing?->puskesmas_resolution_method === 'manual';
 
-        $puskesmas = $isManualOverride
-            ? ['puskesmas_id' => $existing->puskesmas_id, 'method' => 'manual', 'pengirim_raw' => $existing->pengirim_raw]
+        // Override manual (revisi Bu Kadis) dan kunci kepemilikan (§4d) tidak pernah ditimpa.
+        $puskesmas = $existing?->puskesmasTerkunci()
+            ? ['puskesmas_id' => $existing->puskesmas_id, 'method' => $existing->puskesmas_resolution_method, 'pengirim_raw' => $existing->pengirim_raw]
             : $this->wilayahResolver->resolvePuskesmas($resolution->desaId, $resolution->kecamatanId, $row['patient_id']);
 
-        return PatientsCache::updateOrCreate(
-            ['external_patient_id' => $row['patient_id']],
-            [
-                'no_reg' => $row['no_reg'] ?? null,
-                'no_bpjs' => $row['no_bpjs'] ?? null,
-                'nik_hash' => $row['nik_hash'],
-                'nik' => $row['nik'] ?? null,
-                'nama' => $row['name'],
-                'gender' => $row['gender'] ?? null,
-                'tgl_lahir' => $row['tgl_lahir'] ?? null,
-                'phone' => $row['phone'] ?? null,
-                'alamat' => $row['alamat'] ?? null,
-                'rt_rw' => $row['rt_rw'] ?? null,
-                'kel_desa_raw' => $row['kel_desa'] ?? null,
-                'kecamatan_raw' => $row['kecamatan'] ?? null,
-                'is_prolanis' => $row['is_prolanis'] ?? false,
-                'jenis_prolanis' => $row['jenis_prolanis'] ?? null,
-                'is_perokok' => $row['is_perokok'] ?? false,
-                'jenis_perokok' => $row['jenis_perokok'] ?? null,
-                'desa_id' => $resolution->desaId,
-                'kecamatan_id' => $resolution->kecamatanId,
-                'wilayah_status' => $resolution->wilayahStatus,
-                'puskesmas_id' => $puskesmas['puskesmas_id'],
-                'puskesmas_resolution_method' => $puskesmas['method'],
-                'pengirim_raw' => $puskesmas['pengirim_raw'],
-                'last_synced_at' => $row['updated_at'],
-            ],
-        );
+        $attrs = [
+            'no_reg' => $row['no_reg'] ?? null,
+            'no_bpjs' => $row['no_bpjs'] ?? null,
+            'nik_hash' => $row['nik_hash'],
+            'nik' => $row['nik'] ?? null,
+            'nama' => $row['name'],
+            'gender' => $row['gender'] ?? null,
+            'tgl_lahir' => $row['tgl_lahir'] ?? null,
+            'phone' => $row['phone'] ?? null,
+            'alamat' => $row['alamat'] ?? null,
+            'rt_rw' => $row['rt_rw'] ?? null,
+            'kel_desa_raw' => $row['kel_desa'] ?? null,
+            'kecamatan_raw' => $row['kecamatan'] ?? null,
+            'is_prolanis' => $row['is_prolanis'] ?? false,
+            'jenis_prolanis' => $row['jenis_prolanis'] ?? null,
+            'is_perokok' => $row['is_perokok'] ?? false,
+            'jenis_perokok' => $row['jenis_perokok'] ?? null,
+            'desa_id' => $resolution->desaId,
+            'kecamatan_id' => $resolution->kecamatanId,
+            'wilayah_status' => $resolution->wilayahStatus,
+            'puskesmas_id' => $puskesmas['puskesmas_id'],
+            'puskesmas_resolution_method' => $puskesmas['method'],
+            'pengirim_raw' => $puskesmas['pengirim_raw'],
+            'last_synced_at' => $row['updated_at'],
+            'silakes_updated_at' => $row['updated_at'],
+            'refreshed_at' => now(),
+            'refreshed_via' => $via,
+        ];
+
+        // Fase 1/2 (2026-11-17): hanya bila SiLAKES sudah mengirimnya.
+        foreach (['tempat_lahir', 'golongan_darah', 'agama', 'status_perkawinan', 'pekerjaan', 'is_bpjs', 'fktp', 'email'] as $k) {
+            if (array_key_exists($k, $row)) {
+                $attrs[$k] = $row[$k];
+            }
+        }
+        if (array_key_exists('domisili', $row)) {
+            $d = is_array($row['domisili']) ? $row['domisili'] : [];
+            $attrs['domisili_alamat'] = $d['alamat'] ?? null;
+            $attrs['domisili_rt_rw'] = $d['rt_rw'] ?? null;
+            $attrs['domisili_kel_desa'] = $d['kel_desa'] ?? null;
+            $attrs['domisili_kecamatan'] = $d['kecamatan'] ?? null;
+            $attrs['domisili_sumber'] = $d['sumber'] ?? null;
+            $attrs['domisili_updated_at'] = $d['updated_at'] ?? null;
+        }
+
+        if ($attrs['puskesmas_id'] !== null && ! $existing?->puskesmas_locked_at) {
+            $attrs['puskesmas_locked_at'] = now();
+        }
+
+        if (! $existing) {
+            return PatientsCache::create(['external_patient_id' => $row['patient_id']] + $attrs);
+        }
+
+        $sudahPunyaDataAwal = $existing->refreshed_at !== null;
+        $existing->fill($attrs);
+        $berubah = array_intersect_key($existing->getDirty(), array_flip(self::KOLOM_RIWAYAT));
+        $lama = array_intersect_key($existing->getOriginal(), $berubah);
+        $existing->save();
+
+        if ($sudahPunyaDataAwal && $berubah !== []) {
+            $catatan = [];
+            foreach ($berubah as $kolom => $nilaiBaru) {
+                $catatan[$kolom] = ['lama' => $this->nilaiRiwayat($lama[$kolom] ?? null), 'baru' => $this->nilaiRiwayat($existing->getAttribute($kolom))];
+            }
+            PatientSyncHistory::create([
+                'patients_cache_id' => $existing->id,
+                'synced_at' => now(),
+                'sumber' => $via,
+                'silakes_event' => $event,
+                'changed_fields' => $catatan,
+            ]);
+        }
+
+        return $existing;
+    }
+
+    private function nilaiRiwayat(mixed $v): mixed
+    {
+        return $v instanceof \DateTimeInterface ? $v->format('Y-m-d') : $v;
     }
 
     private function upsertLabResultParameter(array $labResult, array $parameter): void

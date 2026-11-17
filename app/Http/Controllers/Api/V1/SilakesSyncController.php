@@ -51,7 +51,7 @@ class SilakesSyncController extends Controller
         $this->authorizeSuperAdmin($request);
 
         try {
-            $result = $service->runAndLog();
+            $result = $service->runAndLog('manual');
         } catch (SinkronSedangBerjalanException $e) {
             return ApiResponse::error($e->getMessage(), 409);
         } catch (Throwable $e) {

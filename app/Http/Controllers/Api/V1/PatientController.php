@@ -137,6 +137,17 @@ class PatientController extends Controller
                 $request->filled('wilayah_status'),
                 fn ($q) => $q->where('wilayah_status', $request->string('wilayah_status'))
             )
+            // Cara puskesmas pasien ditetapkan (blueprint §9 no. 2): mis. 'kecamatan_fallback'
+            // untuk meninjau pasien yang dikunci ke puskesmas hasil tebakan kecamatan.
+            ->when(
+                $request->filled('puskesmas_resolution_method'),
+                fn ($q) => $q->where('puskesmas_resolution_method', $request->string('puskesmas_resolution_method'))
+            )
+            // "Belum ada hasil lab" (blueprint §9 no. 1): pasien Prolanis tanpa klasifikasi risiko.
+            ->when(
+                $request->boolean('belum_ada_hasil_lab'),
+                fn ($q) => $q->whereDoesntHave('latestRiskClassification')
+            )
             ->when(
                 $request->filled('risk_level'),
                 fn ($q) => $q->whereHas(
@@ -740,6 +751,7 @@ class PatientController extends Controller
             throw new AuthorizationException('Anda hanya bisa mengklaim pasien ke puskesmas Anda sendiri.');
         }
 
+        $puskesmasSebelum = $patient->puskesmas_id;
         $patient->update([
             'puskesmas_id' => $targetPuskesmasId,
             'puskesmas_resolution_method' => 'manual',
@@ -752,6 +764,19 @@ class PatientController extends Controller
             'by_user_id' => $user->id,
         ]);
 
+        // Kunci kepemilikan (blueprint §4d): override adalah SATU-SATUNYA jalan pindah puskesmas,
+        // dan tercatat di riwayat pasien.
+        $patient->forceFill(['puskesmas_locked_at' => now()])->save();
+        if ($puskesmasSebelum !== $targetPuskesmasId) {
+            \App\Models\PatientSyncHistory::create([
+                'patients_cache_id' => $patient->id,
+                'synced_at' => now(),
+                'sumber' => 'override',
+                'changed_fields' => ['puskesmas_id' => ['lama' => $puskesmasSebelum, 'baru' => $targetPuskesmasId, 'oleh' => $user->name,
+                    'alasan' => $request->string('reason')->toString() ?: null]],
+            ]);
+        }
+
         return ApiResponse::success(new PatientResource($patient->fresh()), 'Puskesmas pasien berhasil diklaim manual.');
     }
 
@@ -763,6 +788,33 @@ class PatientController extends Controller
      * Gerbang akses SAMA dengan proposeUpdate() -- kalau boleh mengajukan, boleh juga lihat
      * riwayatnya sendiri untuk pasien itu.
      */
+    /**
+     * GET /patients/{id}/sync-history -- riwayat sinkron pasien (blueprint §4c, tab "Riwayat
+     * Sinkron"): kapan, lewat jalur apa, kolom apa berubah dari apa ke apa. Terbaru dulu.
+     */
+    public function syncHistory(Request $request, PatientsCache $patient): JsonResponse
+    {
+        $this->authorize('view', $patient);
+
+        $riwayat = $patient->syncHistories()->latest('synced_at')->latest('id')->paginate(min($request->integer('per_page', 30), 100));
+
+        return ApiResponse::success([
+            'items' => $riwayat->getCollection()->map(fn ($h) => [
+                'id' => $h->id,
+                'synced_at' => $h->synced_at->toIso8601String(),
+                'sumber' => $h->sumber,
+                'silakes_event' => $h->silakes_event,
+                'changed_fields' => $h->changed_fields,
+            ])->values(),
+            'pagination' => [
+                'current_page' => $riwayat->currentPage(), 'per_page' => $riwayat->perPage(),
+                'total' => $riwayat->total(), 'last_page' => $riwayat->lastPage(),
+            ],
+            'refreshed_at' => $patient->refreshed_at?->toIso8601String(),
+            'refreshed_via' => $patient->refreshed_via,
+        ]);
+    }
+
     public function updateHistory(PatientsCache $patient, SilakesApiClient $client): JsonResponse
     {
         $this->authorize('update', $patient);
