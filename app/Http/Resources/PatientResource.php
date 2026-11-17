@@ -120,6 +120,21 @@ class PatientResource extends JsonResource
                 'periodRiskClassification',
                 fn () => $this->periodRiskClassification?->computed_at?->toIso8601String(),
             ),
+            // Fase 4 (2026-11-17): tanggal pemeriksaan yang menjadi dasar kondisi per tanggal, dan
+            // perbandingan dengan ?bandingkan=YYYY-MM-DD (perubahan: membaik/memburuk/tetap/null).
+            'period_assessment_date' => $this->whenLoaded(
+                'periodRiskClassification',
+                fn () => $this->periodRiskClassification?->assessment_date?->toDateString(),
+            ),
+            'compare_risk_level' => $this->whenLoaded(
+                'compareRiskClassification',
+                fn () => $this->compareRiskClassification?->level,
+            ),
+            'compare_assessment_date' => $this->whenLoaded(
+                'compareRiskClassification',
+                fn () => $this->compareRiskClassification?->assessment_date?->toDateString(),
+            ),
+            'perubahan_risiko' => $this->whenLoaded('compareRiskClassification', fn () => $this->perubahan_risiko),
             // Jadwal kunjungan berulang (permintaan user) -- cuma terisi kalau relasinya
             // di-eager-load (PatientController::show(), BUKAN index() -- daftar pasien tidak
             // perlu jadwal cadence tiap baris, terlalu berat).

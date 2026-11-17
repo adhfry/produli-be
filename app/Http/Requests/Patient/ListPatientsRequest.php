@@ -47,6 +47,12 @@ class ListPatientsRequest extends FormRequest
             // period cuma menambah kolom period_risk_level/period_risk_computed_at di response
             // (lihat PatientResource), tidak memfilter daftar berdasarkan status historis.
             'period' => ['nullable', 'date_format:Y-m'],
+            // Fase 4 blueprint docs/planning/16 (2026-11-17): "Data per tanggal" (kondisi pada hari
+            // itu, mengisi kolom period_* yang sama) dan "Bandingkan dengan tanggal" (kolom
+            // compare_risk_level + perubahan). Filter perubahan butuh tanggal pembanding.
+            'tanggal' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'bandingkan' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today', 'required_with:perubahan'],
+            'perubahan' => ['nullable', 'string', 'in:membaik,memburuk,tetap'],
         ];
     }
 }

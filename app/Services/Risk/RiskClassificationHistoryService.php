@@ -18,8 +18,9 @@ use Illuminate\Database\Eloquent\Builder;
 class RiskClassificationHistoryService
 {
     /**
-     * CURRENT (is_latest=true) kalau $asOf null, atau REKONSTRUKSI historis (baris computed_at
-     * TERBESAR yang masih <= $asOf per pasien) kalau $asOf diisi.
+     * CURRENT (is_latest=true) kalau $asOf null, atau REKONSTRUKSI historis kalau $asOf diisi:
+     * pemeriksaan TERAKHIR (assessment_date) yang tanggalnya <= $asOf, dengan perhitungan
+     * terbarunya.
      *
      * @param  Builder<PatientsCache>  $scopedPatients
      * @return Builder<RiskClassification>
@@ -32,21 +33,41 @@ class RiskClassificationHistoryService
                 ->whereIn('patient_id', (clone $scopedPatients)->select('id'));
         }
 
-        $latestPerPatient = RiskClassification::query()
-            ->select('patient_id')
-            ->selectRaw('MAX(computed_at) as max_computed_at')
-            ->where('computed_at', '<=', $asOf)
-            ->whereIn('patient_id', (clone $scopedPatients)->select('id'))
-            ->groupBy('patient_id');
+        // Revisi 2026-11-17 (blueprint docs/planning/16 Fase 4): kondisi "per tanggal" diukur dari
+        // TANGGAL PEMERIKSAAN (assessment_date), bukan computed_at. computed_at menumpuk di tanggal
+        // hitung ulang massal (9.461 dari 12.035 baris dihitung 12 & 17 Agustus 2026), sehingga
+        // periode sebelum Agustus dulu tampil kosong. Untuk pemeriksaan yang sama dipakai
+        // perhitungan TERBARU (aturan yang sama dengan dedup riwayat risiko pasien). Baris lama
+        // tanpa assessment_date memakai tanggal computed_at.
+        $tanggal = 'COALESCE(risk_classifications.assessment_date, DATE(risk_classifications.computed_at))';
+        $batas = $asOf->toDateString();
+        $pasien = (clone $scopedPatients)->select('id');
+
+        $tanggalTerakhir = RiskClassification::query()
+            ->select('risk_classifications.patient_id')
+            ->selectRaw("MAX({$tanggal}) as tgl_efektif")
+            ->whereRaw("{$tanggal} <= ?", [$batas])
+            ->whereIn('risk_classifications.patient_id', $pasien)
+            ->groupBy('risk_classifications.patient_id');
+
+        $hitungTerakhir = RiskClassification::query()
+            ->joinSub($tanggalTerakhir, 'tgl_per_pasien', function ($join) use ($tanggal) {
+                $join->on('risk_classifications.patient_id', '=', 'tgl_per_pasien.patient_id')
+                    ->on(\Illuminate\Support\Facades\DB::raw($tanggal), '=', 'tgl_per_pasien.tgl_efektif');
+            })
+            ->select('risk_classifications.patient_id', 'tgl_per_pasien.tgl_efektif')
+            ->selectRaw('MAX(risk_classifications.computed_at) as max_computed_at')
+            ->groupBy('risk_classifications.patient_id', 'tgl_per_pasien.tgl_efektif');
 
         // TIDAK select('risk_classifications.*') di sini -- sebagian caller (DashboardService)
         // pasang selectRaw()+groupBy() sendiri; mencampur '*' bikin GROUP BY tidak lengkap di
         // bawah MySQL ONLY_FULL_GROUP_BY. Caller yang butuh baris utuh (PatientController) --
         // tinggal ->select('risk_classifications.*') sendiri di sisi pemanggil.
         return RiskClassification::query()
-            ->joinSub($latestPerPatient, 'latest_as_of', function ($join) {
+            ->joinSub($hitungTerakhir, 'latest_as_of', function ($join) use ($tanggal) {
                 $join->on('risk_classifications.patient_id', '=', 'latest_as_of.patient_id')
-                    ->on('risk_classifications.computed_at', '=', 'latest_as_of.max_computed_at');
+                    ->on('risk_classifications.computed_at', '=', 'latest_as_of.max_computed_at')
+                    ->on(\Illuminate\Support\Facades\DB::raw($tanggal), '=', 'latest_as_of.tgl_efektif');
             });
     }
 

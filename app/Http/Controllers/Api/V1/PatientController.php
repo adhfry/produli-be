@@ -25,7 +25,6 @@ use App\Services\Notification\NotificationPayload;
 use App\Services\Notification\NotifyService;
 use App\Services\Patient\HasilPemeriksaanExportService;
 use App\Services\Patient\PatientQueryService;
-use App\Services\Risk\RiskClassificationHistoryService;
 use App\Services\Silakes\SilakesApiClient;
 use App\Support\ApiResponse;
 use App\Support\DataScope;
@@ -61,15 +60,25 @@ class PatientController extends Controller
 
     public function __construct(
         private readonly PatientQueryService $patientQuery,
-        private readonly RiskClassificationHistoryService $riskHistory,
         private readonly HasilPemeriksaanExportService $hasilExport,
+        private readonly \App\Services\Patient\PatientSnapshotService $snapshot,
     ) {}
 
     public function index(ListPatientsRequest $request): JsonResponse
     {
         $this->authorize('viewAny', PatientsCache::class);
 
-        $paginator = $this->applySort($this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request), $request)
+        $query = $this->applyFilters($this->patientQuery->scopedQuery($request->user()), $request);
+
+        // Fase 4 (2026-11-17): "Hanya yang membaik/memburuk/tetap" dibanding tanggal pembanding,
+        // dihitung atas SEMUA pasien yang lolos filter (sebelum paginasi) supaya total benar.
+        $tanggal = $request->filled('tanggal') ? Carbon::parse($request->string('tanggal')) : null;
+        $bandingkan = $request->filled('bandingkan') ? Carbon::parse($request->string('bandingkan')) : null;
+        if ($bandingkan && $request->filled('perubahan')) {
+            $query->whereIn('patients_cache.id', $this->snapshot->idDenganPerubahan($query, $bandingkan, $tanggal, $request->string('perubahan')));
+        }
+
+        $paginator = $this->applySort($query, $request)
             ->with(['desa', 'kecamatan', 'puskesmas', 'latestRiskClassification'])
             ->paginate($request->integer('per_page', 20));
 
@@ -78,17 +87,23 @@ class PatientController extends Controller
         // latestRiskClassification (status terkini) di atas. Query TERPISAH khusus utk ID
         // halaman yang sedang tampil (bukan semua pasien scope) -- murah & tidak mengubah
         // filter/sort utama sama sekali.
-        if ($request->filled('period')) {
-            $asOf = Carbon::parse($request->string('period').'-01')->endOfMonth();
-            $patientIds = $paginator->getCollection()->pluck('id');
-            $periodClassifications = $this->riskHistory
-                ->effectiveQuery(PatientsCache::query()->whereIn('id', $patientIds), $asOf)
-                ->select('risk_classifications.*')
-                ->get()
-                ->keyBy('patient_id');
-
+        // "Data per tanggal" (Fase 4) memakai kolom period_* yang sama dengan periode bulanan;
+        // keduanya lewat PatientSnapshotService (snapshot bila ada, selain itu rekonstruksi).
+        $patientIds = $paginator->getCollection()->pluck('id');
+        $asOf = $tanggal ?? ($request->filled('period') ? Carbon::parse($request->string('period').'-01')->endOfMonth() : null);
+        if ($asOf) {
+            $periodClassifications = $this->snapshot->klasifikasiPada($patientIds, $asOf);
             $paginator->getCollection()->each(function (PatientsCache $patient) use ($periodClassifications) {
                 $patient->setRelation('periodRiskClassification', $periodClassifications->get($patient->id));
+            });
+        }
+        if ($bandingkan) {
+            $pembanding = $this->snapshot->klasifikasiPada($patientIds, $bandingkan);
+            $paginator->getCollection()->each(function (PatientsCache $patient) use ($pembanding, $asOf) {
+                $patient->setRelation('compareRiskClassification', $pembanding->get($patient->id));
+                $kini = $asOf ? $patient->getRelation('periodRiskClassification') : $patient->latestRiskClassification;
+                $patient->setAttribute('perubahan_risiko', \App\Services\Patient\PatientSnapshotService::perubahan(
+                    $pembanding->get($patient->id)?->level, $kini?->level));
             });
         }
 
@@ -797,6 +812,11 @@ class PatientController extends Controller
         $this->authorize('view', $patient);
 
         $riwayat = $patient->syncHistories()->latest('synced_at')->latest('id')->paginate(min($request->integer('per_page', 30), 100));
+        // Puskesmas tersimpan sebagai id di riwayat; nama ikut dikirim supaya bisa dibaca orang.
+        $idPuskesmas = $riwayat->getCollection()
+            ->flatMap(fn ($h) => isset($h->changed_fields['puskesmas_id']) ? [$h->changed_fields['puskesmas_id']['lama'] ?? null, $h->changed_fields['puskesmas_id']['baru'] ?? null] : [])
+            ->filter()->unique();
+        $namaPuskesmas = \App\Models\Puskesmas::whereIn('id', $idPuskesmas)->pluck('nama', 'id');
 
         return ApiResponse::success([
             'items' => $riwayat->getCollection()->map(fn ($h) => [
@@ -806,6 +826,7 @@ class PatientController extends Controller
                 'silakes_event' => $h->silakes_event,
                 'changed_fields' => $h->changed_fields,
             ])->values(),
+            'puskesmas' => $namaPuskesmas,
             'pagination' => [
                 'current_page' => $riwayat->currentPage(), 'per_page' => $riwayat->perPage(),
                 'total' => $riwayat->total(), 'last_page' => $riwayat->lastPage(),
