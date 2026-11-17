@@ -306,6 +306,17 @@ Hasil akhir pemeriksaan ulang: 6.757 pasien PRODULI identik dengan SiLAKES di se
 
 **Berikutnya:** Fase 4 (snapshot harian, "Sinkron terakhir", data per tanggal, bandingkan, tab Riwayat Sinkron, banner sinkron gagal), Fase 5 (poin & peringkat), Fase 6 (dokumen).
 
+## 15. Status Fase 4 (live 2026-11-17)
+
+- **Perbaikan bug yang ditemukan:** kondisi "per tanggal" (periode bulanan dashboard & daftar pasien) dulu memakai `computed_at`, padahal 9.461 dari 12.035 klasifikasi dihitung massal 12 & 17 Agustus 2026, sehingga bulan sebelum Agustus tampil hampir kosong. Kini berdasar tanggal pemeriksaan (`assessment_date`), memakai perhitungan terbaru untuk pemeriksaan yang sama. Diuji di MySQL production sebelum deploy: per hari ini sama persis dengan klasifikasi terkini (4.834/532/1.245/144), per 31 Juli 5.299 pasien terklasifikasi.
+- **Snapshot harian** `patient_daily_snapshots` + `produli:snapshot-harian` (02:30, menunggu kunci sinkron). Snapshot pertama 17 Nov 2026: 10.776 pasien.
+- **Penyimpangan dari rancangan:** tidak ada backfill baris snapshot ke belakang. Tanggal sebelum 17 Nov direkonstruksi dari riwayat klasifikasi (tanggal pemeriksaan) dengan puskesmas saat ini; hasilnya sama dengan backfill, tanpa ~3 juta baris salinan. Riwayat kepemilikan puskesmas baru tersedia sejak 17 Nov (snapshot + catatan override).
+- **API:** `GET /patients?tanggal=`, `?bandingkan=`, `?perubahan=membaik|memburuk|tetap` (dihitung sebelum paginasi), `GET /patients/{id}/sync-history`.
+- **Tampilan:** "Data per" tanggal menggantikan pilihan bulan (pilih hari terakhir bulan = tampilan bulanan lama), "Bandingkan dengan" + filter Membaik/Memburuk/Tetap, kolom Sinkron Terakhir, pilihan "Belum ada hasil lab", filter "Ditetapkan lewat kecamatan", bagian Riwayat Sinkron di detail pasien, pembaruan otomatis saat SiLAKES mengubah data pasien, banner super admin bila sinkron gagal / lebih dari 26 jam.
+- **Uji production (hanya membaca):** membaik sejak 31 Jul 37 pasien, memburuk 42; belum ada hasil lab 4.021; ditetapkan lewat kecamatan 4.268.
+
+**Berikutnya:** Fase 5 (aturan poin baru, hitung ulang transisi, tampilan kinerja), Fase 6 (dokumen).
+
 ## 11. Pertanyaan review awal (arsip)
 
 1. **Cakupan pasien:** tarik semua 10.776 pasien Prolanis (yang belum punya hasil lab 2026 ditandai "Belum ada hasil lab"), atau tetap 6.757 yang punya hasil lab sejak 2026-01-01? Usulan saya: tarik semua, supaya daftar Prolanis puskesmas lengkap.
