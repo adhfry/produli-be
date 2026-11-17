@@ -289,6 +289,23 @@ Temuan dan tindakan:
 
 Hasil akhir pemeriksaan ulang: 6.757 pasien PRODULI identik dengan SiLAKES di semua bidang (0 selisih), batas sinkron tidak berubah.
 
+## 14. Status Fase 1 & 2 (live 2026-11-17)
+
+**Fase 1 (SiLAKES):** payload pasien membawa identitas lengkap + `domisili` (foto KTP tidak); bug domisili diperbaiki (`touch()` saat domisili disetujui); `GET /integration/patients/{id}` (termasuk `merged_into_id`); event `patient.merged` saat staf menggabungkan pasien.
+
+**Fase 2 (PRODULI):** kolom lengkap + domisili + `silakes_updated_at` + `refreshed_at/refreshed_via` + `puskesmas_locked_at`; satu pemetaan pasien untuk semua jalur; `patient_sync_histories` + `GET /patients/{id}/sync-history`; kunci kepemilikan (6.711 pasien dikunci saat deploy, sinkron/reresolve/reconcile menghormati, override mengunci ulang & tercatat); peringatan sinkron gagal ke super_admin; filter `belum_ada_hasil_lab` dan `puskesmas_resolution_method`; label "Belum ada hasil lab"; form usulan terisi data lengkap.
+
+**Semua pasien Prolanis (§9 no. 1):** `produli:tarik-semua-pasien` dijalankan 2026-11-17: 10.776 pasien (4.019 baru), 0 pasien lama berubah puskesmas/NIK, batas sinkron tidak bergeser, perbandingan ulang 10.776 pasien vs SiLAKES: 0 selisih. Cadangan `patients_cache` sebelum Fase 2 di `~/fase2-2026-11-17/` (server). `produli:prune-ineligible-patients` dinonaktifkan.
+
+**Penyimpangan dari rancangan, dengan alasan:**
+- Event membawa data pasien (bertanda tangan HMAC) alih-alih hanya id lalu PRODULI menarik ulang: satu perjalanan jaringan lebih sedikit, dan tanda tangan sudah mencegah data palsu. Endpoint satu pasien tetap tersedia untuk tarik ulang.
+- `GET /integration/patients/{id}/lab-results` tidak dibuat: hasil lab tetap lewat sinkron 02:00 (§9 no. 5).
+- Domisili disimpan tetapi belum dipakai untuk titik peta: `geo_source` belum punya nilai untuk SiLAKES, dan PRODULI sudah mencatat titik terverifikasi sendiri dari kunjungan kader. Bisa dikerjakan terpisah.
+
+**Temuan terbuka:** 1.688 pasien belum punya puskesmas (46 lama + 1.642 dari tarik penuh). 1.579 di antaranya tidak punya desa maupun kecamatan di SiLAKES, 1.595 tanpa FKTP; FKTP hanya bisa membantu 93. Perlu kelengkapan alamat di SiLAKES atau klaim manual lewat override.
+
+**Berikutnya:** Fase 4 (snapshot harian, "Sinkron terakhir", data per tanggal, bandingkan, tab Riwayat Sinkron, banner sinkron gagal), Fase 5 (poin & peringkat), Fase 6 (dokumen).
+
 ## 11. Pertanyaan review awal (arsip)
 
 1. **Cakupan pasien:** tarik semua 10.776 pasien Prolanis (yang belum punya hasil lab 2026 ditandai "Belum ada hasil lab"), atau tetap 6.757 yang punya hasil lab sejak 2026-01-01? Usulan saya: tarik semua, supaya daftar Prolanis puskesmas lengkap.
