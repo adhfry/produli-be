@@ -276,6 +276,17 @@ Ini sekaligus mengerjakan bagian Fase 3 (event SiLAKES ke PRODULI) yang sudah di
 
 **Konfigurasi production yang dibutuhkan:** `.env` SiLAKES `PRODULI_API_BASE_URL=https://api.produli.labkesdasumenep.id`. Tanpa ini tidak ada yang didorong; PRODULI tetap mendapat hasil lewat pengecekan berkala.
 
+## 13. Kesegaran data pasien (analisis & perbaikan 2026-11-17)
+
+Pemicu: pertanyaan user "apakah data pasien Gapura sudah terbaru". Perbandingan bidang per bidang seluruh 6.757 pasien PRODULI terhadap SiLAKES (hanya membaca).
+
+Temuan dan tindakan:
+
+1. **NIK kosong 4.992, no. BPJS kosong 2.507** padahal ada di SiLAKES; bidang lain identik. Penyebab: sinkron harian hanya menarik pasien yang berubah, sedangkan NIK baru ikut sinkron sejak 2026-08-13 dan BPJS sejak 2026-08-17. Diperbaiki dengan `produli:isi-ulang-pasien` (hanya mengisi yang kosong, NIK wajib cocok `nik_hash`, tidak menyentuh `last_synced_at`, mode `--uji`, catatan perubahan di `storage/app/isi-ulang-pasien/`). Dijalankan 2026-11-17: 4.989 NIK + 2.504 BPJS terisi, 0 hash berbeda; cadangan kolom sebelum pengisian di `~/cek-gapura/backup-nik-bpjs-sebelum-isi-ulang.json` (server). Jadwal mingguan Minggu 03:30 sebagai jaring pengaman. **Bila kolom baru ditambahkan ke sinkron, jalankan perintah ini untuk kolom tersebut.**
+2. **Sinkron 02:00 dan tombol manual tidak punya kunci** (bisa tumpang tindih). Kini satu kunci `produli:silakes-sync` dipakai sinkron harian, tombol manual (409 bila sedang jalan), dan isi-ulang.
+3. **Batas "data baru" bisa bergeser karena event realtime** (§12): event menyimpan pasien dengan `updated_at` siang hari, sehingga `max(last_synced_at)` melompat dan perubahan pasien lain di hari yang sama terlewat. Belum sempat terjadi (belum ada event nyata). Kini batas disimpan sinkron sendiri di `integration_sync_logs.details.patients_watermark`.
+4. **3 pasien sudah digabung di SiLAKES** (11961→2382, 11972→2392, 11899→6368) masih terpisah di PRODULI; pasien tujuan belum ada di PRODULI. Perlu prosedur gabung tersendiri (lihat Fase 3 `patient.merged`), menunggu persetujuan.
+
 ## 11. Pertanyaan review awal (arsip)
 
 1. **Cakupan pasien:** tarik semua 10.776 pasien Prolanis (yang belum punya hasil lab 2026 ditandai "Belum ada hasil lab"), atau tetap 6.757 yang punya hasil lab sejak 2026-01-01? Usulan saya: tarik semua, supaya daftar Prolanis puskesmas lengkap.
