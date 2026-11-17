@@ -1,5 +1,7 @@
 # Kontrak API SiLAKES (Aktual — Live)
 
+> **Pembaruan 2026-11-17:** integrasi kini jauh lebih erat (endpoint pendaftaran pasien baru, foto KTP, event SiLAKES ke PRODULI, payload pasien lengkap + domisili, data per tanggal, aturan poin v2). Keputusan & kontrak terbaru ada di `16-blueprint-integrasi-erat-silakes-produli.md` (§9-§15); bila berbeda dengan dokumen ini, ikuti dokumen 16.
+
 > Dokumen ini adalah kontrak API **sebenarnya** dari 3 endpoint integrasi SiLAKES yang sudah diimplementasikan dan live. Lebih detail & mengikat daripada asumsi di `01-integrasi-silakes-produli.md` — kalau ada perbedaan, ikuti dokumen ini.
 >
 > ⚠️ Nilai secret di bawah **disensor**. Isi nilai asli langsung sebagai env var di PRODULI (`.env`), jangan pernah tulis nilai asli di kode, prompt ke AI, commit, atau dokumen manapun yang bisa ke-share.

@@ -1,5 +1,7 @@
 # Dokumen Perencanaan 1/3 — Integrasi SiLAKES ↔ PRODULI
 
+> **Pembaruan 2026-11-17:** integrasi kini jauh lebih erat (endpoint pendaftaran pasien baru, foto KTP, event SiLAKES ke PRODULI, payload pasien lengkap + domisili, data per tanggal, aturan poin v2). Keputusan & kontrak terbaru ada di `16-blueprint-integrasi-erat-silakes-produli.md` (§9-§15); bila berbeda dengan dokumen ini, ikuti dokumen 16.
+
 > Bagian dari rencana pengembangan **PRODULI**, sistem pendamping SiLAKES untuk UPTD Labkesda Kabupaten Sumenep.
 
 ## 1. Keputusan Arsitektur Utama

@@ -317,6 +317,19 @@ Hasil akhir pemeriksaan ulang: 6.757 pasien PRODULI identik dengan SiLAKES di se
 
 **Berikutnya:** Fase 5 (aturan poin baru, hitung ulang transisi, tampilan kinerja), Fase 6 (dokumen).
 
+## 16. Status Fase 5 & 6 (live 2026-11-17)
+
+**Fase 5, aturan poin v2:**
+- Temuan sebelum perubahan: 5.280 transisi tercatat, **0 dihitung** (aturan lama mensyaratkan kunjungan tervalidasi, dan belum pernah ada), dan 5.002 di antaranya hanyalah hitung ulang aturan atas pemeriksaan yang sama (revisi ambang 12 ke 17 Agustus) dengan 67.112 "poin" yang bukan perbaikan sungguhan.
+- Aturan v2: hanya transisi karena pemeriksaan lab baru yang dihitung; +10/-10 per level, +2 retensi Terkendali, bonus +5 di atas poin perbaikan bila ada kunjungan tervalidasi; poin ke puskesmas pemilik pada tanggal pemeriksaan (snapshot); periode = tanggal pemeriksaan. Rumus skor (50/30/20) tidak berubah.
+- `produli:hitung-ulang-poin` dijalankan: 5.280 baris diperbarui di tempat (tidak ada yang dihapus); hasil 278 transisi dihitung, 12 puskesmas dinilai. Cadangan tabel sebelum v2 di `~/fase5-2026-11-17/` (server).
+- Temuan saat verifikasi: kolom "Membaik" memakai `improved_patients` yang ikut menghitung retensi (rumus improvement_rate). Ditambah `level_membaik_patients` untuk tampilan; rumus tetap.
+- API `GET /kinerja-puskesmas`, `/kinerja-puskesmas/{id}/pasien` (puskesmas sendiri, super_admin semua), `/kinerja-puskesmas/ringkasan`. Halaman `/dashboard/kinerja-puskesmas` (menggabungkan halaman lama: breadcrumb, deep link periode, skor komponen, kunjungan tervalidasi) + menu + kartu ringkas di widget Top 5 dashboard.
+
+**Fase 6:** CLAUDE.md kedua repo diperbarui (arah tulis terkontrol, event SiLAKES ke PRODULI, kunci & batas sinkron, NIK asli + hash, kunci puskesmas, tanggal pemeriksaan, poin v2); dokumen 01 & 04 diberi catatan bahwa keputusan terbaru ada di dokumen ini.
+
+**Seluruh fase blueprint selesai.** Pekerjaan terbuka: 1.688 pasien tanpa puskesmas (data alamat kosong di SiLAKES), titik peta dari domisili SiLAKES, aturan GDA > 200 di SiLAKES (§8).
+
 ## 11. Pertanyaan review awal (arsip)
 
 1. **Cakupan pasien:** tarik semua 10.776 pasien Prolanis (yang belum punya hasil lab 2026 ditandai "Belum ada hasil lab"), atau tetap 6.757 yang punya hasil lab sejak 2026-01-01? Usulan saya: tarik semua, supaya daftar Prolanis puskesmas lengkap.
