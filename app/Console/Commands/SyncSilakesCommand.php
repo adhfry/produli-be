@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Exceptions\SinkronSedangBerjalanException;
 use App\Models\IntegrationSyncLog;
 use App\Services\Silakes\SyncSilakesService;
 use Carbon\Carbon;
@@ -58,6 +59,11 @@ class SyncSilakesCommand extends Command
             $result = $service->runAndLog();
 
             $this->info('Sync berhasil: '.json_encode($result));
+
+            return self::SUCCESS;
+        } catch (SinkronSedangBerjalanException $e) {
+            // Tombol manual atau isi-ulang sedang jalan: bukan kegagalan, run berikutnya mengejar.
+            $this->info('Skip: '.$e->getMessage());
 
             return self::SUCCESS;
         } catch (Throwable $e) {

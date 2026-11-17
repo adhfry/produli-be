@@ -11,6 +11,9 @@ Artisan::command('inspire', function () {
 // Dipanggil harian, tapi produli:sync-silakes sendiri yang skip kalau run sukses
 // terakhir belum 48 jam lalu (docs/planning/02 §3) — bukan cron interval hari.
 Schedule::command('produli:sync-silakes')->dailyAt('02:00');
+// Jaring pengaman mingguan (revisi 2026-11-17): isi kolom pasien yang masih kosong dari SiLAKES,
+// tanpa menimpa apa pun. Minggu 03:30, setelah sinkron 02:00 selesai (kunci bersama mencegah tumpang tindih).
+Schedule::command('produli:isi-ulang-pasien')->weeklyOn(0, '03:30')->withoutOverlapping();
 
 // twiceDaily (bukan literal "harian") supaya reminder H-1 (sore, 16:00) dan hari-H (pagi,
 // 06:00) sama-sama terkirim dekat jam targetnya (docs/planning/02 §8) — kalau cuma sekali

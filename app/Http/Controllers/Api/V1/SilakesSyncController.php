@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Exceptions\SinkronSedangBerjalanException;
 use App\Http\Controllers\Controller;
 use App\Models\IntegrationSyncLog;
 use App\Services\Silakes\SyncSilakesService;
@@ -51,6 +52,8 @@ class SilakesSyncController extends Controller
 
         try {
             $result = $service->runAndLog();
+        } catch (SinkronSedangBerjalanException $e) {
+            return ApiResponse::error($e->getMessage(), 409);
         } catch (Throwable $e) {
             report($e);
 

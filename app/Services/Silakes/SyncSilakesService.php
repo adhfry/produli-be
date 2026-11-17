@@ -2,6 +2,7 @@
 
 namespace App\Services\Silakes;
 
+use App\Exceptions\SinkronSedangBerjalanException;
 use App\Models\IntegrationSyncLog;
 use App\Models\LabResultCache;
 use App\Models\PatientsCache;
@@ -12,6 +13,7 @@ use App\Services\Notification\NotifyService;
 use App\Services\Risk\RiskClassificationService;
 use App\Services\Wilayah\WilayahResolver;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Sleep;
 use Throwable;
 
@@ -32,6 +34,18 @@ class SyncSilakesService
     // berturut-turut). 1200ms/halaman ~= maks 50 req/menit, sisa headroom untuk panggilan lain
     // (mis. MasterWilayahSeeder) yang mungkin jalan berdekatan.
     private const PAGE_DELAY_MS = 1200;
+
+    /**
+     * Kunci bersama (revisi 2026-11-17): sinkron terjadwal 02:00, tombol "Sinkronisasi SiLAKES"
+     * dan produli:isi-ulang-pasien tidak boleh berjalan bersamaan. Sebelumnya cron dan tombol
+     * manual bisa tumpang tindih. TTL 2 jam: bila proses mati di tengah, kunci lepas sendiri.
+     */
+    public const KUNCI = 'produli:silakes-sync';
+
+    public const KUNCI_TTL_DETIK = 7200;
+
+    /** Batas "data baru" pasien setelah syncPatients() selesai, disimpan di log sinkron. */
+    private ?string $patientsWatermark = null;
 
     public function __construct(
         private readonly SilakesApiClient $client,
@@ -89,6 +103,20 @@ class SyncSilakesService
      */
     public function runAndLog(): array
     {
+        $kunci = Cache::lock(self::KUNCI, self::KUNCI_TTL_DETIK);
+        if (! $kunci->get()) {
+            throw new SinkronSedangBerjalanException;
+        }
+
+        try {
+            return $this->runAndLogTerkunci();
+        } finally {
+            $kunci->release();
+        }
+    }
+
+    private function runAndLogTerkunci(): array
+    {
         $requestedAt = now();
 
         try {
@@ -100,7 +128,7 @@ class SyncSilakesService
                 'requested_at' => $requestedAt,
                 'status' => 'success',
                 'records_count' => $result['patients_synced'] + $result['lab_results_synced'],
-                'details' => $result,
+                'details' => $result + ['patients_watermark' => $this->patientsWatermark],
             ]);
 
             // Broadcast (revisi Bu Kadis) -- 'push' saja (in-app), bukan email/WA ke SEMUA user
@@ -150,7 +178,8 @@ class SyncSilakesService
      */
     public function syncPatients(): int
     {
-        $since = $this->toIso8601(PatientsCache::max('last_synced_at'));
+        $since = $this->patientsSince();
+        $watermark = $since ? Carbon::parse($since) : null;
         $cursor = null;
         $count = 0;
 
@@ -165,6 +194,11 @@ class SyncSilakesService
                 if ($this->isEligible($row['patient_id'])) {
                     $this->upsertPatient($row);
                     $count++;
+
+                    $diubah = ! empty($row['updated_at']) ? Carbon::parse($row['updated_at']) : null;
+                    if ($diubah && (! $watermark || $diubah->gt($watermark))) {
+                        $watermark = $diubah;
+                    }
                 }
             }
 
@@ -176,7 +210,27 @@ class SyncSilakesService
             }
         } while ($hasMore && $cursor);
 
+        $this->patientsWatermark = $watermark?->toIso8601String();
+
         return $count;
+    }
+
+    /**
+     * Mulai dari mana pasien ditarik (revisi 2026-11-17). Dulu max(patients_cache.last_synced_at),
+     * tapi sejak SiLAKES mendorong hasil persetujuan seketika (SilakesEventService), satu pasien
+     * bisa tersimpan dengan updated_at "sekarang" di siang hari; batas itu lalu melompat dan
+     * pasien lain yang diubah lebih awal di hari yang sama tidak pernah tertarik. Sekarang batasnya
+     * disimpan oleh sinkron sukses terakhir sendiri (details.patients_watermark); log lama tanpa
+     * nilai itu memakai cara lama sebagai awal.
+     */
+    public function patientsSince(): ?string
+    {
+        $terakhir = IntegrationSyncLog::where('service_name', 'SyncSilakesService')
+            ->where('status', 'success')
+            ->latest('id')
+            ->first();
+
+        return $terakhir?->details['patients_watermark'] ?? $this->toIso8601(PatientsCache::max('last_synced_at'));
     }
 
     /**
