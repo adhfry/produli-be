@@ -193,7 +193,8 @@ class SilakesEventService
             type: 'usulan_pasien_diputuskan',
             title: $tolak === 0 ? 'Usulan data pasien disetujui' : 'Usulan data pasien diputuskan',
             body: $body,
-            data: ['type' => 'usulan_pasien_diputuskan', 'patient_id' => $ref->patients_cache_id, 'disetujui' => $setuju, 'ditolak' => $tolak],
+            data: ['type' => 'usulan_pasien_diputuskan', 'title' => $tolak === 0 ? 'Usulan data pasien disetujui' : 'Usulan data pasien diputuskan',
+                'body' => $body, 'patient_id' => $ref->patients_cache_id, 'patient_nama' => $nama, 'disetujui' => $setuju, 'ditolak' => $tolak],
         ));
     }
 
@@ -207,7 +208,9 @@ class SilakesEventService
         $this->broadcast($baris->pengirimanSampel?->puskesmas_id, $baris->diinput_oleh_user_id, 'pengiriman_sampel.berubah', $payload);
 
         if ($baris->diinputOleh) {
-            $this->kirim($baris->diinputOleh, new NotificationPayload(type: $type, title: $title, body: $body, data: ['type' => $type, ...$payload, ...$data]));
+            // title/body ikut disimpan di data: bel notifikasi PRODULI hanya membaca kolom data.
+            $this->kirim($baris->diinputOleh, new NotificationPayload(type: $type, title: $title, body: $body,
+                data: ['type' => $type, 'title' => $title, 'body' => $body, 'patient_nama' => $baris->nama_snapshot, ...$payload, ...$data]));
         }
     }
 

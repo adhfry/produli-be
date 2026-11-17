@@ -172,7 +172,10 @@ class PendaftaranLangsungTest extends TestCase
         $this->assertFalse($baris->isPasienBaru());
         $this->assertSame('terdaftar', $baris->registrasi_status);
         $this->notify->shouldHaveReceived('notify')->once()->withArgs(fn ($target, $payload) => $target->user->id === $this->staf->id
-            && str_contains($payload->body, '2171126000123'));
+            && str_contains($payload->body, '2171126000123')
+            // Bel notifikasi hanya membaca kolom data (temuan uji production 2026-11-17).
+            && $payload->data['title'] === 'Pasien baru terdaftar di Labkesda'
+            && str_contains($payload->data['body'], '2171126000123'));
     }
 
     public function test_event_ditolak_menyimpan_alasan(): void
